@@ -3,8 +3,23 @@ use reqwest::Client;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize, Serializer};
 use std::error::Error;
+use std::fmt;
 
 type QueryResult<T> = Result<T, Box<dyn Error + Send + Sync>>;
+
+#[derive(Debug)]
+struct ClickHouseHttpError {
+    status: reqwest::StatusCode,
+    body: String,
+}
+
+impl fmt::Display for ClickHouseHttpError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "ClickHouse HTTP {}: {}", self.status, self.body)
+    }
+}
+
+impl Error for ClickHouseHttpError {}
 
 pub struct ClickHouseWriter {
     client: Client,
@@ -28,21 +43,21 @@ impl ClickHouseWriter {
     pub async fn insert_raw_observation(
         &self,
         row: &RawObservationRow,
-    ) -> Result<(), reqwest::Error> {
+    ) -> QueryResult<()> {
         self.insert_json_each_row("raw_observations", row).await
     }
 
     pub async fn insert_observed_transaction(
         &self,
         row: &ObservedTransactionRow,
-    ) -> Result<(), reqwest::Error> {
+    ) -> QueryResult<()> {
         self.insert_json_each_row("observed_transactions", row).await
     }
 
     pub async fn insert_observed_transfer(
         &self,
         row: &ObservedTransferRow,
-    ) -> Result<(), reqwest::Error> {
+    ) -> QueryResult<()> {
         self.insert_json_each_row("observed_transfers", row)
             .await
     }
@@ -50,44 +65,44 @@ impl ClickHouseWriter {
     pub async fn insert_observed_payment(
         &self,
         row: &ObservedPaymentRow,
-    ) -> Result<(), reqwest::Error> {
+    ) -> QueryResult<()> {
         self.insert_json_each_row("observed_payments", row).await
     }
 
     pub async fn upsert_settlement_match(
         &self,
         row: &SettlementMatchRow,
-    ) -> Result<(), reqwest::Error> {
+    ) -> QueryResult<()> {
         self.insert_json_each_row("settlement_matches", row).await
     }
 
     pub async fn insert_matcher_event(
         &self,
         row: &MatcherEventRow,
-    ) -> Result<(), reqwest::Error> {
+    ) -> QueryResult<()> {
         self.insert_json_each_row("matcher_events", row).await
     }
 
     pub async fn upsert_request_book_snapshot(
         &self,
         row: &RequestBookSnapshotRow,
-    ) -> Result<(), reqwest::Error> {
+    ) -> QueryResult<()> {
         self.insert_json_each_row("request_book_snapshots", row).await
     }
 
-    pub async fn upsert_exception(&self, row: &ExceptionRow) -> Result<(), reqwest::Error> {
+    pub async fn upsert_exception(&self, row: &ExceptionRow) -> QueryResult<()> {
         self.insert_json_each_row("exceptions", row).await
     }
 
     pub async fn observed_transaction_exists(&self, signature: &str) -> QueryResult<bool> {
         let escaped_signature = signature.replace('\'', "\\'");
-        let rows: Vec<CountRow> = self
+        let rows: Vec<PresenceRow> = self
             .query_json_each_row(&format!(
-                "SELECT count() AS count FROM {}.observed_transactions WHERE signature = '{}' FORMAT JSONEachRow",
+                "SELECT 1 AS present FROM {}.observed_transactions WHERE signature = '{}' LIMIT 1 FORMAT JSONEachRow",
                 self.database, escaped_signature
             ))
             .await?;
-        Ok(rows.first().map(|row| row.count).unwrap_or(0) > 0)
+        Ok(rows.first().is_some())
     }
 
     pub async fn load_request_book_snapshots(&self) -> QueryResult<Vec<RequestBookSnapshotStateRow>> {
@@ -102,7 +117,7 @@ impl ClickHouseWriter {
         &self,
         table: &str,
         row: &T,
-    ) -> Result<(), reqwest::Error> {
+    ) -> QueryResult<()> {
         let query = format!("INSERT INTO {}.{} FORMAT JSONEachRow", self.database, table);
         let url = format!("{}/?query={}", self.base_url, urlencoding::encode(&query));
         let payload = format!(
@@ -110,29 +125,28 @@ impl ClickHouseWriter {
             serde_json::to_string(row).expect("row should serialize to JSON")
         );
 
-        self.client
+        let response = self
+            .client
             .post(url)
             .basic_auth(&self.user, Some(&self.password))
             .body(payload)
             .send()
-            .await?
-            .error_for_status()?;
+            .await?;
+        self.ensure_success(response).await?;
 
         Ok(())
     }
 
     async fn query_json_each_row<T: DeserializeOwned>(&self, query: &str) -> QueryResult<Vec<T>> {
         let url = format!("{}/?query={}", self.base_url, urlencoding::encode(query));
-        let body = self
+        let response = self
             .client
             .post(url)
             .basic_auth(&self.user, Some(&self.password))
             .body("\n")
             .send()
-            .await?
-            .error_for_status()?
-            .text()
             .await?;
+        let body = self.ensure_success(response).await?;
 
         let mut rows = Vec::new();
         for line in body.lines().filter(|line| !line.trim().is_empty()) {
@@ -141,12 +155,23 @@ impl ClickHouseWriter {
 
         Ok(rows)
     }
+
+    async fn ensure_success(&self, response: reqwest::Response) -> QueryResult<String> {
+        let status = response.status();
+        let body = response.text().await?;
+        if !status.is_success() {
+            return Err(Box::new(ClickHouseHttpError { status, body }));
+        }
+
+        Ok(body)
+    }
 }
 
-#[derive(serde::Deserialize)]
-struct CountRow {
+#[derive(Deserialize)]
+struct PresenceRow {
+    #[allow(dead_code)]
     #[serde(deserialize_with = "deserialize_u64_from_string_or_number")]
-    count: u64,
+    present: u64,
 }
 
 #[derive(Serialize)]
