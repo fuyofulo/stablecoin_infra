@@ -21,6 +21,7 @@ import {
   OrganizationsPage,
   ProfilePage,
 } from './screens/general-pages';
+import { LandingEditorialPage } from './screens/landing-editorial';
 import {
   WorkspaceHomePage,
   WorkspaceSetupPage,
@@ -179,9 +180,15 @@ export function App() {
   }
 
   async function boot() {
+    const currentRoute = parseRoute(window.location.pathname);
     if (!api.getSessionToken()) {
       setAuthStatus('anonymous');
-      navigate({ name: 'login' }, setRoute, true);
+      if (
+        currentRoute.name !== 'landingEditorial' &&
+        currentRoute.name !== 'login'
+      ) {
+        navigate({ name: 'landingEditorial' }, setRoute, true);
+      }
       return;
     }
 
@@ -190,14 +197,22 @@ export function App() {
       setSession(nextSession);
       setAuthStatus('authenticated');
 
-      if (parseRoute(window.location.pathname).name === 'login') {
+      if (
+        parseRoute(window.location.pathname).name === 'login' ||
+        parseRoute(window.location.pathname).name === 'landingEditorial'
+      ) {
         navigate({ name: 'dashboard' }, setRoute, true);
       }
     } catch {
       api.clearSessionToken();
       setSession(null);
       setAuthStatus('anonymous');
-      navigate({ name: 'login' }, setRoute, true);
+      if (
+        currentRoute.name !== 'landingEditorial' &&
+        currentRoute.name !== 'login'
+      ) {
+        navigate({ name: 'landingEditorial' }, setRoute, true);
+      }
     }
   }
 
@@ -310,7 +325,7 @@ export function App() {
     setOrganizationDirectory([]);
     resetWorkspaceState();
     setAuthStatus('anonymous');
-    navigate({ name: 'login' }, setRoute);
+    navigate({ name: 'landingEditorial' }, setRoute);
   }
 
   async function handleCreateOrganization(event: FormEvent<HTMLFormElement>) {
@@ -487,11 +502,17 @@ export function App() {
     );
   }
 
-  if (authStatus === 'anonymous' || !session || route.name === 'login') {
+  if (authStatus === 'anonymous' || !session) {
     return (
-      <div className="app-root">
+      <div className="app-root app-root-public">
         <GridBackdrop />
-        <LoginScreen errorMessage={errorMessage} onLogin={handleLogin} />
+        {route.name === 'login' ? (
+          <LoginScreen errorMessage={errorMessage} onLogin={handleLogin} />
+        ) : (
+          <LandingEditorialPage
+            onLogin={() => navigate({ name: 'login' }, setRoute)}
+          />
+        )}
       </div>
     );
   }

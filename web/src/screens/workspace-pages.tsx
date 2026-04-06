@@ -69,24 +69,25 @@ export function WorkspaceHomePage({
         </div>
       </section>
 
-      <section className="content-grid">
-        <div className="content-panel" id="wallets-section">
+      <section className="workspace-home-top">
+        <div className="content-panel content-panel-soft workspace-pulse-panel">
           <div className="panel-header">
             <div>
               <p className="eyebrow">Status</p>
               <h2>Workspace pulse</h2>
+              <p className="compact-copy">Freshness, flow volume, and current operating pressure for this workspace.</p>
             </div>
             <span className="status-chip">{isLoading ? 'syncing' : currentRole ?? 'member'}</span>
           </div>
 
-          <div className="hero-metrics">
+          <div className="metric-strip">
             <Metric label="Wallets" value={String(addresses.length).padStart(2, '0')} />
             <Metric label="Planned" value={String(transferRequests.length).padStart(2, '0')} />
             <Metric label="Observed" value={String(observedTransfers.length).padStart(2, '0')} />
             <Metric label="Open issues" value={String(exceptionCount).padStart(2, '0')} />
           </div>
 
-          <div className="info-grid">
+          <div className="info-grid info-grid-tight">
             <InfoLine label="Matched" value={String(matchedCount)} />
             <InfoLine label="Pending" value={String(pendingCount)} />
             <InfoLine label="API served" value={workspaceServedAt ? formatTimestamp(workspaceServedAt) : 'n/a'} />
@@ -94,45 +95,12 @@ export function WorkspaceHomePage({
           </div>
         </div>
 
-        <div className="content-panel" id="planned-transfers-section">
-          <div className="panel-header">
-            <div>
-              <p className="eyebrow">Planned transfers</p>
-              <h2>Requests and matches</h2>
-            </div>
-            <span className="status-chip">{reconciliationRows.length}</span>
-          </div>
-
-          <div className="stack-list">
-            {reconciliationRows.length ? (
-              reconciliationRows.map((row) => (
-                <button
-                  key={row.transferRequestId}
-                  className={selectedReconciliation?.transferRequestId === row.transferRequestId ? 'feed-row is-active' : 'feed-row'}
-                  data-tone={row.reconciliationStatus}
-                  onClick={() => onSelectReconciliation(row)}
-                  type="button"
-                >
-                  <div>
-                    <strong>{getTransferLabel(row)}</strong>
-                    <small>
-                      {row.requestType.replaceAll('_', ' ')} // {row.reconciliationStatus.replaceAll('_', ' ')}
-                    </small>
-                  </div>
-                  <span>{formatRawUsdc(row.amountRaw)}</span>
-                </button>
-              ))
-            ) : (
-              <div className="empty-box compact">No planned transfers yet. Open setup and create the first one.</div>
-            )}
-          </div>
-        </div>
-
-        <div className="content-panel">
+        <div className="content-panel content-panel-soft workspace-inspector-panel">
           <div className="panel-header">
             <div>
               <p className="eyebrow">Inspector</p>
               <h2>Transfer detail</h2>
+              <p className="compact-copy">Inspect one planned transfer and see how on-chain settlement maps back to it.</p>
             </div>
           </div>
 
@@ -185,12 +153,50 @@ export function WorkspaceHomePage({
         </div>
       </section>
 
+      <section className="workspace-home-main">
+        <div className="content-panel content-panel-strong">
+          <div className="panel-header">
+            <div>
+              <p className="eyebrow">Planned transfers</p>
+              <h2>Requests and matches</h2>
+              <p className="compact-copy">This is the main operator queue. Start here, then inspect chain activity below.</p>
+            </div>
+            <span className="status-chip">{reconciliationRows.length}</span>
+          </div>
+
+          <div className="stack-list">
+            {reconciliationRows.length ? (
+              reconciliationRows.map((row) => (
+                <button
+                  key={row.transferRequestId}
+                  className={selectedReconciliation?.transferRequestId === row.transferRequestId ? 'feed-row is-active' : 'feed-row'}
+                  data-tone={row.reconciliationStatus}
+                  onClick={() => onSelectReconciliation(row)}
+                  type="button"
+                >
+                  <div>
+                    <strong>{getTransferLabel(row)}</strong>
+                    <small>
+                      {row.requestType.replaceAll('_', ' ')} // {row.reconciliationStatus.replaceAll('_', ' ')}
+                    </small>
+                  </div>
+                  <span>{formatRawUsdc(row.amountRaw)}</span>
+                </button>
+              ))
+            ) : (
+              <div className="empty-box compact">No planned transfers yet. Open setup and create the first one.</div>
+            )}
+          </div>
+        </div>
+      </section>
+
       <section className="content-grid content-grid-single">
-        <div className="content-panel">
+        <div className="content-panel content-panel-soft">
           <div className="panel-header">
             <div>
               <p className="eyebrow">Observed transfers</p>
               <h2>Real USDC movement</h2>
+              <p className="compact-copy">Every observed USDC leg across the wallets saved in this workspace.</p>
             </div>
           </div>
           <div className="transfer-table">
@@ -294,11 +300,12 @@ export function WorkspaceHomePage({
       </section>
 
       <section className="content-grid content-grid-single">
-        <div className="content-panel">
+        <div className="content-panel content-panel-soft">
           <div className="panel-header">
             <div>
               <p className="eyebrow">Exceptions</p>
               <h2>Open issues</h2>
+              <p className="compact-copy">Only unresolved or suspicious observations should persist here.</p>
             </div>
           </div>
           <div className="stack-list">
@@ -358,12 +365,13 @@ export function WorkspaceSetupPage({
         </div>
       ) : null}
 
-      <section className="content-grid">
-        <div className="content-panel">
+      <section className="setup-stage-grid">
+        <div className="content-panel content-panel-strong" id="wallets-section">
           <div className="panel-header">
             <div>
               <p className="eyebrow">Step 1</p>
               <h2>Wallets</h2>
+              <p className="compact-copy">Save the wallets you care about first. Everything else in the workspace builds from this list.</p>
             </div>
           </div>
           <form className="form-stack" onSubmit={onCreateAddress}>
@@ -400,11 +408,12 @@ export function WorkspaceSetupPage({
           </div>
         </div>
 
-        <div className="content-panel">
+        <div className="content-panel content-panel-strong" id="planned-transfers-section">
           <div className="panel-header">
             <div>
               <p className="eyebrow">Step 2</p>
               <h2>Planned transfers</h2>
+              <p className="compact-copy">Once wallets exist, define the transfer shape you expect to observe on-chain.</p>
             </div>
           </div>
           <form className="form-stack" onSubmit={onCreateTransferRequest}>
@@ -472,11 +481,12 @@ export function WorkspaceSetupPage({
       </section>
 
       <section className="content-grid content-grid-single">
-        <div className="content-panel">
+        <div className="content-panel content-panel-soft">
           <div className="panel-header">
             <div>
               <p className="eyebrow">Matching note</p>
               <h2>How it works</h2>
+              <p className="compact-copy">Keep the explanation light and operational. The page itself should carry the workflow.</p>
             </div>
           </div>
           <div className="empty-box compact">

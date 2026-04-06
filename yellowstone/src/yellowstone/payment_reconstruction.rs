@@ -6,6 +6,7 @@ use uuid::Uuid;
 #[derive(Clone, Debug)]
 pub struct ObservedPayment {
     pub payment_id: String,
+    pub route_group: String,
     pub signature: String,
     pub slot: u64,
     pub event_time: chrono::DateTime<chrono::Utc>,
@@ -81,6 +82,7 @@ pub fn reconstruct_observed_payments(
 
         payments.push(ObservedPayment {
             payment_id: Uuid::new_v4().to_string(),
+            route_group: route_group.clone(),
             signature: context.signature.clone(),
             slot: context.slot,
             event_time: context.event_time,

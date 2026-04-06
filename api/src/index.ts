@@ -3,6 +3,7 @@ import { prisma } from './prisma.js';
 import { createApp } from './app.js';
 
 async function main() {
+  await prisma.$connect();
   const app = createApp();
 
   const server = app.listen(config.port, config.host, () => {
@@ -25,4 +26,3 @@ main().catch(async (error) => {
   await prisma.$disconnect();
   process.exit(1);
 });
-

@@ -2,6 +2,7 @@ import type { OrganizationMembership } from '../types';
 import { startTransition } from 'react';
 
 export type Route =
+  | { name: 'landingEditorial' }
   | { name: 'login' }
   | { name: 'dashboard' }
   | { name: 'profile' }
@@ -54,6 +55,8 @@ export function orbTransactionUrl(signature: string) {
 }
 
 export function parseRoute(pathname: string): Route {
+  if (pathname === '/landing/editorial') return { name: 'landingEditorial' };
+  if (pathname === '/landing/brand-film') return { name: 'landingEditorial' };
   if (pathname === '/login') return { name: 'login' };
   if (pathname === '/profile') return { name: 'profile' };
   if (pathname === '/orgs') return { name: 'orgs' };
@@ -75,6 +78,8 @@ export function parseRoute(pathname: string): Route {
 
 export function routeToPath(route: Route) {
   switch (route.name) {
+    case 'landingEditorial':
+      return '/landing/editorial';
     case 'login':
       return '/login';
     case 'dashboard':

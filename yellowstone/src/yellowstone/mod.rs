@@ -15,7 +15,7 @@ use serde_json::json;
 use spl_token::solana_program::program_option::COption;
 use spl_token::solana_program::program_pack::Pack;
 use spl_token::state::{Account as SplTokenAccount, AccountState as SplTokenAccountState, Mint as SplTokenMint};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet, VecDeque};
 use uuid::Uuid;
 use yellowstone_grpc_proto::geyser::subscribe_update::UpdateOneof;
 use yellowstone_grpc_proto::prelude::SubscribeUpdate;
@@ -31,10 +31,39 @@ pub mod transfer_reconstruction;
 const USDC_MINT: &str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 const MATCH_WINDOW_BEFORE_REQUEST_SECONDS: i64 = 120;
 const MATCH_WINDOW_AFTER_REQUEST_SECONDS: i64 = 24 * 60 * 60;
+const MAX_RECENT_SIGNATURES: usize = 50_000;
 
 #[derive(Default)]
 struct WorkerState {
     matcher_state: MatcherState,
+}
+
+#[derive(Default)]
+struct RecentSignatureCache {
+    order: VecDeque<String>,
+    seen: HashSet<String>,
+}
+
+impl RecentSignatureCache {
+    fn contains(&self, signature: &str) -> bool {
+        self.seen.contains(signature)
+    }
+
+    fn insert(&mut self, signature: &str) {
+        if self.seen.contains(signature) {
+            return;
+        }
+
+        let owned = signature.to_string();
+        self.order.push_back(owned.clone());
+        self.seen.insert(owned);
+
+        while self.order.len() > MAX_RECENT_SIGNATURES {
+            if let Some(expired) = self.order.pop_front() {
+                self.seen.remove(&expired);
+            }
+        }
+    }
 }
 
 pub struct YellowstoneWorker {
@@ -42,6 +71,7 @@ pub struct YellowstoneWorker {
     x_token: Option<String>,
     writer: ClickHouseWriter,
     registry_cache: tokio::sync::Mutex<WorkspaceRegistryCache>,
+    recent_signatures: tokio::sync::Mutex<RecentSignatureCache>,
     debug_account_logs: bool,
     debug_stream_logs: bool,
 }
@@ -60,6 +90,7 @@ impl YellowstoneWorker {
             x_token,
             writer,
             registry_cache: tokio::sync::Mutex::new(registry_cache),
+            recent_signatures: tokio::sync::Mutex::new(RecentSignatureCache::default()),
             debug_account_logs,
             debug_stream_logs,
         }
@@ -321,13 +352,11 @@ impl YellowstoneWorker {
         context: TransactionContext,
         worker_state: &mut WorkerState,
     ) {
-        match self.writer.observed_transaction_exists(&context.signature).await {
-            Ok(true) => return,
-            Ok(false) => {}
-            Err(error) => eprintln!(
-                "Failed to check existing observed transaction {}: {}",
-                context.signature, error
-            ),
+        {
+            let recent_signatures = self.recent_signatures.lock().await;
+            if recent_signatures.contains(&context.signature) {
+                return;
+            }
         }
 
         let mut registry_guard = self.registry_cache.lock().await;
@@ -339,8 +368,13 @@ impl YellowstoneWorker {
                 );
             }
         }
-        self.materialize_observed_settlement(registry_guard.registry(), &context, worker_state)
-            .await;
+        if self
+            .materialize_observed_settlement(registry_guard.registry(), &context, worker_state)
+            .await
+        {
+            let mut recent_signatures = self.recent_signatures.lock().await;
+            recent_signatures.insert(&context.signature);
+        }
     }
 
     async fn materialize_observed_settlement(
@@ -348,7 +382,7 @@ impl YellowstoneWorker {
         registry: &WorkspaceRegistry,
         context: &TransactionContext,
         worker_state: &mut WorkerState,
-    ) {
+    ) -> bool {
         let processing_time = Utc::now();
         let observed_transfers = reconstruct_observed_transfers(context);
         let observed_payments = reconstruct_observed_payments(context, &observed_transfers);
@@ -378,12 +412,17 @@ impl YellowstoneWorker {
 
         if let Err(error) = self.writer.insert_observed_transaction(&observed_transaction_row).await {
             eprintln!("Failed to insert observed transaction: {}", error);
+            return false;
         }
+
+        let mut observed_transfer_ids_by_route_group: HashMap<String, Vec<(String, Option<String>, i128)>> =
+            HashMap::new();
+        let mut observed_transfer_rows = Vec::with_capacity(observed_transfers.len());
 
         for transfer in &observed_transfers {
             let observed_transfer_id = Uuid::new_v4().to_string();
 
-            let transfer_row = ObservedTransferRow {
+            observed_transfer_rows.push(ObservedTransferRow {
                 transfer_id: observed_transfer_id.clone(),
                 signature: context.signature.clone(),
                 slot: context.slot,
@@ -401,17 +440,69 @@ impl YellowstoneWorker {
                 route_group: transfer.route_group.clone(),
                 leg_role: transfer.leg_role.clone(),
                 properties_json: transfer.properties_json.clone(),
-            };
+            });
+            observed_transfer_ids_by_route_group
+                .entry(transfer.route_group.clone())
+                .or_default()
+                .push((
+                    observed_transfer_id,
+                    transfer.destination_wallet.clone(),
+                    transfer.amount_raw,
+                ));
+        }
 
-            if let Err(error) = self.writer.insert_observed_transfer(&transfer_row).await {
-                eprintln!("Failed to insert observed transfer: {}", error);
-            }
+        if let Err(error) = self.writer.insert_observed_transfers(&observed_transfer_rows).await {
+            eprintln!("Failed to insert observed transfers batch: {}", error);
+        }
 
-            let Some(destination_matches) =
-                registry.matches_for_usdc_ata(&transfer.destination_token_account)
-            else {
+        let observed_payment_rows: Vec<ObservedPaymentRow> = observed_payments
+            .iter()
+            .map(|payment| ObservedPaymentRow {
+                payment_id: payment.payment_id.clone(),
+                signature: payment.signature.clone(),
+                slot: payment.slot,
+                event_time: payment.event_time,
+                asset: payment.asset.clone(),
+                source_wallet: payment.source_wallet.clone(),
+                destination_wallet: payment.destination_wallet.clone(),
+                gross_amount_raw: payment.gross_amount_raw,
+                gross_amount_decimal: format_amount(payment.gross_amount_raw),
+                net_destination_amount_raw: payment.net_destination_amount_raw,
+                net_destination_amount_decimal: format_amount(payment.net_destination_amount_raw),
+                fee_amount_raw: payment.fee_amount_raw,
+                fee_amount_decimal: format_amount(payment.fee_amount_raw),
+                route_count: payment.route_count,
+                payment_kind: payment.payment_kind.clone(),
+                reconstruction_rule: payment.reconstruction_rule.clone(),
+                confidence_band: payment.confidence_band.clone(),
+                properties_json: payment.properties_json.clone(),
+            })
+            .collect();
+
+        if let Err(error) = self.writer.insert_observed_payments(&observed_payment_rows).await {
+            eprintln!("Failed to insert observed payments batch: {}", error);
+        }
+
+        for payment in observed_payments {
+
+            let Some(destination_wallet) = payment.destination_wallet.clone() else {
                 continue;
             };
+
+            let Some(destination_matches) = registry.matches_for_wallet(&destination_wallet) else {
+                continue;
+            };
+
+            let representative_transfer_id = observed_transfer_ids_by_route_group
+                .get(&payment.route_group)
+                .and_then(|transfers| {
+                    transfers
+                        .iter()
+                        .filter(|(_, wallet, _)| wallet.as_deref() == Some(destination_wallet.as_str()))
+                        .max_by_key(|(_, _, amount_raw)| *amount_raw)
+                        .or_else(|| transfers.first())
+                        .map(|(transfer_id, _, _)| transfer_id.clone())
+                });
 
             let destination_workspaces: HashSet<String> = destination_matches
                 .iter()
@@ -420,7 +511,7 @@ impl YellowstoneWorker {
 
             for workspace_id in &destination_workspaces {
                 let pending_requests = registry
-                    .pending_requests_for_destination_ata(workspace_id, &transfer.destination_token_account)
+                    .pending_requests_for_destination_wallet(workspace_id, &destination_wallet)
                     .unwrap_or(&[]);
 
                 let windowed_requests: Vec<&WorkspaceTransferRequestMatch> = pending_requests
@@ -458,32 +549,33 @@ impl YellowstoneWorker {
                     .collect();
 
                 let allocation_result =
-                    allocate_observation(transfer.amount_raw, context.event_time, &book_requests);
+                    allocate_observation(payment.gross_amount_raw, context.event_time, &book_requests);
                 let remaining_observation_raw = allocation_result.remaining_observation_raw;
                 let eligible_request_count = allocation_result.eligible_request_count;
 
                 let observation_event = MatcherEventRow {
                     event_id: Uuid::new_v4().to_string(),
                     workspace_id: workspace_id.clone(),
-                    destination_address: transfer.destination_token_account.clone(),
+                    destination_address: destination_wallet.clone(),
                     transfer_request_id: None,
-                    observed_transfer_id: Some(observed_transfer_id.clone()),
+                    observed_transfer_id: representative_transfer_id.clone(),
                     signature: Some(context.signature.clone()),
-                    event_type: "observation_received".to_string(),
-                    quantity_raw: transfer.amount_raw,
+                    event_type: "payment_observation_received".to_string(),
+                    quantity_raw: payment.gross_amount_raw,
                     remaining_request_raw: None,
                     remaining_observation_raw: Some(remaining_observation_raw),
                     explanation: format!(
-                        "Observed {} USDC credit to destination {}.",
-                        format_amount(transfer.amount_raw),
-                        transfer.destination_token_account
+                        "Observed {} USDC payment to wallet {}.",
+                        format_amount(payment.gross_amount_raw),
+                        destination_wallet
                     ),
                     event_time: context.event_time,
                     properties_json: Some(
                         json!({
                             "windowed_request_count": eligible_request_count,
-                            "route_group": transfer.route_group,
-                            "leg_role": transfer.leg_role,
+                            "route_group": payment.route_group,
+                            "payment_kind": payment.payment_kind,
+                            "route_count": payment.route_count,
                         })
                         .to_string(),
                     ),
@@ -503,7 +595,7 @@ impl YellowstoneWorker {
 
                     let snapshot_row = RequestBookSnapshotRow {
                         workspace_id: workspace_id.clone(),
-                        destination_address: transfer.destination_token_account.clone(),
+                        destination_address: destination_wallet.clone(),
                         transfer_request_id: request.transfer_request_id.clone(),
                         requested_at: request.requested_at,
                         request_type: request.request_type.clone(),
@@ -513,7 +605,7 @@ impl YellowstoneWorker {
                         fill_count: allocation.fill_count,
                         book_status: allocation.match_status.to_string(),
                         last_signature: Some(context.signature.clone()),
-                        last_observed_transfer_id: Some(observed_transfer_id.clone()),
+                        last_observed_transfer_id: representative_transfer_id.clone(),
                         observed_event_time: Some(context.event_time),
                         updated_at: processing_time,
                     };
@@ -536,18 +628,18 @@ impl YellowstoneWorker {
                     let allocation_event = MatcherEventRow {
                         event_id: Uuid::new_v4().to_string(),
                         workspace_id: workspace_id.clone(),
-                        destination_address: transfer.destination_token_account.clone(),
+                        destination_address: destination_wallet.clone(),
                         transfer_request_id: Some(request.transfer_request_id.clone()),
-                        observed_transfer_id: Some(observed_transfer_id.clone()),
+                        observed_transfer_id: representative_transfer_id.clone(),
                         signature: Some(context.signature.clone()),
-                        event_type: "allocation_applied".to_string(),
+                        event_type: "payment_allocation_applied".to_string(),
                         quantity_raw: allocation.allocated_now_raw,
                         remaining_request_raw: Some(allocation.remaining_request_raw),
                         remaining_observation_raw: Some(remaining_observation_raw),
                         explanation: format!(
-                            "Allocated {} USDC from observed credit on {} to planned transfer {}.",
+                            "Allocated {} USDC from observed payment on wallet {} to planned transfer {}.",
                             format_amount(allocation.allocated_now_raw),
-                            transfer.destination_token_account,
+                            destination_wallet,
                             request.transfer_request_id
                         ),
                         event_time: context.event_time,
@@ -556,8 +648,8 @@ impl YellowstoneWorker {
                                 "allocated_total_raw": allocation.allocated_total_raw,
                                 "fill_count": allocation.fill_count,
                                 "match_status": allocation.match_status,
-                                "route_group": transfer.route_group,
-                                "leg_role": transfer.leg_role,
+                                "route_group": payment.route_group,
+                                "payment_kind": payment.payment_kind,
                             })
                             .to_string(),
                         ),
@@ -571,7 +663,7 @@ impl YellowstoneWorker {
                         workspace_id: workspace_id.clone(),
                         transfer_request_id: request.transfer_request_id.clone(),
                         signature: Some(context.signature.clone()),
-                        observed_transfer_id: Some(observed_transfer_id.clone()),
+                        observed_transfer_id: representative_transfer_id.clone(),
                         match_status: allocation.match_status.to_string(),
                         confidence_score: match allocation.match_status {
                             "matched_exact" => 100,
@@ -587,15 +679,15 @@ impl YellowstoneWorker {
                         },
                         matched_amount_raw: allocation.allocated_total_raw,
                         amount_variance_raw: allocation.remaining_request_raw,
-                        destination_match_type: "exact_destination".to_string(),
+                        destination_match_type: "wallet_destination".to_string(),
                         time_delta_seconds: allocation.time_delta_seconds,
-                        match_rule: "destination_book_fifo_allocator".to_string(),
+                        match_rule: "payment_book_fifo_allocator".to_string(),
                         candidate_count: allocation.fill_count,
                         explanation: format!(
-                            "Allocated total {} of requested {} USDC to destination {} using FIFO request-book matching.",
+                            "Allocated total {} of requested {} USDC to wallet {} using FIFO payment-book matching.",
                             format_amount(allocation.allocated_total_raw),
                             format_amount(request.amount_raw),
-                            transfer.destination_token_account,
+                            destination_wallet,
                         ),
                         observed_event_time: Some(context.event_time),
                         matched_at: Some(processing_time),
@@ -613,7 +705,7 @@ impl YellowstoneWorker {
                         exception_id: Uuid::new_v4().to_string(),
                         transfer_request_id: None,
                         signature: Some(context.signature.clone()),
-                        observed_transfer_id: Some(observed_transfer_id.clone()),
+                        observed_transfer_id: representative_transfer_id.clone(),
                         exception_type: if eligible_request_count == 0 {
                             "unexpected_observation".to_string()
                         } else {
@@ -623,26 +715,26 @@ impl YellowstoneWorker {
                         status: "open".to_string(),
                         explanation: if eligible_request_count == 0 {
                             format!(
-                                "Observed {} USDC credit to registered destination {} without any open request in the active window.",
-                                format_amount(transfer.amount_raw),
-                                transfer.destination_token_account
+                                "Observed {} USDC payment to registered wallet {} without any open request in the active window.",
+                                format_amount(payment.gross_amount_raw),
+                                destination_wallet
                             )
                         } else {
                             format!(
-                                "Observed residual {} USDC on destination {} after FIFO allocation across {} open request(s).",
+                                "Observed residual {} USDC on wallet {} after FIFO payment allocation across {} open request(s).",
                                 format_amount(remaining_observation_raw),
-                                transfer.destination_token_account,
+                                destination_wallet,
                                 eligible_request_count
                             )
                         },
                         properties_json: Some(
                             json!({
-                                "destination_address": transfer.destination_token_account,
-                                "observed_amount_raw": transfer.amount_raw,
+                                "destination_wallet": destination_wallet,
+                                "observed_amount_raw": payment.gross_amount_raw,
                                 "remaining_observation_raw": remaining_observation_raw,
                                 "eligible_request_count": eligible_request_count,
-                                "route_group": transfer.route_group,
-                                "leg_role": transfer.leg_role,
+                                "route_group": payment.route_group,
+                                "payment_kind": payment.payment_kind,
                             })
                             .to_string(),
                         ),
@@ -659,32 +751,7 @@ impl YellowstoneWorker {
             }
         }
 
-        for payment in observed_payments {
-            let payment_row = ObservedPaymentRow {
-                payment_id: payment.payment_id,
-                signature: payment.signature,
-                slot: payment.slot,
-                event_time: payment.event_time,
-                asset: payment.asset,
-                source_wallet: payment.source_wallet,
-                destination_wallet: payment.destination_wallet,
-                gross_amount_raw: payment.gross_amount_raw,
-                gross_amount_decimal: format_amount(payment.gross_amount_raw),
-                net_destination_amount_raw: payment.net_destination_amount_raw,
-                net_destination_amount_decimal: format_amount(payment.net_destination_amount_raw),
-                fee_amount_raw: payment.fee_amount_raw,
-                fee_amount_decimal: format_amount(payment.fee_amount_raw),
-                route_count: payment.route_count,
-                payment_kind: payment.payment_kind,
-                reconstruction_rule: payment.reconstruction_rule,
-                confidence_band: payment.confidence_band,
-                properties_json: payment.properties_json,
-            };
-
-            if let Err(error) = self.writer.insert_observed_payment(&payment_row).await {
-                eprintln!("Failed to insert observed payment: {}", error);
-            }
-        }
+        true
     }
 
 }
@@ -797,14 +864,12 @@ mod tests {
         let registry = WorkspaceRegistry::with_transfer_requests(
             vec![WorkspaceAddressMatch {
                 workspace_id: workspace_id.clone(),
-                workspace_address_id: Uuid::new_v4().to_string(),
                 wallet_address: wallet.to_string(),
-                usdc_ata_address: Some(token_account.to_string()),
             }],
             vec![WorkspaceTransferRequestMatch {
                 transfer_request_id: transfer_request_id.clone(),
                 workspace_id: workspace_id.clone(),
-                destination_match_address: token_account.to_string(),
+                destination_wallet_address: wallet.to_string(),
                 amount_raw: 50_000_000,
                 requested_at: Utc::now(),
                 request_type: "wallet_transfer".to_string(),
@@ -899,9 +964,7 @@ mod tests {
 
         let registry = WorkspaceRegistry::from_matches(vec![WorkspaceAddressMatch {
             workspace_id: workspace_id.clone(),
-            workspace_address_id: Uuid::new_v4().to_string(),
             wallet_address: wallet.to_string(),
-            usdc_ata_address: Some(token_account.to_string()),
         }]);
 
         let worker = test_worker(registry);
@@ -952,14 +1015,12 @@ mod tests {
         let registry = WorkspaceRegistry::with_transfer_requests(
             vec![WorkspaceAddressMatch {
                 workspace_id: workspace_id.clone(),
-                workspace_address_id: Uuid::new_v4().to_string(),
                 wallet_address: destination_wallet.to_string(),
-                usdc_ata_address: Some(destination_token_account.to_string()),
             }],
             vec![WorkspaceTransferRequestMatch {
                 transfer_request_id: transfer_request_id.clone(),
                 workspace_id: workspace_id.clone(),
-                destination_match_address: destination_token_account.to_string(),
+                destination_wallet_address: destination_wallet.to_string(),
                 amount_raw: 10_000,
                 requested_at: Utc::now(),
                 request_type: "wallet_transfer".to_string(),

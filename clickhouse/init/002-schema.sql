@@ -64,6 +64,30 @@ PARTITION BY toYYYYMM(event_time)
 ORDER BY (event_time, signature, destination_token_account, transfer_id);
 
 ALTER TABLE observed_transfers
+    ADD INDEX IF NOT EXISTS idx_ot_source_wallet source_wallet TYPE bloom_filter GRANULARITY 64;
+
+ALTER TABLE observed_transfers
+    ADD INDEX IF NOT EXISTS idx_ot_destination_wallet destination_wallet TYPE bloom_filter GRANULARITY 64;
+
+ALTER TABLE observed_transfers
+    ADD INDEX IF NOT EXISTS idx_ot_source_token_account source_token_account TYPE bloom_filter GRANULARITY 64;
+
+ALTER TABLE observed_transfers
+    ADD INDEX IF NOT EXISTS idx_ot_destination_token_account destination_token_account TYPE bloom_filter GRANULARITY 64;
+
+ALTER TABLE observed_transfers
+    DROP PROJECTION IF EXISTS prj_ot_by_source_wallet;
+
+ALTER TABLE observed_transfers
+    DROP PROJECTION IF EXISTS prj_ot_by_destination_wallet;
+
+ALTER TABLE observed_transfers
+    DROP PROJECTION IF EXISTS prj_ot_by_source_token_account;
+
+ALTER TABLE observed_transfers
+    DROP PROJECTION IF EXISTS prj_ot_by_destination_token_account;
+
+ALTER TABLE observed_transfers
     DROP COLUMN IF EXISTS workspace_id;
 
 ALTER TABLE observed_transfers

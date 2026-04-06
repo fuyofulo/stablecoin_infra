@@ -32,29 +32,20 @@ dev:
 	set -euo pipefail && \
 	export DATABASE_URL="$${DATABASE_URL:-$(POSTGRES_URL)}" && \
 	export CONTROL_PLANE_API_URL="$${CONTROL_PLANE_API_URL:-http://127.0.0.1:3100}" && \
+	export CLICKHOUSE_URL="$${CLICKHOUSE_URL:-http://127.0.0.1:8123}" && \
 	if [[ -f yellowstone/.env ]]; then set -a && source yellowstone/.env && set +a; fi && \
 	docker compose up -d postgres clickhouse && \
 	docker compose exec -T postgres sh -lc "$(PSQL_QUIET) -U usdc_ops -d usdc_ops -f /docker-entrypoint-initdb.d/001-control-plane.sql" >/dev/null && \
 	docker compose exec -T clickhouse sh -lc 'clickhouse-client --multiquery < /docker-entrypoint-initdb.d/001-bootstrap.sql >/dev/null && clickhouse-client --multiquery < /docker-entrypoint-initdb.d/002-schema.sql >/dev/null' && \
+	for _ in {1..60}; do \
+	  if docker compose exec -T postgres pg_isready -U usdc_ops -d usdc_ops >/dev/null 2>&1; then \
+	    if curl -fsS "$${CLICKHOUSE_URL}/ping" >/dev/null 2>&1; then \
+	      break; \
+	    fi; \
+	  fi; \
+	  sleep 1; \
+	done && \
 	(cd api && npm run prisma:generate >/dev/null) && \
-	cleaned_up=0 && \
-	cleanup() { \
-	  (( cleaned_up )) && return 0; \
-	  cleaned_up=1; \
-	  trap - INT TERM; \
-	  local pid idx; \
-	  sleep 0.2; \
-	  for (( idx=$${#pids[@]}; idx>=1; idx-- )); do \
-	    pid="$${pids[idx]}"; \
-	    if kill -0 "$$pid" 2>/dev/null; then kill -TERM "$$pid" 2>/dev/null || true; fi; \
-	  done; \
-	  sleep 0.5; \
-	  for (( idx=$${#pids[@]}; idx>=1; idx-- )); do \
-	    pid="$${pids[idx]}"; \
-	    if kill -0 "$$pid" 2>/dev/null; then kill -KILL "$$pid" 2>/dev/null || true; fi; \
-	  done; \
-	  for pid in "$${pids[@]:-}"; do wait "$$pid" 2>/dev/null || true; done; \
-	}; \
 	typeset -a pids && \
 	(cd api && exec npm run dev) & \
 	pids+=($$!) && \
@@ -62,7 +53,7 @@ dev:
 	pids+=($$!) && \
 	if [[ -n "$${YELLOWSTONE_ENDPOINT:-}" ]]; then \
 	  for _ in {1..60}; do \
-	    if curl -fsS "$${CONTROL_PLANE_API_URL}/health" >/dev/null 2>&1; then \
+	    if curl -fsS "$${CONTROL_PLANE_API_URL}/health" >/dev/null 2>&1 && curl -fsS "$${CLICKHOUSE_URL}/ping" >/dev/null 2>&1; then \
 	      break; \
 	    fi; \
 	    sleep 1; \
@@ -72,9 +63,9 @@ dev:
 	else \
 	  echo "Skipping Yellowstone worker because YELLOWSTONE_ENDPOINT is not set."; \
 	fi && \
-	trap 'cleanup; exit 130' INT TERM && \
-	wait "$${pids[@]}" || true && \
-	cleanup
+	trap 'trap - INT TERM EXIT; for pid in "$${pids[@]:-}"; do kill -TERM "$$pid" 2>/dev/null || true; done; sleep 0.5; for pid in "$${pids[@]:-}"; do kill -KILL "$$pid" 2>/dev/null || true; done; wait "$${pids[@]}" 2>/dev/null || true; exit 130' INT TERM && \
+	trap 'for pid in "$${pids[@]:-}"; do kill -TERM "$$pid" 2>/dev/null || true; done; sleep 0.5; for pid in "$${pids[@]:-}"; do kill -KILL "$$pid" 2>/dev/null || true; done; wait "$${pids[@]}" 2>/dev/null || true' EXIT && \
+	wait "$${pids[@]}" || true
 
 test: test-api test-worker test-web
 

@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use reqwest::Client;
 use serde::de::DeserializeOwned;
-use serde::{Deserialize, Serialize, Serializer};
+use serde::{Serialize, Serializer};
 use std::error::Error;
 use std::fmt;
 
@@ -54,19 +54,18 @@ impl ClickHouseWriter {
         self.insert_json_each_row("observed_transactions", row).await
     }
 
-    pub async fn insert_observed_transfer(
+    pub async fn insert_observed_transfers(
         &self,
-        row: &ObservedTransferRow,
+        rows: &[ObservedTransferRow],
     ) -> QueryResult<()> {
-        self.insert_json_each_row("observed_transfers", row)
-            .await
+        self.insert_json_each_row_many("observed_transfers", rows).await
     }
 
-    pub async fn insert_observed_payment(
+    pub async fn insert_observed_payments(
         &self,
-        row: &ObservedPaymentRow,
+        rows: &[ObservedPaymentRow],
     ) -> QueryResult<()> {
-        self.insert_json_each_row("observed_payments", row).await
+        self.insert_json_each_row_many("observed_payments", rows).await
     }
 
     pub async fn upsert_settlement_match(
@@ -94,17 +93,6 @@ impl ClickHouseWriter {
         self.insert_json_each_row("exceptions", row).await
     }
 
-    pub async fn observed_transaction_exists(&self, signature: &str) -> QueryResult<bool> {
-        let escaped_signature = signature.replace('\'', "\\'");
-        let rows: Vec<PresenceRow> = self
-            .query_json_each_row(&format!(
-                "SELECT 1 AS present FROM {}.observed_transactions WHERE signature = '{}' LIMIT 1 FORMAT JSONEachRow",
-                self.database, escaped_signature
-            ))
-            .await?;
-        Ok(rows.first().is_some())
-    }
-
     pub async fn load_request_book_snapshots(&self) -> QueryResult<Vec<RequestBookSnapshotStateRow>> {
         self.query_json_each_row(&format!(
                 "SELECT transfer_request_id, allocated_amount_raw, remaining_amount_raw, fill_count, book_status, last_signature FROM {}.request_book_snapshots FINAL FORMAT JSONEachRow",
@@ -124,6 +112,36 @@ impl ClickHouseWriter {
             "{}\n",
             serde_json::to_string(row).expect("row should serialize to JSON")
         );
+
+        let response = self
+            .client
+            .post(url)
+            .basic_auth(&self.user, Some(&self.password))
+            .body(payload)
+            .send()
+            .await?;
+        self.ensure_success(response).await?;
+
+        Ok(())
+    }
+
+    async fn insert_json_each_row_many<T: Serialize>(
+        &self,
+        table: &str,
+        rows: &[T],
+    ) -> QueryResult<()> {
+        if rows.is_empty() {
+            return Ok(());
+        }
+
+        let query = format!("INSERT INTO {}.{} FORMAT JSONEachRow", self.database, table);
+        let url = format!("{}/?query={}", self.base_url, urlencoding::encode(&query));
+        let mut payload = String::new();
+
+        for row in rows {
+            payload.push_str(&serde_json::to_string(row).expect("row should serialize to JSON"));
+            payload.push('\n');
+        }
 
         let response = self
             .client
@@ -165,13 +183,6 @@ impl ClickHouseWriter {
 
         Ok(body)
     }
-}
-
-#[derive(Deserialize)]
-struct PresenceRow {
-    #[allow(dead_code)]
-    #[serde(deserialize_with = "deserialize_u64_from_string_or_number")]
-    present: u64,
 }
 
 #[derive(Serialize)]
@@ -364,32 +375,5 @@ where
     match value {
         Some(value) => serializer.serialize_some(&value.format("%Y-%m-%d %H:%M:%S%.3f").to_string()),
         None => serializer.serialize_none(),
-    }
-}
-
-fn deserialize_u64_from_string_or_number<'de, D>(deserializer: D) -> Result<u64, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    use serde::de::{Error, Unexpected};
-    use serde_json::Value;
-
-    match Value::deserialize(deserializer)? {
-        Value::Number(number) => number
-            .as_u64()
-            .ok_or_else(|| Error::invalid_type(Unexpected::Other("non-u64 number"), &"u64")),
-        Value::String(value) => value
-            .parse::<u64>()
-            .map_err(|_| Error::invalid_value(Unexpected::Str(&value), &"u64 string")),
-        other => Err(Error::invalid_type(
-            Unexpected::Other(match other {
-                Value::Null => "null",
-                Value::Bool(_) => "bool",
-                Value::Array(_) => "array",
-                Value::Object(_) => "object",
-                _ => "unknown",
-            }),
-            &"u64 or stringified u64",
-        )),
     }
 }
