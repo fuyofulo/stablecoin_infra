@@ -16,6 +16,7 @@ use spl_token::solana_program::program_option::COption;
 use spl_token::solana_program::program_pack::Pack;
 use spl_token::state::{Account as SplTokenAccount, AccountState as SplTokenAccountState, Mint as SplTokenMint};
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use uuid::Uuid;
 use yellowstone_grpc_proto::geyser::subscribe_update::UpdateOneof;
@@ -39,6 +40,9 @@ const MATERIALIZED_OBSERVATIONS_FLUSH_INTERVAL: Duration = Duration::from_millis
 const OBSERVED_TRANSACTIONS_BUFFER_MAX_ROWS: usize = 512;
 const OBSERVED_TRANSFERS_BUFFER_MAX_ROWS: usize = 2_048;
 const OBSERVED_PAYMENTS_BUFFER_MAX_ROWS: usize = 512;
+const STREAM_RECONNECT_INITIAL_BACKOFF: Duration = Duration::from_secs(1);
+const STREAM_RECONNECT_MAX_BACKOFF: Duration = Duration::from_secs(15);
+const MATCH_RETRY_REFRESH_MIN_AGE: Duration = Duration::from_millis(500);
 
 #[derive(Default)]
 struct WorkerState {
@@ -113,6 +117,7 @@ pub struct YellowstoneWorker {
     recent_signatures: tokio::sync::Mutex<RecentSignatureCache>,
     pending_raw_observations: tokio::sync::Mutex<PendingRawObservations>,
     pending_materialized_observations: tokio::sync::Mutex<PendingMaterializedObservations>,
+    latest_seen_slot: AtomicU64,
     debug_account_logs: bool,
     debug_stream_logs: bool,
     debug_parsed_updates: bool,
@@ -138,6 +143,7 @@ impl YellowstoneWorker {
             pending_materialized_observations: tokio::sync::Mutex::new(
                 PendingMaterializedObservations::default(),
             ),
+            latest_seen_slot: AtomicU64::new(0),
             debug_account_logs,
             debug_stream_logs,
             debug_parsed_updates,
@@ -150,75 +156,117 @@ impl YellowstoneWorker {
 
         println!("Yellowstone Worker started! Connecting to {}...", endpoint);
 
-        let mut client = match client::connect(&endpoint, x_token).await {
-            Ok(c) => c,
-            Err(e) => {
-                eprintln!("Failed to connect to Yellowstone gRPC: {}", e);
-                return;
-            }
-        };
-
-        println!("Connected to Yellowstone gRPC!");
-
         if let Err(error) = self.refresh_registry_if_stale().await {
             eprintln!("Failed to load workspace registry on startup: {}", error);
         }
-
-        let request = subscriptions::create_subscription_request();
-        let (mut subscribe_tx, mut stream) = match client.subscribe().await {
-            Ok(res) => res,
-            Err(e) => {
-                eprintln!("Failed to subscribe: {}", e);
-                return;
-            }
-        };
-
-        if let Err(e) = subscribe_tx.send(request).await {
-            eprintln!("Failed to send subscription request: {}", e);
-            return;
-        }
-
-        println!("Subscribed to updates! Waiting for data...");
         let mut worker_state = WorkerState::default();
         if let Err(error) = hydrate_matcher_state(&self.writer, &mut worker_state).await {
             eprintln!("Failed to hydrate matcher state on startup: {}", error);
         }
 
-        loop {
-            if let Err(error) = self.flush_pending_raw_observations(false).await {
-                eprintln!("Failed to flush buffered raw observations: {}", error);
-            }
-            if let Err(error) = self.flush_pending_materialized_observations(false).await {
-                eprintln!("Failed to flush buffered observed settlements: {}", error);
-            }
-            match stream.next().await {
-                Some(Ok(update)) => {
-                    if let Err(error) = self.refresh_registry_if_stale().await {
-                        let mut cache = self.registry_cache.lock().await;
-                        if cache.should_log_refresh_error() {
-                            eprintln!(
-                                "Workspace registry refresh failed; continuing with last known cache: {}",
-                                error
-                            );
-                        }
-                    }
-                    self.handle_update(update, &mut worker_state).await;
-                }
-                Some(Err(e)) => eprintln!("Stream error: {}", e),
-                None => break,
-            }
-        }
+        let mut reconnect_backoff = STREAM_RECONNECT_INITIAL_BACKOFF;
 
-        if let Err(error) = self.flush_pending_raw_observations(true).await {
-            eprintln!("Failed to flush buffered raw observations during shutdown: {}", error);
+        loop {
+            let replay_from_slot = self.replay_from_slot();
+            let mut client = match client::connect(&endpoint, x_token.clone()).await {
+                Ok(c) => c,
+                Err(error) => {
+                    eprintln!(
+                        "Failed to connect to Yellowstone gRPC: {}. Retrying in {:?}...",
+                        error, reconnect_backoff
+                    );
+                    tokio::time::sleep(reconnect_backoff).await;
+                    reconnect_backoff = next_reconnect_backoff(reconnect_backoff);
+                    continue;
+                }
+            };
+
+            let request = subscriptions::create_subscription_request_from_slot(replay_from_slot);
+            let (mut subscribe_tx, mut stream) = match client.subscribe().await {
+                Ok(res) => res,
+                Err(error) => {
+                    eprintln!(
+                        "Failed to subscribe to Yellowstone gRPC: {}. Retrying in {:?}...",
+                        error, reconnect_backoff
+                    );
+                    tokio::time::sleep(reconnect_backoff).await;
+                    reconnect_backoff = next_reconnect_backoff(reconnect_backoff);
+                    continue;
+                }
+            };
+
+            if let Err(error) = subscribe_tx.send(request).await {
+                eprintln!(
+                    "Failed to send Yellowstone subscription request: {}. Retrying in {:?}...",
+                    error, reconnect_backoff
+                );
+                tokio::time::sleep(reconnect_backoff).await;
+                reconnect_backoff = next_reconnect_backoff(reconnect_backoff);
+                continue;
+            }
+
+            reconnect_backoff = STREAM_RECONNECT_INITIAL_BACKOFF;
+            match replay_from_slot {
+                Some(slot) => println!("Subscribed to updates from slot {}. Waiting for data...", slot),
+                None => println!("Subscribed to updates! Waiting for data..."),
+            }
+
+            let should_reconnect = loop {
+                if let Err(error) = self.flush_pending_raw_observations(false).await {
+                    eprintln!("Failed to flush buffered raw observations: {}", error);
+                }
+                if let Err(error) = self.flush_pending_materialized_observations(false).await {
+                    eprintln!("Failed to flush buffered observed settlements: {}", error);
+                }
+                match stream.next().await {
+                    Some(Ok(update)) => {
+                        if let Err(error) = self.refresh_registry_if_stale().await {
+                            let mut cache = self.registry_cache.lock().await;
+                            if cache.should_log_refresh_error() {
+                                eprintln!(
+                                    "Workspace registry refresh failed; continuing with last known cache: {}",
+                                    error
+                                );
+                            }
+                        }
+                        self.handle_update(update, &mut worker_state).await;
+                    }
+                    Some(Err(error)) => {
+                        eprintln!(
+                            "Yellowstone stream error: {}. Reconnecting in {:?}...",
+                            error, reconnect_backoff
+                        );
+                        break true;
+                    }
+                    None => {
+                        eprintln!(
+                            "Yellowstone stream closed. Reconnecting in {:?}...",
+                            reconnect_backoff
+                        );
+                        break true;
+                    }
+                }
+            };
+
+            if let Err(error) = self.flush_pending_raw_observations(true).await {
+                eprintln!(
+                    "Failed to flush buffered raw observations before reconnect: {}",
+                    error
+                );
+            }
+            if let Err(error) = self.flush_pending_materialized_observations(true).await {
+                eprintln!(
+                    "Failed to flush buffered observed settlements before reconnect: {}",
+                    error
+                );
+            }
+
+            if should_reconnect {
+                tokio::time::sleep(reconnect_backoff).await;
+                reconnect_backoff = next_reconnect_backoff(reconnect_backoff);
+                continue;
+            }
         }
-        if let Err(error) = self.flush_pending_materialized_observations(true).await {
-            eprintln!(
-                "Failed to flush buffered observed settlements during shutdown: {}",
-                error
-            );
-        }
-        println!("Yellowstone Worker shutting down...");
     }
 
     async fn refresh_registry_if_stale(&self) -> Result<(), reqwest::Error> {
@@ -313,6 +361,7 @@ impl YellowstoneWorker {
 
         match update.update_oneof {
             Some(UpdateOneof::Account(account_update)) => {
+                self.observe_slot(account_update.slot);
                 if let Some(account) = account_update.account {
                     let pubkey = bs58::encode(&account.pubkey).into_string();
                     let signature = account
@@ -411,6 +460,7 @@ impl YellowstoneWorker {
                 }
             }
             Some(UpdateOneof::Transaction(tx)) => {
+                self.observe_slot(tx.slot);
                 let worker_received_at = Utc::now();
                 if self.debug_stream_logs {
                     let signature = tx
@@ -435,6 +485,7 @@ impl YellowstoneWorker {
                 }
             }
             Some(UpdateOneof::TransactionStatus(status)) => {
+                self.observe_slot(status.slot);
                 if self.debug_stream_logs {
                     println!(
                         "TRANSACTION_STATUS filters=[{}] slot={} signature={}",
@@ -445,11 +496,13 @@ impl YellowstoneWorker {
                 }
             }
             Some(UpdateOneof::Slot(slot)) => {
+                self.observe_slot(slot.slot);
                 if self.debug_stream_logs {
                     println!("SLOT filters=[{}] slot={} status={}", filters, slot.slot, slot.status);
                 }
             }
             Some(UpdateOneof::Block(block)) => {
+                self.observe_slot(block.slot);
                 if self.debug_stream_logs {
                     println!(
                         "BLOCK filters=[{}] slot={} txs={} accounts={}",
@@ -458,6 +511,7 @@ impl YellowstoneWorker {
                 }
             }
             Some(UpdateOneof::BlockMeta(block_meta)) => {
+                self.observe_slot(block_meta.slot);
                 if self.debug_parsed_updates {
                     self.log_parsed_block_meta_update(&filters, Utc::now(), &block_meta);
                 }
@@ -525,6 +579,9 @@ impl YellowstoneWorker {
             let registry_guard = self.registry_cache.lock().await;
             registry_guard.registry().clone()
         };
+        let registry = self
+            .refresh_registry_for_matching_retry(&registry, &context)
+            .await;
         if self
             .materialize_observed_settlement(
                 &registry,
@@ -536,6 +593,37 @@ impl YellowstoneWorker {
         {
             let mut recent_signatures = self.recent_signatures.lock().await;
             recent_signatures.insert(&context.signature);
+        }
+    }
+
+    async fn refresh_registry_for_matching_retry(
+        &self,
+        registry: &WorkspaceRegistry,
+        context: &TransactionContext,
+    ) -> WorkspaceRegistry {
+        if !should_retry_matching_with_fresh_registry(registry, context) {
+            return registry.clone();
+        }
+
+        let mut registry_cache = self.registry_cache.lock().await;
+        let refresh_age = registry_cache
+            .refresh_age()
+            .unwrap_or(MATCH_RETRY_REFRESH_MIN_AGE);
+        if refresh_age < MATCH_RETRY_REFRESH_MIN_AGE {
+            return registry_cache.registry().clone();
+        }
+
+        match registry_cache.refresh_now().await {
+            Ok(()) => registry_cache.registry().clone(),
+            Err(error) => {
+                if registry_cache.should_log_refresh_error() {
+                    eprintln!(
+                        "Workspace registry refresh for matching retry failed; continuing with last known cache: {}",
+                        error
+                    );
+                }
+                registry_cache.registry().clone()
+            }
         }
     }
 
@@ -979,11 +1067,50 @@ impl YellowstoneWorker {
             Err(error) => eprintln!("Failed to serialize parsed block meta update: {}", error),
         }
     }
+
+    fn observe_slot(&self, slot: u64) {
+        self.latest_seen_slot.fetch_max(slot, Ordering::Relaxed);
+    }
+
+    fn replay_from_slot(&self) -> Option<u64> {
+        let latest_seen_slot = self.latest_seen_slot.load(Ordering::Relaxed);
+        if latest_seen_slot == 0 {
+            None
+        } else {
+            Some(latest_seen_slot.saturating_sub(1))
+        }
+    }
 }
 
 fn is_within_match_window(requested_at: DateTime<Utc>, observed_at: DateTime<Utc>) -> bool {
     let delta = observed_at.signed_duration_since(requested_at).num_seconds();
     (-MATCH_WINDOW_BEFORE_REQUEST_SECONDS..=MATCH_WINDOW_AFTER_REQUEST_SECONDS).contains(&delta)
+}
+
+fn should_retry_matching_with_fresh_registry(
+    registry: &WorkspaceRegistry,
+    context: &TransactionContext,
+) -> bool {
+    let observed_transfers = reconstruct_observed_transfers(context);
+    let observed_payments = reconstruct_observed_payments(context, &observed_transfers);
+
+    observed_payments.iter().any(|payment| {
+        let Some(destination_wallet) = payment.destination_wallet.as_deref() else {
+            return false;
+        };
+
+        let Some(destination_matches) = registry.matches_for_wallet(destination_wallet) else {
+            return false;
+        };
+
+        !destination_matches.iter().any(|matched| {
+            registry
+                .pending_requests_for_destination_wallet(&matched.workspace_id, destination_wallet)
+                .unwrap_or(&[])
+                .iter()
+                .any(|request| is_within_match_window(request.requested_at, context.event_time))
+        })
+    })
 }
 
 fn format_amount(amount_raw: i128) -> String {
@@ -997,6 +1124,10 @@ fn format_amount(amount_raw: i128) -> String {
     } else {
         format!("{}.{:06}", whole, frac)
     }
+}
+
+fn next_reconnect_backoff(current: Duration) -> Duration {
+    (current * 2).min(STREAM_RECONNECT_MAX_BACKOFF)
 }
 
 fn parse_amount_raw(value: &str) -> i128 {
@@ -1070,6 +1201,76 @@ mod tests {
         assert_eq!(format_amount(1), "0.000001");
         assert_eq!(format_amount(12_345_678), "12.345678");
         assert_eq!(format_amount(-12_345_678), "-12.345678");
+    }
+
+    #[test]
+    fn matching_retry_triggers_when_workspace_wallet_exists_but_request_is_missing() {
+        let destination_wallet = Pubkey::new_unique();
+        let destination_token_account = Pubkey::new_unique();
+        let workspace_id = Uuid::new_v4().to_string();
+        let registry = WorkspaceRegistry::from_matches(vec![WorkspaceAddressMatch {
+            workspace_id,
+            wallet_address: destination_wallet.to_string(),
+        }]);
+
+        let update = make_usdc_transaction_update(
+            21,
+            "1111111111111111111111111111111B",
+            vec![TokenBalanceDelta {
+                token_account: destination_token_account,
+                wallet_owner: destination_wallet,
+                amount_before_raw: 0,
+                amount_after_raw: 9_213,
+            }],
+        );
+        let tx = match update.update_oneof {
+            Some(UpdateOneof::Transaction(tx)) => tx,
+            _ => panic!("expected transaction update"),
+        };
+        let context =
+            build_transaction_context(&tx, Utc::now()).expect("transaction context should build");
+
+        assert!(should_retry_matching_with_fresh_registry(&registry, &context));
+    }
+
+    #[test]
+    fn matching_retry_does_not_trigger_when_request_is_already_present() {
+        let destination_wallet = Pubkey::new_unique();
+        let destination_token_account = Pubkey::new_unique();
+        let workspace_id = Uuid::new_v4().to_string();
+        let registry = WorkspaceRegistry::with_transfer_requests(
+            vec![WorkspaceAddressMatch {
+                workspace_id: workspace_id.clone(),
+                wallet_address: destination_wallet.to_string(),
+            }],
+            vec![WorkspaceTransferRequestMatch {
+                transfer_request_id: Uuid::new_v4().to_string(),
+                workspace_id,
+                destination_wallet_address: destination_wallet.to_string(),
+                amount_raw: 10_000,
+                requested_at: Utc::now(),
+                request_type: "wallet_transfer".to_string(),
+            }],
+        );
+
+        let update = make_usdc_transaction_update(
+            22,
+            "1111111111111111111111111111111C",
+            vec![TokenBalanceDelta {
+                token_account: destination_token_account,
+                wallet_owner: destination_wallet,
+                amount_before_raw: 0,
+                amount_after_raw: 9_213,
+            }],
+        );
+        let tx = match update.update_oneof {
+            Some(UpdateOneof::Transaction(tx)) => tx,
+            _ => panic!("expected transaction update"),
+        };
+        let context =
+            build_transaction_context(&tx, Utc::now()).expect("transaction context should build");
+
+        assert!(!should_retry_matching_with_fresh_registry(&registry, &context));
     }
 
     #[tokio::test]

@@ -115,6 +115,10 @@ impl WorkspaceRegistryCache {
         Err(last_error.expect("refresh retry loop should capture error"))
     }
 
+    pub fn refresh_age(&self) -> Option<Duration> {
+        self.last_refresh_at.map(|last_refresh| last_refresh.elapsed())
+    }
+
     pub fn should_log_refresh_error(&mut self) -> bool {
         let should_log = self
             .last_refresh_error_log_at

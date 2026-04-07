@@ -33,7 +33,7 @@ impl AppConfig {
             env::var("WORKSPACE_REFRESH_INTERVAL_SECONDS")
                 .ok()
                 .and_then(|value| value.parse::<u64>().ok())
-                .unwrap_or(60),
+                .unwrap_or(1),
         );
         let debug_account_logs = env::var("DEBUG_YELLOWSTONE_ACCOUNTS")
             .ok()

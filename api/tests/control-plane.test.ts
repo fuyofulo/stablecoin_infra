@@ -1059,6 +1059,212 @@ test('reconciliation queue auto-resolves unknown fee recipient labels from Orb t
   }
 });
 
+test('address label resolver skips null Orb tags and still stores usable labels', async () => {
+  const setup = await createTransferRequestSetup({ status: 'submitted' });
+  const signature = '5w4JwH5nWZ9N6cY81mYAwU3S6fP3LhZq1BtYV4Bn8Jq2pHfNE3gEM6VKezxJXvLjVdv6vQ2MSmTYqZ6DxPzLy3EZ';
+  const transferId = '12121212-1212-4212-8212-121212121212';
+  const feeTransferId = '15151515-1515-4515-8515-151515151515';
+  const nullTransferId = '16161616-1616-4616-8616-161616161616';
+  const paymentIdExpected = '13131313-1313-4313-8313-131313131313';
+  const paymentIdFee = '14141414-1414-4414-8414-141414141414';
+  const nullAddress = '11111111111111111111111111111111';
+  const labeledAddress = 'HFqp6ErWHY6Uzhj8rFyjYuDya2mXUpYEk8VW75K9PSiY';
+  const eventTime = '2026-04-07 11:32:44.313';
+  const createdAt = '2026-04-07 11:38:15.253';
+
+  await insertClickHouseRows('observed_transfers', [
+    {
+      transfer_id: transferId,
+      signature,
+      slot: 411600001,
+      event_time: eventTime,
+      asset: 'usdc',
+      source_token_account: '64HWdAaTsTVvsQWQnw4PKVWeQ5BQXJ5dT6fTwerqo9US',
+      source_wallet: 'VhfmPjvQxSiQW2FjnvoghewGGVYaWcz4cmDxpFPQEti',
+      destination_token_account: 'Fe6xZzfQf6nmx4Z1TnYeo3gvBmXXuE3VtMuKmBGJe3dm',
+      destination_wallet: setup.destinationAddress.address,
+      amount_raw: '9204',
+      amount_decimal: '0.009204',
+      transfer_kind: 'transfer_checked',
+      instruction_index: 2,
+      inner_instruction_index: null,
+      route_group: `${signature}:ix:2`,
+      leg_role: 'direct_settlement',
+      properties_json: '{}',
+    },
+    {
+      transfer_id: feeTransferId,
+      signature,
+      slot: 411600001,
+      event_time: eventTime,
+      asset: 'usdc',
+      source_token_account: '64HWdAaTsTVvsQWQnw4PKVWeQ5BQXJ5dT6fTwerqo9US',
+      source_wallet: 'VhfmPjvQxSiQW2FjnvoghewGGVYaWcz4cmDxpFPQEti',
+      destination_token_account: '9w3N4xpmrRkUQW5p5P4L6r5aM5N8V7eV1oF2T3wY4uC7',
+      destination_wallet: labeledAddress,
+      amount_raw: '796',
+      amount_decimal: '0.000796',
+      transfer_kind: 'transfer_checked',
+      instruction_index: 3,
+      inner_instruction_index: null,
+      route_group: `${signature}:ix:3`,
+      leg_role: 'direct_settlement',
+      properties_json: '{}',
+    },
+    {
+      transfer_id: nullTransferId,
+      signature,
+      slot: 411600001,
+      event_time: eventTime,
+      asset: 'usdc',
+      source_token_account: '64HWdAaTsTVvsQWQnw4PKVWeQ5BQXJ5dT6fTwerqo9US',
+      source_wallet: 'VhfmPjvQxSiQW2FjnvoghewGGVYaWcz4cmDxpFPQEti',
+      destination_token_account: '8w3N4xpmrRkUQW5p5P4L6r5aM5N8V7eV1oF2T3wY4uC7',
+      destination_wallet: nullAddress,
+      amount_raw: '1',
+      amount_decimal: '0.000001',
+      transfer_kind: 'transfer_checked',
+      instruction_index: 4,
+      inner_instruction_index: null,
+      route_group: `${signature}:ix:4`,
+      leg_role: 'direct_settlement',
+      properties_json: '{}',
+    },
+  ]);
+
+  await insertClickHouseRows('observed_payments', [
+    {
+      payment_id: paymentIdExpected,
+      signature,
+      slot: 411600001,
+      event_time: eventTime,
+      asset: 'usdc',
+      source_wallet: 'VhfmPjvQxSiQW2FjnvoghewGGVYaWcz4cmDxpFPQEti',
+      destination_wallet: setup.destinationAddress.address,
+      gross_amount_raw: '9204',
+      gross_amount_decimal: '0.009204',
+      net_destination_amount_raw: '9204',
+      net_destination_amount_decimal: '0.009204',
+      fee_amount_raw: '0',
+      fee_amount_decimal: '0.000000',
+      route_count: 1,
+      payment_kind: 'direct',
+      reconstruction_rule: 'route_group_balance_bundle',
+      confidence_band: 'high',
+      properties_json: '{}',
+      created_at: createdAt,
+    },
+    {
+      payment_id: paymentIdFee,
+      signature,
+      slot: 411600001,
+      event_time: eventTime,
+      asset: 'usdc',
+      source_wallet: 'VhfmPjvQxSiQW2FjnvoghewGGVYaWcz4cmDxpFPQEti',
+      destination_wallet: labeledAddress,
+      gross_amount_raw: '796',
+      gross_amount_decimal: '0.000796',
+      net_destination_amount_raw: '796',
+      net_destination_amount_decimal: '0.000796',
+      fee_amount_raw: '0',
+      fee_amount_decimal: '0.000000',
+      route_count: 1,
+      payment_kind: 'direct',
+      reconstruction_rule: 'route_group_balance_bundle',
+      confidence_band: 'high',
+      properties_json: '{}',
+      created_at: createdAt,
+    },
+  ]);
+
+  await insertClickHouseRows('settlement_matches', [
+    {
+      workspace_id: setup.workspace.workspaceId,
+      transfer_request_id: setup.transferRequest.transferRequestId,
+      signature,
+      observed_transfer_id: transferId,
+      match_status: 'matched_partial',
+      confidence_score: 72,
+      confidence_band: 'partial',
+      matched_amount_raw: '9204',
+      amount_variance_raw: '796',
+      destination_match_type: 'wallet_destination',
+      time_delta_seconds: 12,
+      match_rule: 'payment_book_fifo_allocator',
+      candidate_count: 1,
+      explanation: 'Observed payment only partially covered the requested amount.',
+      observed_event_time: eventTime,
+      matched_at: createdAt,
+      updated_at: createdAt,
+    },
+  ]);
+
+  const originalFetch = globalThis.fetch;
+  const originalEnabled = config.orbTagsResolveEnabled;
+  config.orbTagsResolveEnabled = true;
+  globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+    if (url === config.orbTagsResolveUrl) {
+      return new Response(
+        JSON.stringify({
+          tags: {
+            [nullAddress]: null,
+            [labeledAddress]: {
+              address: labeledAddress,
+              name: 'Jupiter Aggregator Authority 16',
+              type: 'DeFi',
+              category: 'DeFi',
+              entityType: 'account',
+            },
+          },
+        }),
+        {
+          status: 200,
+          headers: {
+            'content-type': 'application/json',
+          },
+        },
+      );
+    }
+
+    return originalFetch(input as never, init);
+  };
+
+  try {
+    const detailResponse = await fetch(
+      `${baseUrl}/workspaces/${setup.workspace.workspaceId}/reconciliation-queue/${setup.transferRequest.transferRequestId}`,
+      { headers: authHeaders(setup.sessionToken) },
+    );
+    assert.equal(detailResponse.status, 200);
+    const detail = await detailResponse.json();
+
+    assert.match(detail.matchExplanation, /Jupiter Aggregator Authority 16/);
+
+    const stored = await prisma.addressLabel.findUnique({
+      where: {
+        chain_address: {
+          chain: 'solana',
+          address: labeledAddress,
+        },
+      },
+    });
+    assert.equal(stored?.entityName, 'Jupiter Aggregator Authority 16');
+
+    const skipped = await prisma.addressLabel.findUnique({
+      where: {
+        chain_address: {
+          chain: 'solana',
+          address: nullAddress,
+        },
+      },
+    });
+    assert.equal(skipped, null);
+  } finally {
+    globalThis.fetch = originalFetch;
+    config.orbTagsResolveEnabled = originalEnabled;
+  }
+});
+
 test('dedicated reconciliation queue endpoint supports display-state filtering and detail lookup', async () => {
   const setup = await createSeededPartialExceptionRequest();
 

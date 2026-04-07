@@ -6,13 +6,14 @@ import { prisma } from './prisma.js';
 type OrbResolveResponse = {
   tags?: Record<
     string,
-    {
-      address?: string;
-      name?: string;
-      type?: string;
-      category?: string;
-      entityType?: string;
-    }
+    | {
+        address?: string;
+        name?: string;
+        type?: string;
+        category?: string;
+        entityType?: string;
+      }
+    | null
   >;
 };
 
@@ -72,6 +73,10 @@ async function resolveAddressLabelsFromOrb(chain: string, addresses: string[]) {
     const tags = payload.tags ?? {};
     const rows = Object.entries(tags)
       .map(([address, tag]) => {
+        if (!tag) {
+          return null;
+        }
+
         const name = tag.name?.trim();
         if (!name) {
           return null;

@@ -36,7 +36,8 @@ import type {
 } from './types';
 
 type AuthStatus = 'booting' | 'anonymous' | 'authenticated';
-const WORKSPACE_REFRESH_INTERVAL_MS = 10_000;
+const WORKSPACE_STATIC_REFRESH_INTERVAL_MS = 10_000;
+const RECONCILIATION_LIVE_REFRESH_INTERVAL_MS = 2_000;
 
 function ThemeIcon({ theme }: { theme: Theme }) {
   if (theme === 'dark') {
@@ -144,6 +145,17 @@ export function App() {
     }
 
     void loadWorkspace(currentWorkspaceId);
+  }, [authStatus, currentWorkspaceId]);
+
+  useEffect(() => {
+    if (authStatus !== 'authenticated' || !currentWorkspaceId) {
+      return;
+    }
+
+    void Promise.all([
+      loadObservedTransfersData(currentWorkspaceId),
+      loadReconciliationData(currentWorkspaceId),
+    ]);
   }, [authStatus, currentWorkspaceId, reconciliationFilter]);
 
   useEffect(() => {
@@ -152,13 +164,30 @@ export function App() {
     }
 
     const intervalId = window.setInterval(() => {
-      void loadWorkspace(currentWorkspaceId);
-    }, WORKSPACE_REFRESH_INTERVAL_MS);
+      void loadWorkspaceStaticData(currentWorkspaceId, { silent: true });
+    }, WORKSPACE_STATIC_REFRESH_INTERVAL_MS);
 
     return () => {
       window.clearInterval(intervalId);
     };
   }, [authStatus, currentWorkspaceId, route.name]);
+
+  useEffect(() => {
+    if (authStatus !== 'authenticated' || !currentWorkspaceId || route.name !== 'workspaceHome') {
+      return;
+    }
+
+    const intervalId = window.setInterval(() => {
+      void Promise.all([
+        loadObservedTransfersData(currentWorkspaceId, { silent: true }),
+        loadReconciliationData(currentWorkspaceId, { silent: true }),
+      ]);
+    }, RECONCILIATION_LIVE_REFRESH_INTERVAL_MS);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [authStatus, currentWorkspaceId, route.name, reconciliationFilter, selectedReconciliationId]);
 
   function resetWorkspaceState() {
     setAddresses([]);
@@ -213,43 +242,55 @@ export function App() {
     return nextSession;
   }
 
-  async function loadReconciliationDetail(workspaceId: string, transferRequestId: string) {
+  async function loadReconciliationDetail(
+    workspaceId: string,
+    transferRequestId: string,
+    options?: { silent?: boolean },
+  ) {
     try {
-      setIsLoadingReconciliationDetail(true);
+      if (!options?.silent) {
+        setIsLoadingReconciliationDetail(true);
+      }
       const detail = await api.getReconciliationDetail(workspaceId, transferRequestId);
       setSelectedReconciliationDetail(detail);
       setSelectedReconciliationId(transferRequestId);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Failed to load request detail');
     } finally {
-      setIsLoadingReconciliationDetail(false);
+      if (!options?.silent) {
+        setIsLoadingReconciliationDetail(false);
+      }
     }
   }
 
-  async function loadWorkspace(workspaceId: string) {
+  async function loadWorkspaceStaticData(workspaceId: string, options?: { silent?: boolean }) {
     try {
       setErrorMessage(null);
-      setIsLoadingWorkspace(true);
+      if (!options?.silent) {
+        setIsLoadingWorkspace(true);
+      }
 
-      const [
-        nextAddresses,
-        nextTransferRequests,
-        nextTransfers,
-        nextReconciliation,
-      ] = await Promise.all([
+      const [nextAddresses, nextTransferRequests] = await Promise.all([
         api.listAddresses(workspaceId),
         api.listTransferRequests(workspaceId),
-        api.listTransfers(workspaceId),
-        api.listReconciliationQueue(
-          workspaceId,
-          reconciliationFilter === 'all' ? undefined : reconciliationFilter,
-        ),
       ]);
 
       setAddresses(nextAddresses.items);
       setTransferRequests(nextTransferRequests.items);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Failed to load workspace');
+    } finally {
+      if (!options?.silent) {
+        setIsLoadingWorkspace(false);
+      }
+    }
+  }
+
+  async function loadObservedTransfersData(workspaceId: string, _options?: { silent?: boolean }) {
+    try {
+      setErrorMessage(null);
+      const nextTransfers = await api.listTransfers(workspaceId);
       setObservedTransfers(nextTransfers.items);
-      setReconciliationRows(nextReconciliation.items);
 
       if (
         selectedObservedTransfer &&
@@ -257,22 +298,45 @@ export function App() {
       ) {
         setSelectedObservedTransfer(null);
       }
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Failed to load observed transfers');
+    }
+  }
+
+  async function loadReconciliationData(workspaceId: string, options?: { silent?: boolean }) {
+    try {
+      setErrorMessage(null);
+      const nextReconciliation = await api.listReconciliationQueue(
+        workspaceId,
+        reconciliationFilter === 'all' ? undefined : reconciliationFilter,
+      );
+      setReconciliationRows(nextReconciliation.items);
+
       if (
         selectedReconciliationId &&
         !nextReconciliation.items.some((row) => row.transferRequestId === selectedReconciliationId)
       ) {
         setSelectedReconciliationId(null);
         setSelectedReconciliationDetail(null);
+        return;
       }
 
       if (selectedReconciliationId) {
-        await loadReconciliationDetail(workspaceId, selectedReconciliationId);
+        await loadReconciliationDetail(workspaceId, selectedReconciliationId, {
+          silent: options?.silent ?? true,
+        });
       }
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'Failed to load workspace');
-    } finally {
-      setIsLoadingWorkspace(false);
+      setErrorMessage(error instanceof Error ? error.message : 'Failed to load reconciliation queue');
     }
+  }
+
+  async function loadWorkspace(workspaceId: string) {
+    await Promise.all([
+      loadWorkspaceStaticData(workspaceId),
+      loadObservedTransfersData(workspaceId),
+      loadReconciliationData(workspaceId),
+    ]);
   }
 
   async function handleLogin(event: FormEvent<HTMLFormElement>) {

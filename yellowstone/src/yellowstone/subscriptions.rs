@@ -8,6 +8,10 @@ const USDC_MINT: &str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 const SPL_TOKEN_PROGRAM_ID: &str = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
 
 pub fn create_subscription_request() -> SubscribeRequest {
+    create_subscription_request_from_slot(None)
+}
+
+pub fn create_subscription_request_from_slot(from_slot: Option<u64>) -> SubscribeRequest {
     let mut transactions = HashMap::new();
     let mut blocks_meta = HashMap::new();
 
@@ -38,13 +42,13 @@ pub fn create_subscription_request() -> SubscribeRequest {
         commitment: Some(CommitmentLevel::Confirmed as i32),
         accounts_data_slice: vec![],
         ping: None,
-        from_slot: None,
+        from_slot,
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::create_subscription_request;
+    use super::{create_subscription_request, create_subscription_request_from_slot};
 
     #[test]
     fn subscription_request_uses_transactions_and_blocks_meta_only() {
@@ -55,5 +59,12 @@ mod tests {
         assert_eq!(request.blocks_meta.len(), 1);
         assert!(request.transactions.contains_key("usdc_token_transactions"));
         assert!(request.blocks_meta.contains_key("chain_progress"));
+    }
+
+    #[test]
+    fn subscription_request_supports_replay_from_slot() {
+        let request = create_subscription_request_from_slot(Some(123));
+
+        assert_eq!(request.from_slot, Some(123));
     }
 }
