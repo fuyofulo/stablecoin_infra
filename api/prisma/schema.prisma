@@ -206,3 +206,24 @@ model ExceptionState {
   @@index([workspaceId, status, updatedAt(sort: Desc)])
   @@map("exception_states")
 }
+
+model AddressLabel {
+  addressLabelId String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid @map("address_label_id")
+  chain          String
+  address        String
+  entityName     String   @map("entity_name")
+  entityType     String   @map("entity_type")
+  labelKind      String   @map("label_kind")
+  roleTags       Json     @default("[]") @map("role_tags")
+  source         String   @default("manual")
+  sourceRef      String?  @map("source_ref")
+  confidence     String   @default("seeded")
+  isActive       Boolean  @default(true) @map("is_active")
+  notes          String?
+  createdAt      DateTime @default(now()) @db.Timestamptz(6) @map("created_at")
+  updatedAt      DateTime @updatedAt @db.Timestamptz(6) @map("updated_at")
+
+  @@unique([chain, address])
+  @@index([chain, address])
+  @@map("address_labels")
+}

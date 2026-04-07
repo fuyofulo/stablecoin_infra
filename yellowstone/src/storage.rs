@@ -7,6 +7,7 @@ use std::fmt;
 
 type QueryResult<T> = Result<T, Box<dyn Error + Send + Sync>>;
 const OBSERVED_TRANSFERS_INSERT_ROWS: usize = 128;
+const OBSERVED_TRANSACTIONS_INSERT_ROWS: usize = 256;
 const OBSERVED_PAYMENTS_INSERT_ROWS: usize = 64;
 const RAW_OBSERVATIONS_INSERT_ROWS: usize = 512;
 const MATCHER_EVENTS_INSERT_ROWS: usize = 128;
@@ -60,11 +61,16 @@ impl ClickHouseWriter {
         .await
     }
 
-    pub async fn insert_observed_transaction(
+    pub async fn insert_observed_transactions(
         &self,
-        row: &ObservedTransactionRow,
+        rows: &[ObservedTransactionRow],
     ) -> QueryResult<()> {
-        self.insert_json_each_row("observed_transactions", row).await
+        self.insert_json_each_row_many_chunked(
+            "observed_transactions",
+            rows,
+            OBSERVED_TRANSACTIONS_INSERT_ROWS,
+        )
+        .await
     }
 
     pub async fn insert_observed_transfers(
@@ -142,30 +148,6 @@ impl ClickHouseWriter {
                 self.database
             ))
         .await
-    }
-
-    async fn insert_json_each_row<T: Serialize>(
-        &self,
-        table: &str,
-        row: &T,
-    ) -> QueryResult<()> {
-        let query = format!("INSERT INTO {}.{} FORMAT JSONEachRow", self.database, table);
-        let url = self.insert_url(&query);
-        let payload = format!(
-            "{}\n",
-            serde_json::to_string(row).expect("row should serialize to JSON")
-        );
-
-        let response = self
-            .client
-            .post(url)
-            .basic_auth(&self.user, Some(&self.password))
-            .body(payload)
-            .send()
-            .await?;
-        self.ensure_success(response).await?;
-
-        Ok(())
     }
 
     async fn insert_json_each_row_many<T: Serialize>(
@@ -291,6 +273,10 @@ pub struct ObservedTransactionRow {
     pub slot: u64,
     #[serde(serialize_with = "serialize_clickhouse_datetime")]
     pub event_time: DateTime<Utc>,
+    #[serde(serialize_with = "serialize_optional_clickhouse_datetime")]
+    pub yellowstone_created_at: Option<DateTime<Utc>>,
+    #[serde(serialize_with = "serialize_optional_clickhouse_datetime")]
+    pub worker_received_at: Option<DateTime<Utc>>,
     pub asset: String,
     pub finality_state: String,
     pub status: String,

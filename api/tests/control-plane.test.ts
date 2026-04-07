@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 import { after, before, beforeEach, test } from 'node:test';
 import { AddressInfo } from 'node:net';
 import { createApp } from '../src/app.js';
+import { config } from '../src/config.js';
 import { executeClickHouse, insertClickHouseRows } from '../src/clickhouse.js';
 import { prisma } from '../src/prisma.js';
 import { deriveUsdcAtaForWallet } from '../src/solana.js';
@@ -51,7 +52,7 @@ before(async () => {
 });
 
 beforeEach(async () => {
-  await prisma.$executeRawUnsafe(TRUNCATE_SQL);
+  await executeWithDeadlockRetry(() => prisma.$executeRawUnsafe(TRUNCATE_SQL));
   await clearClickHouseTables();
 });
 
@@ -383,6 +384,61 @@ test('workspace members can add request notes without admin mutation access', as
   assert.equal(note.authorUser.email, 'member@example.com');
 });
 
+test('address label registry exposes seeded labels and supports upsert-style maintenance', async () => {
+  const login = await loginUser('labels@example.com', 'Label Maintainer');
+
+  const seededResponse = await fetch(`${baseUrl}/address-labels?search=Jupiter`, {
+    headers: authHeaders(login.sessionToken),
+  });
+  assert.equal(seededResponse.status, 200);
+  const seeded = await seededResponse.json();
+
+  assert.equal(
+    seeded.items.some(
+      (item: { entityName: string; address: string }) =>
+        item.entityName === 'Jupiter Aggregator Authority 11' &&
+        item.address === '69yhtoJR4JYPPABZcSNkzuqbaFbwHsCkja1sP1Q2aVT5',
+    ),
+    true,
+  );
+
+  const createResponse = await fetch(`${baseUrl}/address-labels`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      ...authHeaders(login.sessionToken),
+    },
+    body: JSON.stringify({
+      chain: 'solana',
+      address: 'GP8StUXNYSZjPikyRsvkTbvRV1GBxMErb59cpeCJnDf1',
+      entityName: 'Test Fee Recipient',
+      entityType: 'aggregator',
+      labelKind: 'fee_collector',
+      roleTags: ['fee_recipient'],
+      confidence: 'operator',
+    }),
+  });
+  assert.equal(createResponse.status, 201);
+  const created = await createResponse.json();
+  assert.equal(created.entityName, 'Test Fee Recipient');
+
+  const patchResponse = await fetch(`${baseUrl}/address-labels/${created.addressLabelId}`, {
+    method: 'PATCH',
+    headers: {
+      'content-type': 'application/json',
+      ...authHeaders(login.sessionToken),
+    },
+    body: JSON.stringify({
+      entityName: 'Updated Fee Recipient',
+      notes: 'Confirmed from repeated operator review.',
+    }),
+  });
+  assert.equal(patchResponse.status, 200);
+  const updated = await patchResponse.json();
+  assert.equal(updated.entityName, 'Updated Fee Recipient');
+  assert.equal(updated.notes, 'Confirmed from repeated operator review.');
+});
+
 test('reconciliation and request detail expose derived display state, explanations, and linkage', async () => {
   const setup = await createTransferRequestSetup({ status: 'draft' });
   const transferId = crypto.randomUUID();
@@ -671,6 +727,338 @@ test('reconciliation detail explains fee-adjusted partial matches with known rec
   );
 });
 
+test('reconciliation detail auto-resolves unknown fee recipient labels from Orb tags', async () => {
+  const setup = await createTransferRequestSetup({ status: 'draft' });
+  const transferId = crypto.randomUUID();
+  const paymentId = crypto.randomUUID();
+  const feePaymentId = crypto.randomUUID();
+  const signature = '8b2X1EnKR4examplejyqJkWUGpX';
+  const eventTime = '2026-04-07 11:13:00.000';
+  const createdAt = '2026-04-07 11:18:00.000';
+  const jupiterAuthority9 = '3LoAYHuSd7Gh8d7RTFnhvYtiTiefdZ5ByamU42vkzd76';
+
+  await post(
+    `/workspaces/${setup.workspace.workspaceId}/transfer-requests/${setup.transferRequest.transferRequestId}/transitions`,
+    {
+      toStatus: 'submitted',
+      linkedPaymentId: paymentId,
+      linkedTransferIds: [transferId],
+      linkedSignature: signature,
+      payloadJson: {
+        source: 'test-seed',
+      },
+    },
+    setup.sessionToken,
+  );
+
+  await insertClickHouseRows('observed_transfers', [
+    {
+      transfer_id: transferId,
+      signature,
+      slot: 411620000,
+      event_time: eventTime,
+      asset: 'usdc',
+      source_token_account: '64HWdAaTsTVvsQWQnw4PKVWeQ5BQXJ5dT6fTwerqo9US',
+      source_wallet: 'VhfmPjvQxSiQW2FjnvoghewGGVYaWcz4cmDxpFPQEti',
+      destination_token_account: setup.destinationAddress.usdcAtaAddress,
+      destination_wallet: setup.destinationAddress.address,
+      amount_raw: '9204',
+      amount_decimal: '0.009204',
+      transfer_kind: 'spl_token_transfer_checked',
+      instruction_index: 2,
+      inner_instruction_index: null,
+      route_group: 'ix 2',
+      leg_role: 'direct_settlement',
+      properties_json: JSON.stringify({ seeded: true }),
+      created_at: createdAt,
+    },
+  ]);
+
+  await insertClickHouseRows('observed_payments', [
+    {
+      payment_id: paymentId,
+      signature,
+      slot: 411620000,
+      event_time: eventTime,
+      asset: 'usdc',
+      source_wallet: 'VhfmPjvQxSiQW2FjnvoghewGGVYaWcz4cmDxpFPQEti',
+      destination_wallet: setup.destinationAddress.address,
+      gross_amount_raw: '9204',
+      gross_amount_decimal: '0.009204',
+      net_destination_amount_raw: '9204',
+      net_destination_amount_decimal: '0.009204',
+      fee_amount_raw: '0',
+      fee_amount_decimal: '0.000000',
+      route_count: 1,
+      payment_kind: 'direct',
+      reconstruction_rule: 'route_group_balance_bundle',
+      confidence_band: 'partial',
+      properties_json: JSON.stringify({ seeded: true }),
+      created_at: createdAt,
+    },
+    {
+      payment_id: feePaymentId,
+      signature,
+      slot: 411620000,
+      event_time: eventTime,
+      asset: 'usdc',
+      source_wallet: 'VhfmPjvQxSiQW2FjnvoghewGGVYaWcz4cmDxpFPQEti',
+      destination_wallet: jupiterAuthority9,
+      gross_amount_raw: '796',
+      gross_amount_decimal: '0.000796',
+      net_destination_amount_raw: '796',
+      net_destination_amount_decimal: '0.000796',
+      fee_amount_raw: '0',
+      fee_amount_decimal: '0.000000',
+      route_count: 1,
+      payment_kind: 'direct',
+      reconstruction_rule: 'route_group_balance_bundle',
+      confidence_band: 'partial',
+      properties_json: JSON.stringify({ seeded: true }),
+      created_at: createdAt,
+    },
+  ]);
+
+  await insertClickHouseRows('settlement_matches', [
+    {
+      workspace_id: setup.workspace.workspaceId,
+      transfer_request_id: setup.transferRequest.transferRequestId,
+      signature,
+      observed_transfer_id: transferId,
+      match_status: 'matched_partial',
+      confidence_score: 72,
+      confidence_band: 'partial',
+      matched_amount_raw: '9204',
+      amount_variance_raw: '796',
+      destination_match_type: 'wallet_destination',
+      time_delta_seconds: 12,
+      match_rule: 'payment_book_fifo_allocator',
+      candidate_count: 1,
+      explanation: 'Observed payment only partially covered the requested amount.',
+      observed_event_time: eventTime,
+      matched_at: createdAt,
+      updated_at: createdAt,
+    },
+  ]);
+
+  const originalFetch = globalThis.fetch;
+  const originalEnabled = config.orbTagsResolveEnabled;
+  config.orbTagsResolveEnabled = true;
+  globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+    if (url === config.orbTagsResolveUrl) {
+      return new Response(
+        JSON.stringify({
+          tags: {
+            [jupiterAuthority9]: {
+              address: jupiterAuthority9,
+              name: 'Jupiter Aggregator Authority 9',
+              type: 'DeFi',
+              category: 'DeFi',
+              entityType: 'account',
+            },
+          },
+        }),
+        {
+          status: 200,
+          headers: {
+            'content-type': 'application/json',
+          },
+        },
+      );
+    }
+
+    return originalFetch(input as never, init);
+  };
+
+  try {
+    const detailResponse = await fetch(
+      `${baseUrl}/workspaces/${setup.workspace.workspaceId}/reconciliation-queue/${setup.transferRequest.transferRequestId}`,
+      { headers: authHeaders(setup.sessionToken) },
+    );
+    assert.equal(detailResponse.status, 200);
+    const detail = await detailResponse.json();
+
+    assert.match(detail.matchExplanation, /Jupiter Aggregator Authority 9/);
+    assert.equal(
+      detail.relatedObservedPayments.some(
+        (payment: { destinationLabel: string | null }) =>
+          payment.destinationLabel === 'Jupiter Aggregator Authority 9',
+      ),
+      true,
+    );
+
+    const stored = await prisma.addressLabel.findUnique({
+      where: {
+        chain_address: {
+          chain: 'solana',
+          address: jupiterAuthority9,
+        },
+      },
+    });
+    assert.equal(stored?.entityName, 'Jupiter Aggregator Authority 9');
+    assert.equal(stored?.source, 'orb_auto');
+  } finally {
+    globalThis.fetch = originalFetch;
+    config.orbTagsResolveEnabled = originalEnabled;
+  }
+});
+
+test('reconciliation queue auto-resolves unknown fee recipient labels from Orb tags', async () => {
+  const setup = await createTransferRequestSetup({ status: 'submitted' });
+  const signature = 'V7rERoHke8dWKCsXYMsB1QAP9Gq3CPZ7wwg4WpwtCjJb6Psd3TQwmWEWRX3e1q3hv2NN5BgLmt4f9LaS1C1s7Jj';
+  const transferId = '77777777-7777-4777-8777-777777777777';
+  const paymentIdExpected = '88888888-8888-4888-8888-888888888888';
+  const paymentIdFee = '99999999-9999-4999-8999-999999999999';
+  const jupiterAuthority16 = 'HFqp6ErWHY6Uzhj8rFyjYuDya2mXUpYEk8VW75K9PSiY';
+  const eventTime = '2026-04-07 11:32:44.313';
+  const createdAt = '2026-04-07 11:38:15.253';
+
+  await insertClickHouseRows('observed_transfers', [
+    {
+      transfer_id: transferId,
+      signature,
+      slot: 411600000,
+      event_time: eventTime,
+      asset: 'usdc',
+      source_token_account: '64HWdAaTsTVvsQWQnw4PKVWeQ5BQXJ5dT6fTwerqo9US',
+      source_wallet: 'VhfmPjvQxSiQW2FjnvoghewGGVYaWcz4cmDxpFPQEti',
+      destination_token_account: 'Fe6xZzfQf6nmx4Z1TnYeo3gvBmXXuE3VtMuKmBGJe3dm',
+      destination_wallet: setup.destinationAddress.address,
+      amount_raw: '9204',
+      amount_decimal: '0.009204',
+      transfer_kind: 'transfer_checked',
+      instruction_index: 2,
+      inner_instruction_index: null,
+      route_group: 'route-a',
+      leg_role: 'direct_settlement',
+      properties_json: null,
+      created_at: createdAt,
+    },
+  ]);
+
+  await insertClickHouseRows('observed_payments', [
+    {
+      payment_id: paymentIdExpected,
+      signature,
+      slot: 411600000,
+      event_time: eventTime,
+      asset: 'usdc',
+      source_wallet: 'VhfmPjvQxSiQW2FjnvoghewGGVYaWcz4cmDxpFPQEti',
+      destination_wallet: setup.destinationAddress.address,
+      gross_amount_raw: '9204',
+      gross_amount_decimal: '0.009204',
+      net_destination_amount_raw: '9204',
+      net_destination_amount_decimal: '0.009204',
+      fee_amount_raw: '0',
+      fee_amount_decimal: '0',
+      route_count: 1,
+      payment_kind: 'direct_settlement',
+      reconstruction_rule: 'instruction_payment',
+      confidence_band: 'high',
+      properties_json: null,
+      created_at: createdAt,
+    },
+    {
+      payment_id: paymentIdFee,
+      signature,
+      slot: 411600000,
+      event_time: eventTime,
+      asset: 'usdc',
+      source_wallet: 'VhfmPjvQxSiQW2FjnvoghewGGVYaWcz4cmDxpFPQEti',
+      destination_wallet: jupiterAuthority16,
+      gross_amount_raw: '796',
+      gross_amount_decimal: '0.000796',
+      net_destination_amount_raw: '796',
+      net_destination_amount_decimal: '0.000796',
+      fee_amount_raw: '0',
+      fee_amount_decimal: '0',
+      route_count: 1,
+      payment_kind: 'fee_leg',
+      reconstruction_rule: 'instruction_payment',
+      confidence_band: 'high',
+      properties_json: null,
+      created_at: createdAt,
+    },
+  ]);
+
+  await insertClickHouseRows('settlement_matches', [
+    {
+      workspace_id: setup.workspace.workspaceId,
+      transfer_request_id: setup.transferRequest.transferRequestId,
+      signature,
+      observed_transfer_id: transferId,
+      match_status: 'matched_partial',
+      confidence_score: 72,
+      confidence_band: 'partial',
+      matched_amount_raw: '9204',
+      amount_variance_raw: '796',
+      destination_match_type: 'wallet_destination',
+      time_delta_seconds: 12,
+      match_rule: 'payment_book_fifo_allocator',
+      candidate_count: 1,
+      explanation: 'Observed payment only partially covered the requested amount.',
+      observed_event_time: eventTime,
+      matched_at: createdAt,
+      updated_at: createdAt,
+    },
+  ]);
+
+  const originalFetch = globalThis.fetch;
+  const originalEnabled = config.orbTagsResolveEnabled;
+  config.orbTagsResolveEnabled = true;
+  globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+    if (url === config.orbTagsResolveUrl) {
+      return new Response(
+        JSON.stringify({
+          tags: {
+            [jupiterAuthority16]: {
+              address: jupiterAuthority16,
+              name: 'Jupiter Aggregator Authority 16',
+              type: 'DeFi',
+              category: 'DeFi',
+              entityType: 'account',
+            },
+          },
+        }),
+        {
+          status: 200,
+          headers: {
+            'content-type': 'application/json',
+          },
+        },
+      );
+    }
+
+    return originalFetch(input as never, init);
+  };
+
+  try {
+    const queueResponse = await fetch(
+      `${baseUrl}/workspaces/${setup.workspace.workspaceId}/reconciliation-queue?displayState=partial`,
+      { headers: authHeaders(setup.sessionToken) },
+    );
+    assert.equal(queueResponse.status, 200);
+    const queue = await queueResponse.json();
+    assert.equal(queue.items.length, 1);
+
+    const stored = await prisma.addressLabel.findUnique({
+      where: {
+        chain_address: {
+          chain: 'solana',
+          address: jupiterAuthority16,
+        },
+      },
+    });
+    assert.equal(stored?.entityName, 'Jupiter Aggregator Authority 16');
+    assert.equal(stored?.source, 'orb_auto');
+  } finally {
+    globalThis.fetch = originalFetch;
+    config.orbTagsResolveEnabled = originalEnabled;
+  }
+});
+
 test('dedicated reconciliation queue endpoint supports display-state filtering and detail lookup', async () => {
   const setup = await createSeededPartialExceptionRequest();
 
@@ -805,6 +1193,26 @@ async function createOrganizationWorkspace() {
     organization,
     workspace,
   };
+}
+
+async function executeWithDeadlockRetry<T>(fn: () => Promise<T>, attempts = 5): Promise<T> {
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error;
+      const message = error instanceof Error ? error.message : String(error);
+      if (!message.includes('Code: `40P01`') && !message.includes('deadlock detected')) {
+        throw error;
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 50 * (attempt + 1)));
+    }
+  }
+
+  throw lastError;
 }
 
 async function createTransferRequestSetup(options?: { status?: 'draft' | 'submitted' }) {

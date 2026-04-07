@@ -162,6 +162,25 @@ CREATE TABLE IF NOT EXISTS exception_states
   UNIQUE (workspace_id, exception_id)
 );
 
+CREATE TABLE IF NOT EXISTS address_labels
+(
+  address_label_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  chain TEXT NOT NULL,
+  address TEXT NOT NULL,
+  entity_name TEXT NOT NULL,
+  entity_type TEXT NOT NULL,
+  label_kind TEXT NOT NULL,
+  role_tags JSONB NOT NULL DEFAULT '[]'::jsonb,
+  source TEXT NOT NULL DEFAULT 'manual',
+  source_ref TEXT,
+  confidence TEXT NOT NULL DEFAULT 'seeded',
+  is_active BOOLEAN NOT NULL DEFAULT TRUE,
+  notes TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (chain, address)
+);
+
 ALTER TABLE transfer_requests
   ADD COLUMN IF NOT EXISTS source_workspace_address_id UUID;
 
@@ -219,6 +238,14 @@ ALTER TABLE exception_states
     status IN ('open', 'reviewed', 'expected', 'dismissed', 'reopened')
   );
 
+ALTER TABLE address_labels
+  DROP CONSTRAINT IF EXISTS chk_address_labels_confidence;
+
+ALTER TABLE address_labels
+  ADD CONSTRAINT chk_address_labels_confidence CHECK (
+    confidence IN ('seeded', 'verified', 'operator', 'unverified')
+  );
+
 DROP TABLE IF EXISTS workspace_address_object_mappings CASCADE;
 DROP TABLE IF EXISTS workspace_address_labels CASCADE;
 DROP TABLE IF EXISTS workspace_objects CASCADE;
@@ -260,6 +287,10 @@ CREATE INDEX IF NOT EXISTS idx_exception_states_workspace_exception
   ON exception_states(workspace_id, exception_id);
 CREATE INDEX IF NOT EXISTS idx_exception_states_workspace_status_updated_at
   ON exception_states(workspace_id, status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_address_labels_chain_address
+  ON address_labels(chain, address);
+CREATE INDEX IF NOT EXISTS idx_address_labels_entity_name
+  ON address_labels(entity_name);
 
 DROP TRIGGER IF EXISTS trg_organizations_updated_at ON organizations;
 CREATE TRIGGER trg_organizations_updated_at
@@ -295,3 +326,48 @@ DROP TRIGGER IF EXISTS trg_exception_states_updated_at ON exception_states;
 CREATE TRIGGER trg_exception_states_updated_at
 BEFORE UPDATE ON exception_states
 FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+DROP TRIGGER IF EXISTS trg_address_labels_updated_at ON address_labels;
+CREATE TRIGGER trg_address_labels_updated_at
+BEFORE UPDATE ON address_labels
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+INSERT INTO address_labels
+(
+  chain,
+  address,
+  entity_name,
+  entity_type,
+  label_kind,
+  role_tags,
+  source,
+  source_ref,
+  confidence,
+  is_active,
+  notes
+)
+VALUES
+(
+  'solana',
+  '69yhtoJR4JYPPABZcSNkzuqbaFbwHsCkja1sP1Q2aVT5',
+  'Jupiter Aggregator Authority 11',
+  'aggregator',
+  'fee_collector',
+  '["fee_recipient","aggregator"]'::jsonb,
+  'orb_seed',
+  'https://orbmarkets.io',
+  'seeded',
+  TRUE,
+  'Seeded from explorer labeling for recurring Jupiter fee recipient behavior.'
+)
+ON CONFLICT (chain, address) DO UPDATE
+SET
+  entity_name = EXCLUDED.entity_name,
+  entity_type = EXCLUDED.entity_type,
+  label_kind = EXCLUDED.label_kind,
+  role_tags = EXCLUDED.role_tags,
+  source = EXCLUDED.source,
+  source_ref = EXCLUDED.source_ref,
+  confidence = EXCLUDED.confidence,
+  is_active = EXCLUDED.is_active,
+  notes = EXCLUDED.notes;

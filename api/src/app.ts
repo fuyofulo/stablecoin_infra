@@ -1,5 +1,6 @@
 import express from 'express';
 import { requireAuth } from './auth.js';
+import { addressLabelsRouter } from './routes/address-labels.js';
 import { addressesRouter } from './routes/addresses.js';
 import { config } from './config.js';
 import { authRouter } from './routes/auth.js';
@@ -37,6 +38,7 @@ export function createApp() {
   app.use(authRouter);
   app.use(internalRouter);
   app.use(requireAuth());
+  app.use(addressLabelsRouter);
   app.use(organizationsRouter);
   app.use(addressesRouter);
   app.use(transferRequestsRouter);

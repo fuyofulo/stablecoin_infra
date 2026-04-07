@@ -13,6 +13,7 @@ pub struct AppConfig {
     pub workspace_refresh_interval: Duration,
     pub debug_account_logs: bool,
     pub debug_stream_logs: bool,
+    pub debug_parsed_updates: bool,
 }
 
 impl AppConfig {
@@ -42,6 +43,10 @@ impl AppConfig {
             .ok()
             .map(|value| matches!(value.trim(), "1" | "true" | "TRUE" | "yes" | "YES"))
             .unwrap_or(false);
+        let debug_parsed_updates = env::var("DEBUG_YELLOWSTONE_PARSED_UPDATES")
+            .ok()
+            .map(|value| matches!(value.trim(), "1" | "true" | "TRUE" | "yes" | "YES"))
+            .unwrap_or(false);
 
         Ok(Self {
             yellowstone_endpoint,
@@ -55,6 +60,7 @@ impl AppConfig {
             workspace_refresh_interval,
             debug_account_logs,
             debug_stream_logs,
+            debug_parsed_updates,
         })
     }
 }

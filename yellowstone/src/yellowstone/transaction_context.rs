@@ -1,10 +1,11 @@
 use chrono::{DateTime, Utc};
+use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use yellowstone_grpc_proto::geyser::SubscribeUpdateTransaction;
 
 const USDC_MINT: &str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub struct TokenBalanceChange {
     pub token_account: String,
     pub wallet_owner: String,
@@ -13,7 +14,7 @@ pub struct TokenBalanceChange {
     pub delta_raw: i128,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub struct InstructionContext {
     pub instruction_index: u32,
     pub inner_instruction_index: Option<u32>,
@@ -22,7 +23,7 @@ pub struct InstructionContext {
     pub data: Vec<u8>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub struct TransactionContext {
     pub signature: String,
     pub slot: u64,

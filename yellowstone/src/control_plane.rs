@@ -146,7 +146,7 @@ impl WorkspaceRegistryCache {
     }
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct WorkspaceRegistry {
     wallet_matches_by_address: HashMap<String, Vec<WorkspaceAddressMatch>>,
     pending_requests_by_workspace_wallet:

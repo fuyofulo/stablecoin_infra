@@ -35,6 +35,10 @@ const MATCH_WINDOW_AFTER_REQUEST_SECONDS: i64 = 24 * 60 * 60;
 const MAX_RECENT_SIGNATURES: usize = 50_000;
 const RAW_OBSERVATION_BUFFER_MAX_ROWS: usize = 512;
 const RAW_OBSERVATION_FLUSH_INTERVAL: Duration = Duration::from_millis(1_000);
+const MATERIALIZED_OBSERVATIONS_FLUSH_INTERVAL: Duration = Duration::from_millis(250);
+const OBSERVED_TRANSACTIONS_BUFFER_MAX_ROWS: usize = 512;
+const OBSERVED_TRANSFERS_BUFFER_MAX_ROWS: usize = 2_048;
+const OBSERVED_PAYMENTS_BUFFER_MAX_ROWS: usize = 512;
 
 #[derive(Default)]
 struct WorkerState {
@@ -56,6 +60,24 @@ impl Default for PendingRawObservations {
     fn default() -> Self {
         Self {
             rows: Vec::new(),
+            last_flush: Instant::now(),
+        }
+    }
+}
+
+struct PendingMaterializedObservations {
+    transactions: Vec<ObservedTransactionRow>,
+    transfers: Vec<ObservedTransferRow>,
+    payments: Vec<ObservedPaymentRow>,
+    last_flush: Instant,
+}
+
+impl Default for PendingMaterializedObservations {
+    fn default() -> Self {
+        Self {
+            transactions: Vec::new(),
+            transfers: Vec::new(),
+            payments: Vec::new(),
             last_flush: Instant::now(),
         }
     }
@@ -90,8 +112,10 @@ pub struct YellowstoneWorker {
     registry_cache: tokio::sync::Mutex<WorkspaceRegistryCache>,
     recent_signatures: tokio::sync::Mutex<RecentSignatureCache>,
     pending_raw_observations: tokio::sync::Mutex<PendingRawObservations>,
+    pending_materialized_observations: tokio::sync::Mutex<PendingMaterializedObservations>,
     debug_account_logs: bool,
     debug_stream_logs: bool,
+    debug_parsed_updates: bool,
 }
 
 impl YellowstoneWorker {
@@ -102,6 +126,7 @@ impl YellowstoneWorker {
         registry_cache: WorkspaceRegistryCache,
         debug_account_logs: bool,
         debug_stream_logs: bool,
+        debug_parsed_updates: bool,
     ) -> Self {
         Self {
             endpoint,
@@ -110,8 +135,12 @@ impl YellowstoneWorker {
             registry_cache: tokio::sync::Mutex::new(registry_cache),
             recent_signatures: tokio::sync::Mutex::new(RecentSignatureCache::default()),
             pending_raw_observations: tokio::sync::Mutex::new(PendingRawObservations::default()),
+            pending_materialized_observations: tokio::sync::Mutex::new(
+                PendingMaterializedObservations::default(),
+            ),
             debug_account_logs,
             debug_stream_logs,
+            debug_parsed_updates,
         }
     }
 
@@ -159,6 +188,9 @@ impl YellowstoneWorker {
             if let Err(error) = self.flush_pending_raw_observations(false).await {
                 eprintln!("Failed to flush buffered raw observations: {}", error);
             }
+            if let Err(error) = self.flush_pending_materialized_observations(false).await {
+                eprintln!("Failed to flush buffered observed settlements: {}", error);
+            }
             match stream.next().await {
                 Some(Ok(update)) => {
                     if let Err(error) = self.refresh_registry_if_stale().await {
@@ -180,6 +212,12 @@ impl YellowstoneWorker {
         if let Err(error) = self.flush_pending_raw_observations(true).await {
             eprintln!("Failed to flush buffered raw observations during shutdown: {}", error);
         }
+        if let Err(error) = self.flush_pending_materialized_observations(true).await {
+            eprintln!(
+                "Failed to flush buffered observed settlements during shutdown: {}",
+                error
+            );
+        }
         println!("Yellowstone Worker shutting down...");
     }
 
@@ -191,6 +229,18 @@ impl YellowstoneWorker {
     async fn enqueue_raw_observation(&self, row: RawObservationRow) {
         let mut pending = self.pending_raw_observations.lock().await;
         pending.rows.push(row);
+    }
+
+    async fn enqueue_materialized_observations(
+        &self,
+        transaction: ObservedTransactionRow,
+        transfers: Vec<ObservedTransferRow>,
+        payments: Vec<ObservedPaymentRow>,
+    ) {
+        let mut pending = self.pending_materialized_observations.lock().await;
+        pending.transactions.push(transaction);
+        pending.transfers.extend(transfers);
+        pending.payments.extend(payments);
     }
 
     async fn flush_pending_raw_observations(
@@ -212,6 +262,41 @@ impl YellowstoneWorker {
         };
 
         self.writer.insert_raw_observations(&rows).await
+    }
+
+    async fn flush_pending_materialized_observations(
+        &self,
+        force: bool,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let (transactions, transfers, payments) = {
+            let mut pending = self.pending_materialized_observations.lock().await;
+            let should_flush = force
+                || pending.transactions.len() >= OBSERVED_TRANSACTIONS_BUFFER_MAX_ROWS
+                || pending.transfers.len() >= OBSERVED_TRANSFERS_BUFFER_MAX_ROWS
+                || pending.payments.len() >= OBSERVED_PAYMENTS_BUFFER_MAX_ROWS
+                || pending.last_flush.elapsed() >= MATERIALIZED_OBSERVATIONS_FLUSH_INTERVAL;
+
+            let has_rows = !pending.transactions.is_empty()
+                || !pending.transfers.is_empty()
+                || !pending.payments.is_empty();
+
+            if !should_flush || !has_rows {
+                return Ok(());
+            }
+
+            pending.last_flush = Instant::now();
+            (
+                std::mem::take(&mut pending.transactions),
+                std::mem::take(&mut pending.transfers),
+                std::mem::take(&mut pending.payments),
+            )
+        };
+
+        self.writer.insert_observed_transactions(&transactions).await?;
+        self.writer.insert_observed_transfers(&transfers).await?;
+        self.writer.insert_observed_payments(&payments).await?;
+
+        Ok(())
     }
 
     async fn handle_update(&self, update: SubscribeUpdate, worker_state: &mut WorkerState) {
@@ -326,6 +411,7 @@ impl YellowstoneWorker {
                 }
             }
             Some(UpdateOneof::Transaction(tx)) => {
+                let worker_received_at = Utc::now();
                 if self.debug_stream_logs {
                     let signature = tx
                         .transaction
@@ -336,7 +422,11 @@ impl YellowstoneWorker {
                 }
 
                 if let Some(context) = build_transaction_context(&tx, update_time) {
-                    self.persist_transaction_context(context, worker_state).await;
+                    if self.debug_parsed_updates {
+                        self.log_parsed_transaction_update(&filters, worker_received_at, &context);
+                    }
+                    self.persist_transaction_context(context, worker_received_at, worker_state)
+                        .await;
                 }
             }
             Some(UpdateOneof::Ping(_)) => {
@@ -368,6 +458,9 @@ impl YellowstoneWorker {
                 }
             }
             Some(UpdateOneof::BlockMeta(block_meta)) => {
+                if self.debug_parsed_updates {
+                    self.log_parsed_block_meta_update(&filters, Utc::now(), &block_meta);
+                }
                 if self.debug_stream_logs {
                     println!(
                         "BLOCK_META filters=[{}] slot={} txs={}",
@@ -394,11 +487,24 @@ impl YellowstoneWorker {
                 }
             }
         }
+
+        if cfg!(test) {
+            if let Err(error) = self.flush_pending_raw_observations(true).await {
+                eprintln!("Failed to flush buffered raw observations in tests: {}", error);
+            }
+            if let Err(error) = self.flush_pending_materialized_observations(true).await {
+                eprintln!(
+                    "Failed to flush buffered observed settlements in tests: {}",
+                    error
+                );
+            }
+        }
     }
 
     async fn persist_transaction_context(
         &self,
         context: TransactionContext,
+        worker_received_at: DateTime<Utc>,
         worker_state: &mut WorkerState,
     ) {
         if let Err(error) = self.flush_pending_raw_observations(true).await {
@@ -415,17 +521,17 @@ impl YellowstoneWorker {
             }
         }
 
-        let mut registry_guard = self.registry_cache.lock().await;
-        if let Err(error) = registry_guard.refresh_now().await {
-            if registry_guard.should_log_refresh_error() {
-                eprintln!(
-                    "Failed to force refresh workspace registry before matching {}; continuing with stale cache: {}",
-                    context.signature, error
-                );
-            }
-        }
+        let registry = {
+            let registry_guard = self.registry_cache.lock().await;
+            registry_guard.registry().clone()
+        };
         if self
-            .materialize_observed_settlement(registry_guard.registry(), &context, worker_state)
+            .materialize_observed_settlement(
+                &registry,
+                &context,
+                worker_received_at,
+                worker_state,
+            )
             .await
         {
             let mut recent_signatures = self.recent_signatures.lock().await;
@@ -437,6 +543,7 @@ impl YellowstoneWorker {
         &self,
         registry: &WorkspaceRegistry,
         context: &TransactionContext,
+        worker_received_at: DateTime<Utc>,
         worker_state: &mut WorkerState,
     ) -> bool {
         let processing_time = Utc::now();
@@ -447,6 +554,8 @@ impl YellowstoneWorker {
             signature: context.signature.clone(),
             slot: context.slot,
             event_time: context.event_time,
+            yellowstone_created_at: Some(context.event_time),
+            worker_received_at: Some(worker_received_at),
             asset: "usdc".to_string(),
             finality_state: "processed".to_string(),
             status: "observed".to_string(),
@@ -465,11 +574,6 @@ impl YellowstoneWorker {
                 .to_string(),
             ),
         };
-
-        if let Err(error) = self.writer.insert_observed_transaction(&observed_transaction_row).await {
-            eprintln!("Failed to insert observed transaction: {}", error);
-            return false;
-        }
 
         let mut observed_transfer_ids_by_route_group: HashMap<String, Vec<(String, Option<String>, i128)>> =
             HashMap::new();
@@ -507,11 +611,6 @@ impl YellowstoneWorker {
                 ));
         }
 
-        if let Err(error) = self.writer.insert_observed_transfers(&observed_transfer_rows).await {
-            eprintln!("Failed to insert observed transfers batch: {}", error);
-            return false;
-        }
-
         let observed_payment_rows: Vec<ObservedPaymentRow> = observed_payments
             .iter()
             .map(|payment| ObservedPaymentRow {
@@ -536,10 +635,12 @@ impl YellowstoneWorker {
             })
             .collect();
 
-        if let Err(error) = self.writer.insert_observed_payments(&observed_payment_rows).await {
-            eprintln!("Failed to insert observed payments batch: {}", error);
-            return false;
-        }
+        self.enqueue_materialized_observations(
+            observed_transaction_row,
+            observed_transfer_rows,
+            observed_payment_rows,
+        )
+        .await;
 
         let mut matcher_event_rows = Vec::new();
         let mut request_book_snapshot_rows = Vec::new();
@@ -831,6 +932,53 @@ impl YellowstoneWorker {
         true
     }
 
+}
+
+impl YellowstoneWorker {
+    fn log_parsed_transaction_update(
+        &self,
+        filters: &str,
+        worker_received_at: DateTime<Utc>,
+        context: &TransactionContext,
+    ) {
+        let payload = json!({
+            "updateType": "parsed_transaction",
+            "filters": filters,
+            "workerReceivedAt": worker_received_at,
+            "transactionContext": context,
+        });
+
+        match serde_json::to_string_pretty(&payload) {
+            Ok(text) => println!("{text}"),
+            Err(error) => eprintln!("Failed to serialize parsed transaction update: {}", error),
+        }
+    }
+
+    fn log_parsed_block_meta_update(
+        &self,
+        filters: &str,
+        worker_received_at: DateTime<Utc>,
+        block_meta: &yellowstone_grpc_proto::geyser::SubscribeUpdateBlockMeta,
+    ) {
+        let payload = json!({
+            "updateType": "parsed_block_meta",
+            "filters": filters,
+            "workerReceivedAt": worker_received_at,
+            "blockMeta": {
+                "slot": block_meta.slot,
+                "blockhash": block_meta.blockhash,
+                "parentSlot": block_meta.parent_slot,
+                "parentBlockhash": block_meta.parent_blockhash,
+                "executedTransactionCount": block_meta.executed_transaction_count,
+                "entriesCount": block_meta.entries_count,
+            },
+        });
+
+        match serde_json::to_string_pretty(&payload) {
+            Ok(text) => println!("{text}"),
+            Err(error) => eprintln!("Failed to serialize parsed block meta update: {}", error),
+        }
+    }
 }
 
 fn is_within_match_window(requested_at: DateTime<Utc>, observed_at: DateTime<Utc>) -> bool {
@@ -1185,6 +1333,7 @@ mod tests {
                 String::new(),
             ),
             WorkspaceRegistryCache::with_registry(registry),
+            false,
             false,
             false,
         )

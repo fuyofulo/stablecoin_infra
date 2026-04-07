@@ -26,6 +26,8 @@ CREATE TABLE IF NOT EXISTS observed_transactions
     signature String,
     slot UInt64,
     event_time DateTime64(3, 'UTC'),
+    yellowstone_created_at Nullable(DateTime64(3, 'UTC')),
+    worker_received_at Nullable(DateTime64(3, 'UTC')),
     asset LowCardinality(String),
     finality_state LowCardinality(String),
     status LowCardinality(String),
@@ -37,6 +39,12 @@ CREATE TABLE IF NOT EXISTS observed_transactions
 ENGINE = MergeTree
 PARTITION BY toYYYYMM(event_time)
 ORDER BY (event_time, signature);
+
+ALTER TABLE observed_transactions
+    ADD COLUMN IF NOT EXISTS yellowstone_created_at Nullable(DateTime64(3, 'UTC')) AFTER event_time;
+
+ALTER TABLE observed_transactions
+    ADD COLUMN IF NOT EXISTS worker_received_at Nullable(DateTime64(3, 'UTC')) AFTER yellowstone_created_at;
 
 CREATE TABLE IF NOT EXISTS observed_transfers
 (
