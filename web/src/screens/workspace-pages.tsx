@@ -28,11 +28,13 @@ export function WorkspaceHomePage({
   onAddRequestNote,
   onApplyExceptionAction,
   onApplyApprovalDecision,
+  onCreateExecutionRecord,
   onChangeReconciliationFilter,
   onRefresh,
   onSelectObservedTransfer,
   onSelectReconciliation,
   onTransitionRequest,
+  onUpdateExecutionRecord,
   onBackToDashboard,
   reconciliationFilter,
   reconciliationRows,
@@ -60,11 +62,20 @@ export function WorkspaceHomePage({
     action: 'approve' | 'reject' | 'escalate',
     comment?: string,
   ) => Promise<void>;
+  onCreateExecutionRecord: (transferRequestId: string) => Promise<void>;
   onChangeReconciliationFilter: (filter: ReconciliationRow['requestDisplayState'] | 'all') => void;
   onRefresh: () => Promise<void>;
   onSelectObservedTransfer: (transfer: ObservedTransfer) => void;
   onSelectReconciliation: (row: ReconciliationRow) => void;
   onTransitionRequest: (transferRequestId: string, toStatus: string) => Promise<void>;
+  onUpdateExecutionRecord: (
+    executionRecordId: string,
+    input: {
+      submittedSignature?: string;
+      state?: 'ready_for_execution' | 'submitted_onchain' | 'broadcast_failed';
+    },
+    transferRequestId: string,
+  ) => Promise<void>;
   onBackToDashboard: () => void;
   reconciliationFilter: ReconciliationRow['requestDisplayState'] | 'all';
   reconciliationRows: ReconciliationRow[];
@@ -77,6 +88,7 @@ export function WorkspaceHomePage({
   const pendingCount = reconciliationRows.filter((row) => row.requestDisplayState === 'pending').length;
   const [inspectorTab, setInspectorTab] = useState<'overview' | 'exceptions'>('overview');
   const [approvalComment, setApprovalComment] = useState('');
+  const [executionSignature, setExecutionSignature] = useState('');
 
   useEffect(() => {
     if (
@@ -89,7 +101,14 @@ export function WorkspaceHomePage({
 
     setInspectorTab('overview');
     setApprovalComment('');
+    setExecutionSignature('');
   }, [selectedReconciliationDetail?.transferRequestId]);
+
+  useEffect(() => {
+    if (selectedReconciliationDetail?.latestExecution?.submittedSignature) {
+      setExecutionSignature('');
+    }
+  }, [selectedReconciliationDetail?.latestExecution?.submittedSignature]);
 
   return (
     <div className="page-stack">
@@ -424,6 +443,160 @@ export function WorkspaceHomePage({
 
                 <div className="detail-section">
                   <div className="detail-section-head">
+                    <strong>Execution tracking</strong>
+                    <span>{selectedReconciliationDetail.latestExecution ? 'active attempt' : 'no attempt yet'}</span>
+                  </div>
+
+                  {selectedReconciliationDetail.latestExecution ? (
+                    <div className="stack-list">
+                      <InfoLine
+                        label="Execution state"
+                        value={getExecutionStateLabel(selectedReconciliationDetail.executionState)}
+                      />
+                      <InfoLine
+                        label="Execution source"
+                        value={selectedReconciliationDetail.latestExecution.executionSource.replaceAll('_', ' ')}
+                      />
+                      <InfoLine
+                        label="Attempt created"
+                        value={formatTimestamp(selectedReconciliationDetail.latestExecution.createdAt)}
+                      />
+                      <InfoLine
+                        label="Submitted at"
+                        value={
+                          selectedReconciliationDetail.latestExecution.submittedAt
+                            ? formatTimestamp(selectedReconciliationDetail.latestExecution.submittedAt)
+                            : 'Not submitted yet'
+                        }
+                      />
+                      <InfoLine
+                        label="Submitted signature"
+                        value={
+                          selectedReconciliationDetail.latestExecution.submittedSignature
+                            ? shortenAddress(selectedReconciliationDetail.latestExecution.submittedSignature, 10, 10)
+                            : 'Not attached yet'
+                        }
+                      />
+                      <InfoLine
+                        label="Observed onchain"
+                        value={
+                          selectedReconciliationDetail.observedExecutionTransaction
+                            ? formatTimestamp(selectedReconciliationDetail.observedExecutionTransaction.eventTime)
+                            : 'No observed transaction yet'
+                        }
+                      />
+
+                      {selectedReconciliationDetail.latestExecution.submittedSignature ? (
+                        <div className="inspector-callout">
+                          <div>
+                            <p className="eyebrow">Submitted signature</p>
+                            <strong>{shortenAddress(selectedReconciliationDetail.latestExecution.submittedSignature, 10, 10)}</strong>
+                          </div>
+                          <a
+                            className="ghost-button inline-link-button"
+                            href={orbTransactionUrl(selectedReconciliationDetail.latestExecution.submittedSignature)}
+                            rel="noreferrer"
+                            target="_blank"
+                          >
+                            open on orb
+                          </a>
+                        </div>
+                      ) : null}
+
+                      {!selectedReconciliationDetail.latestExecution.submittedSignature ? (
+                        <div className="detail-section">
+                          <label className="field">
+                            <span>Attach submitted signature</span>
+                            <input
+                              name="executionSignature"
+                              onChange={(event) => setExecutionSignature(event.target.value)}
+                              placeholder="Paste the submitted transaction signature"
+                              type="text"
+                              value={executionSignature}
+                            />
+                          </label>
+                          <div className="exception-actions">
+                            <button
+                              className="primary-button compact-button"
+                              onClick={() =>
+                                void onUpdateExecutionRecord(
+                                  selectedReconciliationDetail.latestExecution!.executionRecordId,
+                                  { submittedSignature: executionSignature.trim() || undefined },
+                                  selectedReconciliationDetail.transferRequestId,
+                                )
+                              }
+                              type="button"
+                            >
+                              attach signature
+                            </button>
+                          </div>
+                        </div>
+                      ) : null}
+
+                      {selectedReconciliationDetail.latestExecution.submittedSignature
+                        && !selectedReconciliationDetail.observedExecutionTransaction
+                        && selectedReconciliationDetail.executionState === 'submitted_onchain' ? (
+                        <div className="exception-actions">
+                          <button
+                            className="ghost-button compact-button"
+                            onClick={() =>
+                              void onUpdateExecutionRecord(
+                                selectedReconciliationDetail.latestExecution!.executionRecordId,
+                                { state: 'broadcast_failed' },
+                                selectedReconciliationDetail.transferRequestId,
+                              )
+                            }
+                            type="button"
+                          >
+                            mark broadcast failed
+                          </button>
+                        </div>
+                      ) : null}
+
+                      {selectedReconciliationDetail.executionRecords.length > 1 ? (
+                        <div className="detail-section">
+                          <div className="detail-section-head">
+                            <strong>Execution history</strong>
+                            <span>{selectedReconciliationDetail.executionRecords.length}</span>
+                          </div>
+                          <div className="stack-list">
+                            {selectedReconciliationDetail.executionRecords.map((execution) => (
+                              <div className="note-card" key={execution.executionRecordId}>
+                                <strong>{getExecutionStateLabel(execution.state)}</strong>
+                                <small>{formatTimestamp(execution.createdAt)} // {execution.executionSource.replaceAll('_', ' ')}</small>
+                                <p>
+                                  {execution.submittedSignature
+                                    ? `Submitted ${shortenAddress(execution.submittedSignature, 8, 8)}`
+                                    : 'No signature attached yet.'}
+                                </p>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : (
+                    <div className="stack-list">
+                      <div className="empty-box compact">
+                        No execution attempt is recorded yet. This request is approved, but that does not mean anything has been sent.
+                      </div>
+                      {selectedReconciliationDetail.approvalState === 'approved' ? (
+                        <div className="exception-actions">
+                          <button
+                            className="primary-button compact-button"
+                            onClick={() => void onCreateExecutionRecord(selectedReconciliationDetail.transferRequestId)}
+                            type="button"
+                          >
+                            create execution record
+                          </button>
+                        </div>
+                      ) : null}
+                    </div>
+                  )}
+                </div>
+
+                <div className="detail-section">
+                  <div className="detail-section-head">
                     <strong>Approval check</strong>
                     <span>{selectedReconciliationDetail.approvalEvaluation.requiresApproval ? 'manual review needed' : 'auto-cleared'}</span>
                   </div>
@@ -559,7 +732,7 @@ export function WorkspaceHomePage({
                     {selectedReconciliationDetail.linkedSignature ? (
                       <div className="inspector-callout">
                         <div>
-                          <p className="eyebrow">Linked signature</p>
+                          <p className="eyebrow">Settlement signature</p>
                           <strong>{shortenAddress(selectedReconciliationDetail.linkedSignature, 10, 10)}</strong>
                         </div>
                         <a
@@ -1460,12 +1633,18 @@ function getExecutionStateLabel(state: string) {
   switch (state) {
     case 'not_started':
       return 'not started';
-    case 'awaiting_execution':
+    case 'ready_for_execution':
       return 'ready to send';
     case 'submitted_onchain':
       return 'submitted onchain';
-    case 'observed_onchain':
+    case 'broadcast_failed':
+      return 'broadcast failed';
+    case 'observed':
       return 'observed onchain';
+    case 'settled':
+      return 'settled';
+    case 'execution_exception':
+      return 'needs execution review';
     case 'closed':
       return 'closed';
     case 'rejected':
@@ -1632,6 +1811,15 @@ function getDisplayStateLabel(state: ReconciliationRow['requestDisplayState']) {
 function getTimelineTitle(item: ReconciliationDetail['timeline'][number]) {
   switch (item.timelineType) {
     case 'request_event':
+      if (item.eventType === 'execution_created') {
+        return 'execution created';
+      }
+      if (item.eventType === 'execution_signature_attached') {
+        return 'signature attached';
+      }
+      if (item.eventType === 'execution_state_changed') {
+        return 'execution state changed';
+      }
       return formatLabel(item.eventType);
     case 'request_note':
       return 'request note';
@@ -1645,6 +1833,16 @@ function getTimelineTitle(item: ReconciliationDetail['timeline'][number]) {
 function getTimelineBody(item: ReconciliationDetail['timeline'][number]) {
   switch (item.timelineType) {
     case 'request_event':
+      if (item.eventType === 'execution_signature_attached') {
+        return item.linkedSignature
+          ? `Attached submitted signature ${shortenAddress(item.linkedSignature, 8, 8)}`
+          : 'Attached a submitted signature.';
+      }
+      if (item.eventType === 'execution_created' || item.eventType === 'execution_state_changed') {
+        return item.beforeState && item.afterState
+          ? `${formatLabel(item.beforeState)} -> ${formatLabel(item.afterState)}`
+          : formatLabel(item.eventType);
+      }
       return item.beforeState && item.afterState
         ? `${formatLabel(item.beforeState)} -> ${formatLabel(item.afterState)}`
         : item.eventSource;

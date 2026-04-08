@@ -309,6 +309,40 @@ export const api = {
       },
     );
   },
+  createExecutionRecord(
+    workspaceId: string,
+    transferRequestId: string,
+    input?: {
+      executionSource?: string;
+      metadataJson?: Record<string, unknown>;
+    },
+  ) {
+    return request(
+      `/workspaces/${workspaceId}/transfer-requests/${transferRequestId}/executions`,
+      {
+        method: 'POST',
+        body: JSON.stringify(input ?? {}),
+      },
+    );
+  },
+  updateExecutionRecord(
+    workspaceId: string,
+    executionRecordId: string,
+    input: {
+      submittedSignature?: string;
+      state?: 'ready_for_execution' | 'submitted_onchain' | 'broadcast_failed';
+      submittedAt?: string;
+      metadataJson?: Record<string, unknown>;
+    },
+  ) {
+    return request(
+      `/workspaces/${workspaceId}/executions/${executionRecordId}`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify(input),
+      },
+    );
+  },
   listExceptions(workspaceId: string) {
     return request<{ servedAt: string; items: ExceptionItem[] }>(
       `/workspaces/${workspaceId}/exceptions?limit=100`,

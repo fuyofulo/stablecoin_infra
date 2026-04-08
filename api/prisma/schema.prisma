@@ -35,6 +35,7 @@ model User {
   exceptionNotes            ExceptionNote[]
   exceptionStatesUpdated    ExceptionState[]
   approvalDecisions         ApprovalDecision[]
+  executionRecords          ExecutionRecord[] @relation("ExecutionRecordExecutorUser")
 
   @@map("users")
 }
@@ -81,6 +82,7 @@ model Workspace {
   transferRequests       TransferRequest[]
   approvalPolicy         ApprovalPolicy?
   approvalDecisions      ApprovalDecision[]
+  executionRecords      ExecutionRecord[]
   transferRequestEvents TransferRequestEvent[]
   transferRequestNotes  TransferRequestNote[]
   exceptionNotes       ExceptionNote[]
@@ -184,6 +186,7 @@ model TransferRequest {
   destination                Destination?     @relation(fields: [destinationId], references: [destinationId], onDelete: SetNull)
   requestedByUser            User?            @relation("TransferRequestRequestedByUser", fields: [requestedByUserId], references: [userId], onDelete: SetNull)
   approvalDecisions          ApprovalDecision[]
+  executionRecords           ExecutionRecord[]
   events                     TransferRequestEvent[]
   notes                      TransferRequestNote[]
 
@@ -191,6 +194,27 @@ model TransferRequest {
   @@index([destinationWorkspaceAddressId, status, requestedAt(sort: Desc)])
   @@index([destinationId, status, requestedAt(sort: Desc)])
   @@map("transfer_requests")
+}
+
+model ExecutionRecord {
+  executionRecordId   String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid @map("execution_record_id")
+  transferRequestId   String          @db.Uuid @map("transfer_request_id")
+  workspaceId         String          @db.Uuid @map("workspace_id")
+  submittedSignature  String?         @map("submitted_signature")
+  executionSource     String          @default("manual") @map("execution_source")
+  executorUserId      String?         @db.Uuid @map("executor_user_id")
+  state               String          @default("ready_for_execution")
+  submittedAt         DateTime?       @db.Timestamptz(6) @map("submitted_at")
+  metadataJson        Json            @default("{}") @map("metadata_json")
+  createdAt           DateTime        @default(now()) @db.Timestamptz(6) @map("created_at")
+  updatedAt           DateTime        @updatedAt @db.Timestamptz(6) @map("updated_at")
+  transferRequest     TransferRequest @relation(fields: [transferRequestId], references: [transferRequestId], onDelete: Cascade)
+  workspace           Workspace       @relation(fields: [workspaceId], references: [workspaceId], onDelete: Cascade)
+  executorUser        User?           @relation("ExecutionRecordExecutorUser", fields: [executorUserId], references: [userId], onDelete: SetNull)
+
+  @@index([workspaceId, createdAt(sort: Desc)])
+  @@index([transferRequestId, createdAt(sort: Desc)])
+  @@map("execution_records")
 }
 
 model ApprovalPolicy {

@@ -758,6 +758,53 @@ export function App() {
     }
   }
 
+  async function handleCreateExecutionRecord(transferRequestId: string) {
+    if (!currentWorkspaceId) {
+      return;
+    }
+
+    try {
+      setErrorMessage(null);
+      await api.createExecutionRecord(currentWorkspaceId, transferRequestId, {
+        executionSource: 'manual_operator',
+      });
+      await Promise.all([
+        loadWorkspace(currentWorkspaceId),
+        selectedReconciliationId === transferRequestId
+          ? loadReconciliationDetail(currentWorkspaceId, transferRequestId)
+          : Promise.resolve(),
+      ]);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Failed to create execution record');
+    }
+  }
+
+  async function handleUpdateExecutionRecord(
+    executionRecordId: string,
+    input: {
+      submittedSignature?: string;
+      state?: 'ready_for_execution' | 'submitted_onchain' | 'broadcast_failed';
+    },
+    transferRequestId: string,
+  ) {
+    if (!currentWorkspaceId) {
+      return;
+    }
+
+    try {
+      setErrorMessage(null);
+      await api.updateExecutionRecord(currentWorkspaceId, executionRecordId, input);
+      await Promise.all([
+        loadWorkspace(currentWorkspaceId),
+        selectedReconciliationId === transferRequestId
+          ? loadReconciliationDetail(currentWorkspaceId, transferRequestId)
+          : Promise.resolve(),
+      ]);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Failed to update execution record');
+    }
+  }
+
   async function handleUpdateApprovalPolicy(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!currentWorkspaceId || !approvalPolicy) {
@@ -1087,11 +1134,13 @@ export function App() {
                 onAddRequestNote={handleAddRequestNote}
                 onApplyExceptionAction={handleApplyExceptionAction}
                 onApplyApprovalDecision={handleApprovalDecision}
+                onCreateExecutionRecord={handleCreateExecutionRecord}
                 onChangeReconciliationFilter={setReconciliationFilter}
                 onRefresh={handleRefreshWorkspace}
                 onSelectObservedTransfer={handleSelectObservedTransfer}
                 onSelectReconciliation={(row) => void handleSelectReconciliation(row)}
                 onTransitionRequest={handleTransitionRequest}
+                onUpdateExecutionRecord={handleUpdateExecutionRecord}
                 reconciliationFilter={reconciliationFilter}
                 reconciliationRows={reconciliationRows}
                 selectedReconciliationDetail={selectedReconciliationDetail}

@@ -14,6 +14,7 @@ TRUNCATE TABLE
   organization_memberships,
   approval_decisions,
   approval_policies,
+  execution_records,
   transfer_request_notes,
   transfer_request_events,
   exception_notes,
@@ -582,7 +583,7 @@ test('transfer request transitions enforce the lifecycle graph and add timeline 
   );
 
   assert.equal(transitioned.status, 'approved');
-  assert.deepEqual(transitioned.availableTransitions, ['ready_for_execution']);
+  assert.deepEqual(transitioned.availableTransitions, []);
 
   const detailResponse = await fetch(
     `${baseUrl}/workspaces/${setup.workspace.workspaceId}/transfer-requests/${setup.transferRequest.transferRequestId}`,
@@ -726,6 +727,269 @@ test('workspace members can add request notes without admin mutation access', as
   const note = await response.json();
   assert.equal(note.body, 'Investigating vendor confirmation.');
   assert.equal(note.authorUser.email, 'member@example.com');
+});
+
+test('phase d execution tracking separates approved, submitted, observed, and matched', async () => {
+  const setup = await createTransferRequestSetup();
+  const workspaceId = setup.workspace.workspaceId;
+  const transferRequestId = setup.transferRequest.transferRequestId;
+  const signature = '2U2yzRbpiNmj6fYH2Jjc2v4tmnG6hTdbu8fZ8vUUR9JiBf6qcWjHz1P7LidC9phHcU4TUkT9w7FRmFvh59qTQmAk';
+  const transferId = crypto.randomUUID();
+  const paymentId = crypto.randomUUID();
+  const observedAt = '2026-04-08 09:11:42.100';
+  const createdAt = '2026-04-08 09:11:42.230';
+
+  const detailBeforeResponse = await fetch(
+    `${baseUrl}/workspaces/${workspaceId}/reconciliation-queue/${transferRequestId}`,
+    { headers: authHeaders(setup.sessionToken) },
+  );
+  assert.equal(detailBeforeResponse.status, 200);
+  const detailBefore = await detailBeforeResponse.json();
+
+  assert.equal(detailBefore.status, 'approved');
+  assert.equal(detailBefore.executionState, 'ready_for_execution');
+  assert.equal(detailBefore.latestExecution, null);
+  assert.equal(detailBefore.requestDisplayState, 'pending');
+
+  const createExecutionResponse = await fetch(
+    `${baseUrl}/workspaces/${workspaceId}/transfer-requests/${transferRequestId}/executions`,
+    {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        ...authHeaders(setup.sessionToken),
+      },
+      body: JSON.stringify({
+        executionSource: 'manual_operator',
+      }),
+    },
+  );
+  assert.equal(createExecutionResponse.status, 201);
+  const executionRecord = await createExecutionResponse.json();
+  assert.equal(executionRecord.state, 'ready_for_execution');
+  assert.equal(executionRecord.submittedSignature, null);
+
+  const detailReadyResponse = await fetch(
+    `${baseUrl}/workspaces/${workspaceId}/reconciliation-queue/${transferRequestId}`,
+    { headers: authHeaders(setup.sessionToken) },
+  );
+  assert.equal(detailReadyResponse.status, 200);
+  const detailReady = await detailReadyResponse.json();
+
+  assert.equal(detailReady.status, 'ready_for_execution');
+  assert.equal(detailReady.executionState, 'ready_for_execution');
+  assert.equal(detailReady.latestExecution.executionRecordId, executionRecord.executionRecordId);
+  assert.equal(
+    detailReady.timeline.some((item: { timelineType: string; eventType?: string }) =>
+      item.timelineType === 'request_event' && item.eventType === 'execution_created'),
+    true,
+  );
+
+  const attachSignatureResponse = await fetch(
+    `${baseUrl}/workspaces/${workspaceId}/executions/${executionRecord.executionRecordId}`,
+    {
+      method: 'PATCH',
+      headers: {
+        'content-type': 'application/json',
+        ...authHeaders(setup.sessionToken),
+      },
+      body: JSON.stringify({
+        submittedSignature: signature,
+      }),
+    },
+  );
+  assert.equal(attachSignatureResponse.status, 200);
+  const submittedExecution = await attachSignatureResponse.json();
+  assert.equal(submittedExecution.state, 'submitted_onchain');
+  assert.equal(submittedExecution.submittedSignature, signature);
+
+  const detailSubmittedResponse = await fetch(
+    `${baseUrl}/workspaces/${workspaceId}/reconciliation-queue/${transferRequestId}`,
+    { headers: authHeaders(setup.sessionToken) },
+  );
+  assert.equal(detailSubmittedResponse.status, 200);
+  const detailSubmitted = await detailSubmittedResponse.json();
+
+  assert.equal(detailSubmitted.status, 'submitted_onchain');
+  assert.equal(detailSubmitted.executionState, 'submitted_onchain');
+  assert.equal(detailSubmitted.latestExecution.submittedSignature, signature);
+  assert.equal(detailSubmitted.observedExecutionTransaction, null);
+  assert.equal(detailSubmitted.requestDisplayState, 'pending');
+
+  await insertClickHouseRows('observed_transactions', [
+    {
+      signature,
+      slot: 411664999,
+      event_time: observedAt,
+      yellowstone_created_at: observedAt,
+      worker_received_at: observedAt,
+      chain: 'solana',
+      source_token_account: '6WmJ7Btk5oT7YfLgbj8kY6fX4bqVjLtt2tFvkZJw6i3F',
+      source_wallet: 'PGm4dkZcqPTkYKqAjNtAokVwJirJB8XQcGpYWBVcFMW',
+      destination_token_account: setup.destinationAddress.usdcAtaAddress,
+      destination_wallet: setup.destinationAddress.address,
+      amount_raw: '2500000',
+      amount_decimal: '2.500000',
+      status: 'observed',
+      created_at: createdAt,
+    },
+  ]);
+
+  const detailObservedResponse = await fetch(
+    `${baseUrl}/workspaces/${workspaceId}/reconciliation-queue/${transferRequestId}`,
+    { headers: authHeaders(setup.sessionToken) },
+  );
+  assert.equal(detailObservedResponse.status, 200);
+  const detailObserved = await detailObservedResponse.json();
+
+  assert.equal(detailObserved.executionState, 'observed');
+  assert.equal(detailObserved.observedExecutionTransaction.signature, signature);
+  assert.equal(detailObserved.requestDisplayState, 'pending');
+
+  await insertClickHouseRows('observed_transfers', [
+    {
+      transfer_id: transferId,
+      signature,
+      slot: 411664999,
+      event_time: observedAt,
+      asset: 'usdc',
+      source_token_account: '6WmJ7Btk5oT7YfLgbj8kY6fX4bqVjLtt2tFvkZJw6i3F',
+      source_wallet: 'PGm4dkZcqPTkYKqAjNtAokVwJirJB8XQcGpYWBVcFMW',
+      destination_token_account: setup.destinationAddress.usdcAtaAddress,
+      destination_wallet: setup.destinationAddress.address,
+      amount_raw: '2500000',
+      amount_decimal: '2.500000',
+      transfer_kind: 'spl_token_transfer_checked',
+      instruction_index: 2,
+      inner_instruction_index: null,
+      route_group: 'ix 2',
+      leg_role: 'direct_settlement',
+      properties_json: JSON.stringify({ seeded: true }),
+      created_at: createdAt,
+    },
+  ]);
+
+  await insertClickHouseRows('observed_payments', [
+    {
+      payment_id: paymentId,
+      signature,
+      slot: 411664999,
+      event_time: observedAt,
+      asset: 'usdc',
+      source_wallet: 'PGm4dkZcqPTkYKqAjNtAokVwJirJB8XQcGpYWBVcFMW',
+      destination_wallet: setup.destinationAddress.address,
+      gross_amount_raw: '2500000',
+      gross_amount_decimal: '2.500000',
+      net_destination_amount_raw: '2500000',
+      net_destination_amount_decimal: '2.500000',
+      fee_amount_raw: '0',
+      fee_amount_decimal: '0.000000',
+      route_count: 1,
+      payment_kind: 'direct_settlement',
+      reconstruction_rule: 'single_destination_direct_credit',
+      confidence_band: 'high',
+      properties_json: JSON.stringify({ seeded: true }),
+      created_at: createdAt,
+    },
+  ]);
+
+  await insertClickHouseRows('settlement_matches', [
+    {
+      transfer_request_id: transferRequestId,
+      workspace_id: workspaceId,
+      signature,
+      observed_transfer_id: transferId,
+      match_status: 'matched_exact',
+      confidence_score: 100,
+      confidence_band: 'high',
+      matched_amount_raw: '2500000',
+      amount_variance_raw: '0',
+      destination_match_type: 'exact',
+      time_delta_seconds: 12,
+      match_rule: 'payment_book_fifo_allocator',
+      candidate_count: 1,
+      explanation: 'Execution-linked payment matched exactly.',
+      observed_event_time: observedAt,
+      matched_at: createdAt,
+      updated_at: createdAt,
+    },
+  ]);
+
+  const detailSettledResponse = await fetch(
+    `${baseUrl}/workspaces/${workspaceId}/reconciliation-queue/${transferRequestId}`,
+    { headers: authHeaders(setup.sessionToken) },
+  );
+  assert.equal(detailSettledResponse.status, 200);
+  const detailSettled = await detailSettledResponse.json();
+
+  assert.equal(detailSettled.executionState, 'settled');
+  assert.equal(detailSettled.requestDisplayState, 'matched');
+  assert.equal(detailSettled.linkedSignature, signature);
+  assert.equal(detailSettled.linkedObservedPayment.paymentId, paymentId);
+  assert.equal(
+    detailSettled.timeline.some((item: { timelineType: string; eventType?: string }) =>
+      item.timelineType === 'request_event' && item.eventType === 'execution_signature_attached'),
+    true,
+  );
+  assert.equal(
+    detailSettled.timeline.some((item: { timelineType: string; matchStatus?: string }) =>
+      item.timelineType === 'match_result' && item.matchStatus === 'matched_exact'),
+    true,
+  );
+});
+
+test('execution records support broadcast failure without implying observed settlement', async () => {
+  const setup = await createTransferRequestSetup();
+  const workspaceId = setup.workspace.workspaceId;
+  const transferRequestId = setup.transferRequest.transferRequestId;
+
+  const createExecutionResponse = await fetch(
+    `${baseUrl}/workspaces/${workspaceId}/transfer-requests/${transferRequestId}/executions`,
+    {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        ...authHeaders(setup.sessionToken),
+      },
+      body: JSON.stringify({ executionSource: 'manual_operator' }),
+    },
+  );
+  assert.equal(createExecutionResponse.status, 201);
+  const executionRecord = await createExecutionResponse.json();
+
+  const failedResponse = await fetch(
+    `${baseUrl}/workspaces/${workspaceId}/executions/${executionRecord.executionRecordId}`,
+    {
+      method: 'PATCH',
+      headers: {
+        'content-type': 'application/json',
+        ...authHeaders(setup.sessionToken),
+      },
+      body: JSON.stringify({
+        state: 'broadcast_failed',
+      }),
+    },
+  );
+  assert.equal(failedResponse.status, 200);
+  const failedExecution = await failedResponse.json();
+  assert.equal(failedExecution.state, 'broadcast_failed');
+
+  const detailResponse = await fetch(
+    `${baseUrl}/workspaces/${workspaceId}/reconciliation-queue/${transferRequestId}`,
+    { headers: authHeaders(setup.sessionToken) },
+  );
+  assert.equal(detailResponse.status, 200);
+  const detail = await detailResponse.json();
+
+  assert.equal(detail.status, 'ready_for_execution');
+  assert.equal(detail.executionState, 'broadcast_failed');
+  assert.equal(detail.observedExecutionTransaction, null);
+  assert.equal(detail.requestDisplayState, 'pending');
+  assert.equal(
+    detail.timeline.some((item: { timelineType: string; eventType?: string }) =>
+      item.timelineType === 'request_event' && item.eventType === 'execution_state_changed'),
+    true,
+  );
 });
 
 test('address label registry exposes seeded labels and supports upsert-style maintenance', async () => {
@@ -918,7 +1182,7 @@ test('reconciliation and request detail expose derived display state, explanatio
 
   assert.equal(detail.status, 'approved');
   assert.equal(detail.approvalState, 'approved');
-  assert.equal(detail.executionState, 'observed_onchain');
+  assert.equal(detail.executionState, 'execution_exception');
   assert.equal(detail.requestDisplayState, 'exception');
   assert.equal(detail.linkedSignature, signature);
   assert.deepEqual(detail.linkedTransferIds, [transferId]);
@@ -1626,7 +1890,7 @@ test('dedicated reconciliation queue endpoint supports display-state filtering a
   assert.equal(queue.items[0].requestDisplayState, 'exception');
   assert.equal(queue.items[0].status, 'approved');
   assert.equal(queue.items[0].approvalState, 'approved');
-  assert.equal(queue.items[0].executionState, 'observed_onchain');
+  assert.equal(queue.items[0].executionState, 'execution_exception');
 
   const detailResponse = await fetch(
     `${baseUrl}/workspaces/${setup.workspace.workspaceId}/reconciliation-queue/${setup.transferRequest.transferRequestId}`,
@@ -1700,7 +1964,7 @@ test('exception actions and notes update detail state and preserve operator audi
   assert.equal(requestDetail.requestDisplayState, 'partial');
   assert.equal(requestDetail.status, 'approved');
   assert.equal(requestDetail.approvalState, 'approved');
-  assert.equal(requestDetail.executionState, 'observed_onchain');
+  assert.equal(requestDetail.executionState, 'observed');
   assert.equal(requestDetail.exceptions[0].status, 'dismissed');
   assert.equal(requestDetail.exceptions[0].notes.length, 2);
   assert.equal(

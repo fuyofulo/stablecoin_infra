@@ -4,6 +4,7 @@ import type {
   ApprovalPolicy,
   Counterparty,
   Destination,
+  ExecutionRecord,
   Prisma,
   TransferRequest,
   TransferRequestEvent,
@@ -19,6 +20,7 @@ import {
 import { normalizeClickHouseDateTime, queryClickHouse } from './clickhouse.js';
 import { config } from './config.js';
 import { getOrResolveAddressLabels } from './address-label-registry.js';
+import { serializeExecutionRecord } from './execution-records.js';
 import { prisma } from './prisma.js';
 import { createTransferRequestEvent } from './transfer-request-events.js';
 import {
@@ -47,6 +49,13 @@ type TransferRequestWithRelations = TransferRequest & {
     actorUser: Pick<User, 'userId' | 'email' | 'displayName'> | null;
     approvalPolicy: ApprovalPolicy | null;
   })[];
+  executionRecords?: (ExecutionRecord & {
+    executorUser: Pick<User, 'userId' | 'email' | 'displayName'> | null;
+  })[];
+};
+
+type ExecutionRecordWithRelations = ExecutionRecord & {
+  executorUser: Pick<User, 'userId' | 'email' | 'displayName'> | null;
 };
 
 export type SettlementMatchRow = {
@@ -129,6 +138,14 @@ type ObservedPaymentRow = {
   created_at: string;
 };
 
+type ObservedTransactionRow = {
+  signature: string;
+  slot: string | number;
+  event_time: string;
+  status: string;
+  created_at: string;
+};
+
 type RelatedPaymentRole = 'expected_destination' | 'known_fee_recipient' | 'other_destination';
 
 type QueueBuildOptions = {
@@ -152,6 +169,18 @@ export async function listReconciliationQueue(workspaceId: string, options: Queu
         },
       },
       requestedByUser: true,
+      executionRecords: {
+        include: {
+          executorUser: {
+            select: {
+              userId: true,
+              email: true,
+              displayName: true,
+            },
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+      },
       events: {
         orderBy: { createdAt: 'asc' },
       },
@@ -161,6 +190,9 @@ export async function listReconciliationQueue(workspaceId: string, options: Queu
   });
 
   const requestIds = transferRequests.map((request) => request.transferRequestId);
+  const observedExecutionSignatures = await queryObservedTransactionSignatures(
+    collectSubmittedExecutionSignatures(transferRequests),
+  );
   const [matches, exceptions] = await Promise.all([
     querySettlementMatches(workspaceId, requestIds),
     queryExceptions(workspaceId, requestIds),
@@ -170,6 +202,7 @@ export async function listReconciliationQueue(workspaceId: string, options: Queu
     transferRequests,
     matches,
     exceptions,
+    observedExecutionSignatures,
   });
 
   await hydrateAddressLabelsForQueueItems(items);
@@ -205,6 +238,18 @@ export async function listApprovalInbox(args: {
           },
         },
         requestedByUser: true,
+        executionRecords: {
+          include: {
+            executorUser: {
+              select: {
+                userId: true,
+                email: true,
+                displayName: true,
+              },
+            },
+          },
+          orderBy: { createdAt: 'desc' },
+        },
         events: {
           orderBy: { createdAt: 'asc' },
         },
@@ -216,6 +261,9 @@ export async function listApprovalInbox(args: {
   ]);
 
   const requestIds = transferRequests.map((request) => request.transferRequestId);
+  const observedExecutionSignatures = await queryObservedTransactionSignatures(
+    collectSubmittedExecutionSignatures(transferRequests),
+  );
   const [matches, exceptions] = await Promise.all([
     querySettlementMatches(args.workspaceId, requestIds),
     queryExceptions(args.workspaceId, requestIds),
@@ -224,6 +272,7 @@ export async function listApprovalInbox(args: {
     transferRequests,
     matches,
     exceptions,
+    observedExecutionSignatures,
   });
 
   await hydrateAddressLabelsForQueueItems(items);
@@ -291,6 +340,18 @@ export async function getReconciliationDetail(workspaceId: string, transferReque
         },
         orderBy: { createdAt: 'asc' },
       },
+      executionRecords: {
+        include: {
+          executorUser: {
+            select: {
+              userId: true,
+              email: true,
+              displayName: true,
+            },
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+      },
     },
   });
 
@@ -299,10 +360,14 @@ export async function getReconciliationDetail(workspaceId: string, transferReque
     queryExceptions(workspaceId, [transferRequestId]),
   ]);
 
+  const observedExecutionSignatures = await queryObservedTransactionSignatures(
+    collectSubmittedExecutionSignatures([requestWithTimeline]),
+  );
   const queueItems = buildQueueItems({
     transferRequests: [requestWithTimeline],
     matches,
     exceptions,
+    observedExecutionSignatures,
   });
   const queueItem = queueItems[0];
 
@@ -343,10 +408,13 @@ export async function getReconciliationDetail(workspaceId: string, transferReque
     availableActions: getAvailableExceptionActions(exception.status),
   }));
 
-  const [linkedObservedTransfers, linkedObservedPayment, relatedObservedPayments] = await Promise.all([
+  const [linkedObservedTransfers, linkedObservedPayment, relatedObservedPayments, observedExecutionTransaction] = await Promise.all([
     queryObservedTransfersByIds(queueItem.linkedTransferIds),
     queueItem.linkedPaymentId ? queryObservedPaymentById(queueItem.linkedPaymentId) : null,
     queueItem.linkedSignature ? queryObservedPaymentsBySignature(queueItem.linkedSignature) : [],
+    queueItem.latestExecution?.submittedSignature
+      ? queryObservedTransactionBySignature(queueItem.latestExecution.submittedSignature)
+      : null,
   ]);
 
   const expectedDestinationWallet =
@@ -394,13 +462,16 @@ export async function getReconciliationDetail(workspaceId: string, transferReque
     ...serializeTransferRequest(requestWithTimeline),
     approvalState: queueItem.approvalState,
     executionState: queueItem.executionState,
+    latestExecution: queueItem.latestExecution,
+    executionRecords: queueItem.executionRecords,
+    observedExecutionTransaction,
     requestDisplayState: queueItem.requestDisplayState,
     availableTransitions: queueItem.availableTransitions,
     linkedSignature: queueItem.linkedSignature,
     linkedPaymentId: queueItem.linkedPaymentId,
     linkedTransferIds: queueItem.linkedTransferIds,
     linkedObservedTransfers,
-    linkedObservedPayment,
+    linkedObservedPayment: linkedObservedPayment ?? relatedObservedPayments[0] ?? null,
     relatedObservedPayments: annotatedObservedPayments,
     match: queueItem.match,
     matchExplanation: detailedMatchExplanation,
@@ -586,6 +657,7 @@ function buildQueueItems(args: {
   transferRequests: TransferRequestWithRelations[];
   matches: SettlementMatchRow[];
   exceptions: ExceptionRow[];
+  observedExecutionSignatures: Set<string>;
 }) {
   const matchesByRequestId = new Map(args.matches.map((row) => [row.transfer_request_id, row] as const));
   const exceptionsByRequestId = new Map<string, ExceptionRow[]>();
@@ -600,6 +672,8 @@ function buildQueueItems(args: {
   return args.transferRequests.map((request) => {
     const matchRow = matchesByRequestId.get(request.transferRequestId) ?? null;
     const exceptions = (exceptionsByRequestId.get(request.transferRequestId) ?? []).map(serializeException);
+    const latestExecutionRecord = request.executionRecords?.[0] ?? null;
+    const executionRecords = (request.executionRecords ?? []).map((record) => serializeExecutionRecord(record));
     const requestDisplayState = deriveRequestDisplayState({
       requestStatus: request.status,
       matchStatus: matchRow?.match_status ?? null,
@@ -614,6 +688,7 @@ function buildQueueItems(args: {
     const linkedSignature =
       matchRow?.signature ??
       exceptions.find((item) => item.signature)?.signature ??
+      latestExecutionRecord?.submittedSignature ??
       null;
 
     const match = matchRow ? serializeMatch(matchRow) : null;
@@ -622,10 +697,17 @@ function buildQueueItems(args: {
       approvalState: deriveApprovalState(request.status),
       executionState: deriveExecutionState({
         requestStatus: request.status,
-        linkedSignature,
+        executionState: latestExecutionRecord?.state ?? null,
+        submittedSignature: latestExecutionRecord?.submittedSignature ?? null,
+        hasObservedTransaction:
+          latestExecutionRecord?.submittedSignature
+            ? args.observedExecutionSignatures.has(latestExecutionRecord.submittedSignature)
+            : false,
         matchStatus: matchRow?.match_status ?? null,
         exceptionStatuses: exceptions.map((item) => item.status),
       }),
+      latestExecution: latestExecutionRecord ? serializeExecutionRecord(latestExecutionRecord) : null,
+      executionRecords,
       requestDisplayState,
       availableTransitions: getAvailableOperatorTransitions({
         requestStatus: request.status as RequestStatus,
@@ -1332,6 +1414,45 @@ async function queryObservedTransfersByIds(transferIds: string[]) {
   }));
 }
 
+async function queryObservedTransactionBySignature(signature: string) {
+  const rows = await queryClickHouse<ObservedTransactionRow>(`
+    SELECT
+      signature,
+      slot,
+      event_time,
+      status,
+      created_at
+    FROM ${config.clickhouseDatabase}.observed_transactions
+    WHERE signature = '${escapeClickHouseString(signature)}'
+    ORDER BY event_time DESC
+    LIMIT 1
+    FORMAT JSONEachRow
+  `);
+
+  const row = rows[0];
+  if (!row) {
+    return null;
+  }
+
+  return serializeObservedTransaction(row);
+}
+
+async function queryObservedTransactionSignatures(signatures: string[]) {
+  const uniqueSignatures = uniqueValues(signatures.filter(Boolean));
+  if (!uniqueSignatures.length) {
+    return new Set<string>();
+  }
+
+  const rows = await queryClickHouse<Pick<ObservedTransactionRow, 'signature'>>(`
+    SELECT signature
+    FROM ${config.clickhouseDatabase}.observed_transactions
+    WHERE signature IN (${uniqueSignatures.map((signature) => `'${escapeClickHouseString(signature)}'`).join(', ')})
+    FORMAT JSONEachRow
+  `);
+
+  return new Set(rows.map((row) => row.signature));
+}
+
 async function queryObservedPaymentById(paymentId: string) {
   const rows = await queryClickHouse<ObservedPaymentRow>(`
     SELECT
@@ -1439,6 +1560,16 @@ async function queryObservedPaymentsBySignature(signature: string) {
   }));
 }
 
+function serializeObservedTransaction(row: ObservedTransactionRow) {
+  return {
+    signature: row.signature,
+    slot: Number(row.slot),
+    eventTime: normalizeClickHouseDateTime(row.event_time)!,
+    status: row.status,
+    createdAt: normalizeClickHouseDateTime(row.created_at)!,
+  };
+}
+
 async function queryObservedPaymentsBySignatures(signatures: string[]) {
   const uniqueSignatures = uniqueValues(signatures.filter(Boolean));
   if (!uniqueSignatures.length) {
@@ -1514,6 +1645,14 @@ function safeJsonParse(value: string | null) {
   } catch {
     return value;
   }
+}
+
+function collectSubmittedExecutionSignatures(transferRequests: TransferRequestWithRelations[]) {
+  return uniqueValues(
+    transferRequests
+      .map((request) => request.executionRecords?.[0]?.submittedSignature)
+      .filter((value): value is string => Boolean(value)),
+  );
 }
 
 function escapeClickHouseString(value: string) {

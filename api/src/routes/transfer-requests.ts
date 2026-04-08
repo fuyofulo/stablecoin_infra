@@ -2,6 +2,11 @@ import { Router } from 'express';
 import type { Destination, Prisma, WorkspaceAddress } from '@prisma/client';
 import { z } from 'zod';
 import { buildApprovalEvaluationSummary, getOrCreateWorkspaceApprovalPolicy } from '../approval-policy.js';
+import {
+  isExecutionRecordState,
+  isManualExecutionRecordState,
+  serializeExecutionRecord,
+} from '../execution-records.js';
 import { prisma } from '../prisma.js';
 import { getReconciliationDetail, serializeTransferRequest } from '../reconciliation.js';
 import { createTransferRequestEvent } from '../transfer-request-events.js';
@@ -25,6 +30,10 @@ const workspaceParamsSchema = z.object({
 
 const transferRequestParamsSchema = workspaceParamsSchema.extend({
   transferRequestId: z.string().uuid(),
+});
+
+const executionRecordParamsSchema = workspaceParamsSchema.extend({
+  executionRecordId: z.string().uuid(),
 });
 
 const amountRawSchema = z.union([
@@ -60,6 +69,18 @@ const transitionTransferRequestSchema = z.object({
   linkedSignature: z.string().trim().min(1).optional(),
   linkedPaymentId: z.string().uuid().optional(),
   linkedTransferIds: z.array(z.string().uuid()).max(64).default([]),
+});
+
+const createExecutionRecordSchema = z.object({
+  executionSource: z.string().trim().min(1).max(100).default('manual'),
+  metadataJson: z.record(z.any()).default({}),
+});
+
+const updateExecutionRecordSchema = z.object({
+  submittedSignature: z.string().trim().min(1).optional(),
+  state: z.string().trim().min(1).optional(),
+  submittedAt: z.string().datetime().optional(),
+  metadataJson: z.record(z.any()).default({}),
 });
 
 transferRequestsRouter.get('/workspaces/:workspaceId/transfer-requests', async (req, res, next) => {
@@ -499,6 +520,217 @@ transferRequestsRouter.post(
   },
 );
 
+transferRequestsRouter.post(
+  '/workspaces/:workspaceId/transfer-requests/:transferRequestId/executions',
+  async (req, res, next) => {
+    try {
+      const { workspaceId, transferRequestId } = transferRequestParamsSchema.parse(req.params);
+      await assertWorkspaceAdmin(workspaceId, req.auth!.userId);
+      const input = createExecutionRecordSchema.parse(req.body);
+
+      const current = await prisma.transferRequest.findFirstOrThrow({
+        where: { workspaceId, transferRequestId },
+      });
+
+      if (!['approved', 'ready_for_execution', 'submitted_onchain'].includes(current.status)) {
+        throw new Error('Execution records can only be created for approved or active requests');
+      }
+
+      const created = await prisma.$transaction(async (tx) => {
+        const executionRecord = await tx.executionRecord.create({
+          data: {
+            transferRequestId,
+            workspaceId,
+            executionSource: input.executionSource,
+            executorUserId: req.auth!.userId,
+            state: 'ready_for_execution',
+            metadataJson: input.metadataJson,
+          },
+          include: {
+            executorUser: {
+              select: {
+                userId: true,
+                email: true,
+                displayName: true,
+              },
+            },
+          },
+        });
+
+        if (current.status === 'approved') {
+          await tx.transferRequest.update({
+            where: { transferRequestId },
+            data: {
+              status: 'ready_for_execution',
+            },
+          });
+        }
+
+        await createTransferRequestEvent(tx, {
+          transferRequestId,
+          workspaceId,
+          eventType: 'execution_created',
+          actorType: 'user',
+          actorId: req.auth!.userId,
+          eventSource: 'user',
+          beforeState: current.status,
+          afterState: current.status === 'approved' ? 'ready_for_execution' : current.status,
+          payloadJson: {
+            executionRecordId: executionRecord.executionRecordId,
+            executionSource: executionRecord.executionSource,
+            executionState: executionRecord.state,
+            metadataJson: executionRecord.metadataJson,
+          } satisfies Prisma.InputJsonValue,
+        });
+
+        return executionRecord;
+      });
+
+      res.status(201).json(serializeExecutionRecord(created));
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+transferRequestsRouter.patch(
+  '/workspaces/:workspaceId/executions/:executionRecordId',
+  async (req, res, next) => {
+    try {
+      const { workspaceId, executionRecordId } = executionRecordParamsSchema.parse(req.params);
+      await assertWorkspaceAdmin(workspaceId, req.auth!.userId);
+      const input = updateExecutionRecordSchema.parse(req.body);
+
+      if (!input.submittedSignature && !input.state && !Object.keys(input.metadataJson).length && !input.submittedAt) {
+        throw new Error('No execution update fields were provided');
+      }
+
+      if (input.state && !isExecutionRecordState(input.state)) {
+        throw new Error(`Invalid execution state ${input.state}`);
+      }
+
+      if (input.state && !isManualExecutionRecordState(input.state)) {
+        throw new Error(`Execution state ${input.state} is system-managed and cannot be set manually`);
+      }
+
+      const current = await prisma.executionRecord.findFirstOrThrow({
+        where: {
+          workspaceId,
+          executionRecordId,
+        },
+        include: {
+          executorUser: {
+            select: {
+              userId: true,
+              email: true,
+              displayName: true,
+            },
+          },
+        },
+      });
+
+      const nextState = resolveNextExecutionState(current.state, {
+        submittedSignature: input.submittedSignature,
+        state: input.state ?? null,
+      });
+      const nextRequestStatus = mapExecutionStateToRequestStatus(nextState);
+
+      const updated = await prisma.$transaction(async (tx) => {
+        const nextMetadata = {
+          ...(isRecordLike(current.metadataJson) ? current.metadataJson : {}),
+          ...input.metadataJson,
+        };
+
+        const executionRecord = await tx.executionRecord.update({
+          where: {
+            executionRecordId: current.executionRecordId,
+          },
+          data: {
+            state: nextState,
+            submittedSignature: input.submittedSignature ?? current.submittedSignature,
+            submittedAt:
+              input.submittedSignature || input.state === 'submitted_onchain'
+                ? input.submittedAt
+                  ? new Date(input.submittedAt)
+                  : current.submittedAt ?? new Date()
+                : current.submittedAt,
+            metadataJson: nextMetadata as Prisma.InputJsonValue,
+          },
+          include: {
+            executorUser: {
+              select: {
+                userId: true,
+                email: true,
+                displayName: true,
+              },
+            },
+          },
+        });
+
+        const request = await tx.transferRequest.findUniqueOrThrow({
+          where: { transferRequestId: current.transferRequestId },
+          select: {
+            transferRequestId: true,
+            status: true,
+          },
+        });
+
+        if (nextRequestStatus !== request.status) {
+          await tx.transferRequest.update({
+            where: { transferRequestId: current.transferRequestId },
+            data: {
+              status: nextRequestStatus,
+            },
+          });
+        }
+
+        if (input.submittedSignature && input.submittedSignature !== current.submittedSignature) {
+          await createTransferRequestEvent(tx, {
+            transferRequestId: current.transferRequestId,
+            workspaceId,
+            eventType: 'execution_signature_attached',
+            actorType: 'user',
+            actorId: req.auth!.userId,
+            eventSource: 'user',
+            beforeState: request.status,
+            afterState: nextRequestStatus,
+            linkedSignature: input.submittedSignature,
+            payloadJson: {
+              executionRecordId: current.executionRecordId,
+              executionStateBefore: current.state,
+              executionStateAfter: nextState,
+              submittedSignature: input.submittedSignature,
+            } satisfies Prisma.InputJsonValue,
+          });
+        } else if (nextState !== current.state) {
+          await createTransferRequestEvent(tx, {
+            transferRequestId: current.transferRequestId,
+            workspaceId,
+            eventType: 'execution_state_changed',
+            actorType: 'user',
+            actorId: req.auth!.userId,
+            eventSource: 'user',
+            beforeState: request.status,
+            afterState: nextRequestStatus,
+            linkedSignature: executionRecord.submittedSignature,
+            payloadJson: {
+              executionRecordId: current.executionRecordId,
+              executionStateBefore: current.state,
+              executionStateAfter: nextState,
+            } satisfies Prisma.InputJsonValue,
+          });
+        }
+
+        return executionRecord;
+      });
+
+      res.json(serializeExecutionRecord(updated));
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
 async function ensureTransferRequestExists(workspaceId: string, transferRequestId: string) {
   await prisma.transferRequest.findFirstOrThrow({
     where: { workspaceId, transferRequestId },
@@ -525,4 +757,39 @@ function buildApprovalDestinationContext(
     trustState: 'unreviewed',
     isInternal: false,
   };
+}
+
+function resolveNextExecutionState(
+  currentState: string,
+  input: {
+    submittedSignature?: string;
+    state: string | null;
+  },
+) {
+  if (input.state) {
+    return input.state;
+  }
+
+  if (input.submittedSignature) {
+    return 'submitted_onchain';
+  }
+
+  return currentState;
+}
+
+function mapExecutionStateToRequestStatus(executionState: string) {
+  switch (executionState) {
+    case 'ready_for_execution':
+      return 'ready_for_execution';
+    case 'submitted_onchain':
+      return 'submitted_onchain';
+    case 'broadcast_failed':
+      return 'ready_for_execution';
+    default:
+      return 'submitted_onchain';
+  }
+}
+
+function isRecordLike(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

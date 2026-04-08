@@ -172,6 +172,35 @@ export type TransferRequest = {
   destination: Destination | null;
 };
 
+export type ExecutionRecord = {
+  executionRecordId: string;
+  transferRequestId: string;
+  workspaceId: string;
+  submittedSignature: string | null;
+  executionSource: string;
+  executorUserId: string | null;
+  state:
+    | 'ready_for_execution'
+    | 'submitted_onchain'
+    | 'broadcast_failed'
+    | 'observed'
+    | 'settled'
+    | 'execution_exception';
+  submittedAt: string | null;
+  metadataJson: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+  executorUser: User | null;
+};
+
+export type ObservedExecutionTransaction = {
+  signature: string;
+  slot: number;
+  eventTime: string;
+  status: string;
+  createdAt: string;
+};
+
 export type TransferRequestEvent = {
   transferRequestEventId: string;
   transferRequestId: string;
@@ -242,11 +271,16 @@ export type ReconciliationRow = {
   approvalState: 'draft' | 'submitted' | 'pending_approval' | 'escalated' | 'approved' | 'closed' | 'rejected';
   executionState:
     | 'not_started'
-    | 'awaiting_execution'
+    | 'ready_for_execution'
     | 'submitted_onchain'
-    | 'observed_onchain'
+    | 'broadcast_failed'
+    | 'observed'
+    | 'settled'
+    | 'execution_exception'
     | 'closed'
     | 'rejected';
+  latestExecution: ExecutionRecord | null;
+  executionRecords: ExecutionRecord[];
   requestDisplayState: 'pending' | 'matched' | 'partial' | 'exception';
   availableTransitions: string[];
   linkedSignature: string | null;
@@ -375,6 +409,7 @@ export type ReconciliationTimelineItem =
     };
 
 export type ReconciliationDetail = ReconciliationRow & {
+  observedExecutionTransaction: ObservedExecutionTransaction | null;
   linkedObservedTransfers: ObservedTransfer[];
   linkedObservedPayment: ObservedPayment | null;
   relatedObservedPayments: ObservedPayment[];

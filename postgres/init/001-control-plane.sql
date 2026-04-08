@@ -248,6 +248,21 @@ CREATE TABLE IF NOT EXISTS approval_decisions
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS execution_records
+(
+  execution_record_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  transfer_request_id UUID NOT NULL REFERENCES transfer_requests(transfer_request_id) ON DELETE CASCADE,
+  workspace_id UUID NOT NULL REFERENCES workspaces(workspace_id) ON DELETE CASCADE,
+  submitted_signature TEXT,
+  execution_source TEXT NOT NULL DEFAULT 'manual',
+  executor_user_id UUID REFERENCES users(user_id) ON DELETE SET NULL,
+  state TEXT NOT NULL DEFAULT 'ready_for_execution',
+  submitted_at TIMESTAMPTZ,
+  metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 ALTER TABLE transfer_requests
   ADD COLUMN IF NOT EXISTS destination_id UUID;
 
@@ -315,6 +330,21 @@ ALTER TABLE approval_decisions
     action IN ('routed_for_approval', 'auto_approved', 'approve', 'reject', 'escalate')
   );
 
+ALTER TABLE execution_records
+  DROP CONSTRAINT IF EXISTS chk_execution_records_state;
+
+ALTER TABLE execution_records
+  ADD CONSTRAINT chk_execution_records_state CHECK (
+    state IN (
+      'ready_for_execution',
+      'submitted_onchain',
+      'broadcast_failed',
+      'observed',
+      'settled',
+      'execution_exception'
+    )
+  );
+
 ALTER TABLE exception_states
   DROP CONSTRAINT IF EXISTS chk_exception_states_status;
 
@@ -369,6 +399,10 @@ CREATE INDEX IF NOT EXISTS idx_approval_decisions_workspace_created_at
   ON approval_decisions(workspace_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_approval_decisions_request_created_at
   ON approval_decisions(transfer_request_id, created_at ASC);
+CREATE INDEX IF NOT EXISTS idx_execution_records_workspace_created_at
+  ON execution_records(workspace_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_execution_records_request_created_at
+  ON execution_records(transfer_request_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_transfer_request_events_request_created_at
   ON transfer_request_events(transfer_request_id, created_at ASC);
 CREATE INDEX IF NOT EXISTS idx_transfer_request_events_workspace_created_at
@@ -433,6 +467,11 @@ FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 DROP TRIGGER IF EXISTS trg_approval_policies_updated_at ON approval_policies;
 CREATE TRIGGER trg_approval_policies_updated_at
 BEFORE UPDATE ON approval_policies
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+DROP TRIGGER IF EXISTS trg_execution_records_updated_at ON execution_records;
+CREATE TRIGGER trg_execution_records_updated_at
+BEFORE UPDATE ON execution_records
 FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 DROP TRIGGER IF EXISTS trg_exception_states_updated_at ON exception_states;

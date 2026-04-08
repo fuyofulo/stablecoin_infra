@@ -30,9 +30,6 @@ export const ACTIVE_MATCHING_REQUEST_STATUSES = [
   'approved',
   'ready_for_execution',
   'submitted_onchain',
-  'observed',
-  'partially_matched',
-  'exception',
 ] as const satisfies readonly RequestStatus[];
 
 export const REQUEST_DISPLAY_STATES = ['pending', 'matched', 'partial', 'exception'] as const;
@@ -41,9 +38,12 @@ export const APPROVAL_STATES = ['draft', 'submitted', 'pending_approval', 'escal
 export type ApprovalState = (typeof APPROVAL_STATES)[number];
 export const EXECUTION_STATES = [
   'not_started',
-  'awaiting_execution',
+  'ready_for_execution',
   'submitted_onchain',
-  'observed_onchain',
+  'broadcast_failed',
+  'observed',
+  'settled',
+  'execution_exception',
   'closed',
   'rejected',
 ] as const;
@@ -72,8 +72,8 @@ const USER_ALLOWED_REQUEST_TRANSITIONS: Readonly<Record<RequestStatus, readonly 
   submitted: [],
   pending_approval: [],
   escalated: [],
-  approved: ['ready_for_execution'],
-  ready_for_execution: ['submitted_onchain'],
+  approved: [],
+  ready_for_execution: [],
   submitted_onchain: [],
   observed: [],
   matched: ['closed'],
@@ -129,15 +129,25 @@ export function deriveApprovalState(requestStatus: string): ApprovalState {
 
 export function deriveExecutionState(args: {
   requestStatus: string;
-  linkedSignature?: string | null;
+  executionState?: string | null;
+  submittedSignature?: string | null;
+  hasObservedTransaction?: boolean;
   matchStatus?: string | null;
   exceptionStatuses?: string[];
 }): ExecutionState {
-  const { requestStatus, linkedSignature, matchStatus, exceptionStatuses = [] } = args;
+  const {
+    requestStatus,
+    executionState,
+    submittedSignature,
+    hasObservedTransaction = false,
+    matchStatus,
+    exceptionStatuses = [],
+  } = args;
+  const hasActiveException = exceptionStatuses.some((status) => ACTIVE_EXCEPTION_STATUSES.has(status));
   const hasObservedSettlement =
-    Boolean(linkedSignature)
+    hasObservedTransaction
     || Boolean(matchStatus)
-    || exceptionStatuses.some((status) => ACTIVE_EXCEPTION_STATUSES.has(status));
+    || hasActiveException;
 
   if (requestStatus === 'closed') {
     return 'closed';
@@ -147,22 +157,33 @@ export function deriveExecutionState(args: {
     return 'rejected';
   }
 
-  if (
-    requestStatus === 'observed'
-    || requestStatus === 'matched'
-    || requestStatus === 'partially_matched'
-    || requestStatus === 'exception'
-    || hasObservedSettlement
-  ) {
-    return 'observed_onchain';
+  if (hasActiveException && (hasObservedSettlement || Boolean(submittedSignature))) {
+    return 'execution_exception';
   }
 
-  if (requestStatus === 'submitted_onchain') {
+  if (matchStatus === 'matched_exact' || matchStatus === 'matched_split') {
+    return 'settled';
+  }
+
+  if (executionState === 'broadcast_failed') {
+    return 'broadcast_failed';
+  }
+
+  if (
+    executionState === 'observed'
+    || executionState === 'settled'
+    || executionState === 'execution_exception'
+    || hasObservedSettlement
+  ) {
+    return 'observed';
+  }
+
+  if (executionState === 'submitted_onchain' || requestStatus === 'submitted_onchain' || Boolean(submittedSignature)) {
     return 'submitted_onchain';
   }
 
-  if (requestStatus === 'approved' || requestStatus === 'ready_for_execution') {
-    return 'awaiting_execution';
+  if (executionState === 'ready_for_execution' || requestStatus === 'approved' || requestStatus === 'ready_for_execution') {
+    return 'ready_for_execution';
   }
 
   return 'not_started';

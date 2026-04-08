@@ -67,6 +67,10 @@ internalRouter.get('/internal/workspaces/:workspaceId/matching-context', async (
         include: {
           sourceWorkspaceAddress: true,
           destinationWorkspaceAddress: true,
+          executionRecords: {
+            orderBy: { createdAt: 'desc' },
+            take: 1,
+          },
           destination: {
             include: {
               counterparty: true,
@@ -142,6 +146,15 @@ internalRouter.get('/internal/workspaces/:workspaceId/matching-context', async (
               usdcAtaAddress: request.destinationWorkspaceAddress.usdcAtaAddress,
               addressKind: request.destinationWorkspaceAddress.addressKind,
               displayName: request.destinationWorkspaceAddress.displayName,
+            }
+          : null,
+        latestExecution: request.executionRecords[0]
+          ? {
+              executionRecordId: request.executionRecords[0].executionRecordId,
+              submittedSignature: request.executionRecords[0].submittedSignature,
+              executionSource: request.executionRecords[0].executionSource,
+              state: request.executionRecords[0].state,
+              submittedAt: request.executionRecords[0].submittedAt,
             }
           : null,
       })),
