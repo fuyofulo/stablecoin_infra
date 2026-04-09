@@ -1216,6 +1216,7 @@ export function App() {
                 currentWorkspace={currentWorkspace}
                 destinations={destinations}
                 onCreateTransferRequest={handleCreateTransferRequest}
+                reconciliationRows={reconciliationRows}
                 transferRequests={transferRequests}
               />
             ) : null}

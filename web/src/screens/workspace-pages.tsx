@@ -16,6 +16,50 @@ import type {
 import { formatRawUsdc, formatTimestamp, orbTransactionUrl, shortenAddress } from '../lib/app';
 import { InfoLine, Metric } from '../components/ui';
 
+function TableSurfaceHeader({
+  actionDisabled = false,
+  actionLabel,
+  count,
+  onAction,
+  onSearchChange,
+  searchPlaceholder,
+  searchValue,
+  title,
+}: {
+  actionDisabled?: boolean;
+  actionLabel: string;
+  count: number;
+  onAction: () => void;
+  onSearchChange: (value: string) => void;
+  searchPlaceholder: string;
+  searchValue: string;
+  title: string;
+}) {
+  return (
+    <div className="panel-header surface-panel-header">
+      <div className="surface-panel-copy">
+        <h2 className="registry-section-title">
+          {title} <span className="registry-count-inline">[{count}]</span>
+        </h2>
+      </div>
+      <div className="surface-toolbar">
+        <label className="queue-select surface-search">
+          <input
+            value={searchValue}
+            onChange={(event) => onSearchChange(event.target.value)}
+            placeholder={searchPlaceholder}
+          />
+        </label>
+        <div className="surface-toolbar-actions">
+          <button className="primary-button" disabled={actionDisabled} onClick={onAction} type="button">
+            {actionLabel}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function WorkspaceHomePage({
   approvalInbox,
   addresses,
@@ -1133,29 +1177,16 @@ export function WorkspaceRegistryPage({
 
       <section className="registry-shell">
         <div className="content-panel content-panel-strong registry-main-panel">
-          <div className="panel-header registry-panel-header">
-            <div className="registry-panel-copy">
-              <h2 className="registry-section-title">
-                Destinations <span className="registry-count-inline">[{destinations.length}]</span>
-              </h2>
-            </div>
-          </div>
-
-            <div className="registry-toolbar">
-              <label className="queue-select registry-search">
-                <span>Search</span>
-                <input
-                  value={searchQuery}
-                onChange={(event) => setSearchQuery(event.target.value)}
-                placeholder="Search destination, wallet, or counterparty"
-              />
-              </label>
-              <div className="registry-toolbar-actions">
-                <button className="primary-button" disabled={!canManage || addresses.length === 0} onClick={() => setModalState({ type: 'create-destination' })} type="button">
-                New destination
-              </button>
-            </div>
-          </div>
+          <TableSurfaceHeader
+            actionDisabled={!canManage || addresses.length === 0}
+            actionLabel="New destination"
+            count={destinations.length}
+            onAction={() => setModalState({ type: 'create-destination' })}
+            onSearchChange={setSearchQuery}
+            searchPlaceholder="Search destination, wallet, or counterparty"
+            searchValue={searchQuery}
+            title="Destinations"
+          />
 
           <div className="registry-table">
             <div className="registry-table-head">
@@ -1330,7 +1361,16 @@ export function WorkspaceRegistryPage({
 
       {modalState ? (
         <div className="registry-modal-backdrop" onClick={() => setModalState(null)} role="presentation">
-          <div className="registry-modal" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true">
+          <div
+            className={
+              modalState.type === 'create-destination' || modalState.type === 'edit-destination'
+                ? 'registry-modal registry-modal-wide'
+                : 'registry-modal'
+            }
+            onClick={(event) => event.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+          >
             {modalState.type === 'create-wallet' || modalState.type === 'edit-wallet' ? (
               <>
                 <div className="panel-header panel-header-stack">
@@ -1425,7 +1465,11 @@ export function WorkspaceRegistryPage({
                     close
                   </button>
                 </div>
-                <form key={`destination-form-${editingDestination?.destinationId ?? 'new'}`} className="form-stack" onSubmit={(event) => void handleDestinationSubmit(event)}>
+                <form
+                  key={`destination-form-${editingDestination?.destinationId ?? 'new'}`}
+                  className="form-stack modal-form-grid"
+                  onSubmit={(event) => void handleDestinationSubmit(event)}
+                >
                   <label className="field">
                     <span>Linked wallet</span>
                     <select defaultValue={editingDestination?.linkedWorkspaceAddressId ?? (modalState.type === 'create-destination' ? modalState.linkedWorkspaceAddressId ?? '' : '')} name="linkedWorkspaceAddressId" required>
@@ -1474,7 +1518,7 @@ export function WorkspaceRegistryPage({
                       <option value="true">internal</option>
                     </select>
                   </label>
-                  <label className="field">
+                  <label className="field modal-span-full">
                     <span>Notes</span>
                     <input defaultValue={editingDestination?.notes ?? ''} name="notes" placeholder="Optional context" />
                   </label>
@@ -1485,7 +1529,7 @@ export function WorkspaceRegistryPage({
                       <option value="false">inactive</option>
                     </select>
                   </label>
-                  <div className="exception-actions">
+                  <div className="exception-actions modal-span-full">
                     <button className="primary-button" disabled={!canManage || addresses.length === 0} type="submit">
                       {editingDestination ? 'Update destination' : 'Create destination'}
                     </button>
@@ -1592,9 +1636,9 @@ export function WorkspacePolicyPage({
   onUpdateApprovalPolicy: (event: FormEvent<HTMLFormElement>) => Promise<void>;
 }) {
   return (
-    <div className="page-stack">
+    <div className="page-stack page-stack-tight">
       <section className="section-headline section-headline-compact">
-        <div>
+        <div className="section-headline-copy">
           <p className="eyebrow">Approval Policy</p>
           <h1>{currentWorkspace.workspaceName}</h1>
           <p className="section-copy">
@@ -1618,11 +1662,14 @@ export function WorkspacePolicyPage({
             <div>
               <p className="eyebrow">Policy</p>
               <h2>When a request becomes live</h2>
-              <p className="compact-copy">These rules run when a trusted destination request is made live.</p>
             </div>
           </div>
           {approvalPolicy ? (
-            <form className="form-stack" onSubmit={onUpdateApprovalPolicy}>
+            <form className="form-stack modal-form-grid policy-form-grid" onSubmit={onUpdateApprovalPolicy}>
+              <div className="setup-hint-card modal-span-full policy-inline-note">
+                <strong>How this works</strong>
+                <p>Trusted destination requests can go live immediately, enter approval, or stay gated depending on these rules and thresholds.</p>
+              </div>
               <label className="field">
                 <span>Policy name</span>
                 <input defaultValue={approvalPolicy.policyName} name="policyName" required />
@@ -1688,9 +1735,11 @@ export function WorkspacePolicyPage({
                   Trusted internal destinations at or above {formatRawUsdc(approvalPolicy.ruleJson.internalApprovalThresholdRaw)} USDC require approval.
                 </small>
               </label>
-              <button className="primary-button" disabled={!canManage} type="submit">
-                Update approval policy
-              </button>
+              <div className="exception-actions modal-span-full">
+                <button className="primary-button" disabled={!canManage} type="submit">
+                  Update approval policy
+                </button>
+              </div>
             </form>
           ) : (
             <div className="empty-box compact">Approval policy unavailable.</div>
@@ -1707,6 +1756,7 @@ export function WorkspaceRequestsPage({
   currentWorkspace,
   destinations,
   onCreateTransferRequest,
+  reconciliationRows,
   transferRequests,
 }: {
   addresses: WorkspaceAddress[];
@@ -1714,12 +1764,46 @@ export function WorkspaceRequestsPage({
   currentWorkspace: Workspace;
   destinations: Destination[];
   onCreateTransferRequest: (event: FormEvent<HTMLFormElement>) => Promise<void>;
+  reconciliationRows: ReconciliationRow[];
   transferRequests: TransferRequest[];
 }) {
+  const [modalState, setModalState] = useState<{ type: 'create' } | { type: 'view'; transferRequestId: string } | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
   const [selectedRequestDestinationId, setSelectedRequestDestinationId] = useState('');
   const [requestCreateStatus, setRequestCreateStatus] = useState<'draft' | 'submitted'>('submitted');
   const selectedRequestDestination =
     destinations.find((item) => item.destinationId === selectedRequestDestinationId) ?? null;
+  const reconciliationByRequestId = new Map(reconciliationRows.map((row) => [row.transferRequestId, row] as const));
+  const requestRows = [...transferRequests]
+    .sort((left, right) => new Date(right.requestedAt).getTime() - new Date(left.requestedAt).getTime())
+    .filter((item) => {
+      if (!searchQuery.trim()) {
+        return true;
+      }
+      const query = searchQuery.trim().toLowerCase();
+      const row = reconciliationByRequestId.get(item.transferRequestId);
+      return [
+        getTransferLabel(item),
+        getDestinationLabel(item.destination, item.destinationWorkspaceAddress),
+        item.destination?.counterparty?.displayName ?? '',
+        item.requestType,
+        item.reason ?? '',
+        item.externalReference ?? '',
+        row?.approvalState ?? '',
+        row?.executionState ?? '',
+        row?.requestDisplayState ?? '',
+      ]
+        .join(' ')
+        .toLowerCase()
+        .includes(query);
+    });
+  const selectedRequest =
+    modalState?.type === 'view'
+      ? transferRequests.find((item) => item.transferRequestId === modalState.transferRequestId) ?? null
+      : null;
+  const selectedRequestRow = selectedRequest
+    ? reconciliationByRequestId.get(selectedRequest.transferRequestId) ?? null
+    : null;
 
   useEffect(() => {
     if (!selectedRequestDestination) {
@@ -1741,9 +1825,9 @@ export function WorkspaceRequestsPage({
   }, [selectedRequestDestination]);
 
   return (
-    <div className="page-stack">
+    <div className="page-stack page-stack-tight">
       <section className="section-headline section-headline-compact">
-        <div>
+        <div className="section-headline-copy">
           <p className="eyebrow">Expected Transfers</p>
           <h1>{currentWorkspace.workspaceName}</h1>
           <p className="section-copy">
@@ -1761,132 +1845,283 @@ export function WorkspaceRequestsPage({
         </div>
       ) : null}
 
-      <section className="content-grid">
-        <div className="content-panel content-panel-strong">
-          <div className="panel-header">
-            <div>
-              <p className="eyebrow">New request</p>
-              <h2>Create a planned transfer</h2>
-              <p className="compact-copy">Pick a destination first. Its trust and scope determine whether this request can go live immediately.</p>
-            </div>
-          </div>
-          <form className="form-stack" onSubmit={onCreateTransferRequest}>
-            <label className="field">
-              <span>From wallet</span>
-              <select name="sourceWorkspaceAddressId" defaultValue="">
-                <option value="">Optional</option>
-                {addresses.map((address) => (
-                  <option key={address.workspaceAddressId} value={address.workspaceAddressId}>
-                    {getWalletName(address)}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="field">
-              <span>Destination</span>
-              <select
-                name="destinationId"
-                onChange={(event) => setSelectedRequestDestinationId(event.target.value)}
-                value={selectedRequestDestinationId}
-                required
-              >
-                <option value="" disabled>
-                  Select destination
-                </option>
-                {destinations.filter((item) => item.isActive).map((destination) => (
-                  <option key={destination.destinationId} value={destination.destinationId}>
-                    {destination.label} // {destination.trustState}
-                  </option>
-                ))}
-              </select>
-            </label>
-            {selectedRequestDestination ? (
-              <div className="setup-hint-card">
-                <strong>
-                  {selectedRequestDestination.label} // {selectedRequestDestination.trustState} // {selectedRequestDestination.isInternal ? 'internal' : 'external'}
-                </strong>
-                <p>{getDestinationTrustCopy(selectedRequestDestination)}</p>
-              </div>
-            ) : (
-              <div className="setup-hint-card">
-                <strong>Before you create requests</strong>
-                <p>Use the Address book page to save the wallet and create the destination first.</p>
-              </div>
-            )}
-            <label className="field">
-              <span>Transfer type</span>
-              <input name="requestType" placeholder="wallet_transfer" required />
-            </label>
-            <label className="field">
-              <span>Initial request state</span>
-              <select
-                name="status"
-                onChange={(event) => setRequestCreateStatus(event.target.value as 'draft' | 'submitted')}
-                value={requestCreateStatus}
-              >
-                <option value="draft">save as draft</option>
-                {selectedRequestDestination?.isActive !== false && selectedRequestDestination?.trustState === 'trusted' ? (
-                  <option value="submitted">make live request</option>
-                ) : null}
-              </select>
-            </label>
-            <label className="field">
-              <span>Amount (raw units)</span>
-              <input name="amountRaw" placeholder="10000 for 0.01 USDC" required />
-              <small className="field-note">USDC uses 6 decimals. Example: 10000 = 0.01 USDC.</small>
-            </label>
-            <label className="field">
-              <span>Reference</span>
-              <input name="externalReference" placeholder="Optional" />
-            </label>
-            <label className="field">
-              <span>Reason</span>
-              <input name="reason" placeholder="Optional" />
-            </label>
-            <button
-              className="primary-button"
-              disabled={
-                !canManage
-                || destinations.length === 0
-                || !selectedRequestDestination
-                || !selectedRequestDestination.isActive
-                || selectedRequestDestination.trustState === 'blocked'
-              }
-              type="submit"
-            >
-              Create planned transfer
-            </button>
-          </form>
-        </div>
+      <section className="request-shell">
+        <div className="content-panel content-panel-strong request-main-panel">
+          <TableSurfaceHeader
+            actionDisabled={!canManage || destinations.length === 0}
+            actionLabel="New expected transfer"
+            count={transferRequests.length}
+            onAction={() => setModalState({ type: 'create' })}
+            onSearchChange={setSearchQuery}
+            searchPlaceholder="Search request, destination, type, or state"
+            searchValue={searchQuery}
+            title="Expected transfers"
+          />
 
-        <div className="content-panel content-panel-strong">
-          <div className="panel-header">
-            <div>
-              <p className="eyebrow">Queue seed</p>
-              <h2>Existing expected transfers</h2>
-              <p className="compact-copy">These will appear in the main watch system queue once they are live.</p>
+          <div className="request-table">
+            <div className="request-table-head">
+              <span>Request ID</span>
+              <span>Source</span>
+              <span>Destination</span>
+              <span>Amount</span>
+              <span>Approval</span>
+              <span>Execution</span>
+              <span>Settlement</span>
+              <span>Requested</span>
             </div>
-            <span className="status-chip">{transferRequests.length}</span>
-          </div>
-          <div className="setup-list">
-            {transferRequests.length ? (
-              transferRequests.map((item) => (
-                <div key={item.transferRequestId} className="workspace-row static-row">
-                  <div>
-                    <strong>{getTransferLabel(item)}</strong>
-                    <small>
-                      {item.destination?.label ?? getWalletNameLite(item.destinationWorkspaceAddress)} // {item.requestType.replaceAll('_', ' ')} // {formatRawUsdc(item.amountRaw)}
-                    </small>
+            {requestRows.length ? (
+              requestRows.map((item) => {
+                const row = reconciliationByRequestId.get(item.transferRequestId) ?? null;
+                const approvalState = row?.approvalState ?? inferApprovalStateFromRequestStatus(item.status);
+                const executionState = row?.executionState ?? inferExecutionStateFromRequestStatus(item.status);
+                const settlementState = row?.requestDisplayState ?? 'pending';
+
+                return (
+                  <div key={item.transferRequestId} className="request-table-row">
+                    <button
+                      className="request-row-button"
+                      onClick={() => setModalState({ type: 'view', transferRequestId: item.transferRequestId })}
+                      title={`${item.transferRequestId} // ${getTransferLabel(item)}`}
+                      type="button"
+                    >
+                      <span className="request-cell-primary">
+                        <strong>{shortenAddress(item.transferRequestId, 8, 6)}</strong>
+                      </span>
+                      <span className="request-cell-single">
+                        <strong>{item.sourceWorkspaceAddress ? getWalletNameLite(item.sourceWorkspaceAddress) : 'Unknown'}</strong>
+                      </span>
+                      <span className="request-cell-single">
+                        <strong>{getDestinationLabel(item.destination, item.destinationWorkspaceAddress)}</strong>
+                      </span>
+                      <span className="request-cell-amount request-cell-single">
+                        <strong>{formatRawUsdc(item.amountRaw)}</strong>
+                      </span>
+                      <span className="request-cell-single"><span className={`tone-pill tone-pill-${mapApprovalTone(approvalState)}`}>{getApprovalStateLabel(approvalState)}</span></span>
+                      <span className="request-cell-single"><span className={`tone-pill tone-pill-${mapExecutionTone(executionState)}`}>{getExecutionStateLabel(executionState)}</span></span>
+                      <span className="request-cell-single"><span className={`tone-pill tone-pill-${settlementState}`}>{getDisplayStateLabel(settlementState)}</span></span>
+                      <span className="request-cell-single">{formatTimestamp(item.requestedAt)}</span>
+                    </button>
                   </div>
-                  <span className="status-chip">{formatLabel(item.status)}</span>
-                </div>
-              ))
+                );
+              })
+            ) : transferRequests.length ? (
+              <div className="empty-box compact">No expected transfers match the current search.</div>
             ) : (
-              <div className="empty-box compact">No planned transfers yet.</div>
+              <div className="empty-box compact">
+                <strong>No expected transfers yet.</strong>
+                <p>Create the first live or draft request here after you set up destinations in the address book.</p>
+              </div>
             )}
           </div>
         </div>
       </section>
+
+      {modalState ? (
+        <div className="registry-modal-backdrop" onClick={() => setModalState(null)} role="presentation">
+          <div className="registry-modal request-modal" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true">
+            {modalState.type === 'create' ? (
+              <>
+                <div className="panel-header panel-header-stack">
+                  <div>
+                    <p className="eyebrow">Expected transfer</p>
+                    <h2>New expected transfer</h2>
+                    <p className="compact-copy">Pick a destination first. Its trust and scope determine whether the request stays draft, enters approval, or can go live immediately.</p>
+                  </div>
+                  <button className="ghost-button compact-button danger-button" onClick={() => setModalState(null)} type="button">
+                    close
+                  </button>
+                </div>
+                <form
+                  className="form-stack modal-form-grid"
+                  onSubmit={async (event) => {
+                    await onCreateTransferRequest(event);
+                    setModalState(null);
+                  }}
+                >
+                  <label className="field">
+                    <span>From wallet</span>
+                    <select name="sourceWorkspaceAddressId" defaultValue="">
+                      <option value="">Optional</option>
+                      {addresses.map((address) => (
+                        <option key={address.workspaceAddressId} value={address.workspaceAddressId}>
+                          {getWalletName(address)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="field">
+                    <span>Destination</span>
+                    <select
+                      name="destinationId"
+                      onChange={(event) => setSelectedRequestDestinationId(event.target.value)}
+                      value={selectedRequestDestinationId}
+                      required
+                    >
+                      <option value="" disabled>
+                        Select destination
+                      </option>
+                      {destinations.filter((item) => item.isActive).map((destination) => (
+                        <option key={destination.destinationId} value={destination.destinationId}>
+                          {destination.label} // {destination.trustState}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  {selectedRequestDestination ? (
+                    <div className="setup-hint-card modal-span-full">
+                      <strong>
+                        {selectedRequestDestination.label} // {selectedRequestDestination.trustState} // {selectedRequestDestination.isInternal ? 'internal' : 'external'}
+                      </strong>
+                      <p>{getDestinationTrustCopy(selectedRequestDestination)}</p>
+                    </div>
+                  ) : (
+                    <div className="setup-hint-card modal-span-full">
+                      <strong>Before you create requests</strong>
+                      <p>Use the Address book page to save the wallet and create the destination first.</p>
+                    </div>
+                  )}
+                  <label className="field">
+                    <span>Transfer type</span>
+                    <input name="requestType" placeholder="wallet_transfer" required />
+                  </label>
+                  <label className="field">
+                    <span>Initial request state</span>
+                    <select
+                      name="status"
+                      onChange={(event) => setRequestCreateStatus(event.target.value as 'draft' | 'submitted')}
+                      value={requestCreateStatus}
+                    >
+                      <option value="draft">save as draft</option>
+                      {selectedRequestDestination?.isActive !== false && selectedRequestDestination?.trustState === 'trusted' ? (
+                        <option value="submitted">make live request</option>
+                      ) : null}
+                    </select>
+                  </label>
+                  <label className="field modal-span-full">
+                    <span>Amount (raw units)</span>
+                    <input name="amountRaw" placeholder="10000 for 0.01 USDC" required />
+                    <small className="field-note">USDC uses 6 decimals. Example: 10000 = 0.01 USDC.</small>
+                  </label>
+                  <label className="field">
+                    <span>Reference</span>
+                    <input name="externalReference" placeholder="Optional" />
+                  </label>
+                  <label className="field">
+                    <span>Reason</span>
+                    <input name="reason" placeholder="Optional" />
+                  </label>
+                  <div className="exception-actions modal-span-full">
+                    <button
+                      className="primary-button"
+                      disabled={
+                        !canManage
+                        || destinations.length === 0
+                        || !selectedRequestDestination
+                        || !selectedRequestDestination.isActive
+                        || selectedRequestDestination.trustState === 'blocked'
+                      }
+                      type="submit"
+                    >
+                      Create expected transfer
+                    </button>
+                  </div>
+                </form>
+              </>
+            ) : null}
+
+            {modalState.type === 'view' && selectedRequest ? (
+              <>
+                <div className="registry-modal-hero request-modal-hero">
+                  <div className="registry-modal-hero-copy">
+                    <h2>{getTransferLabel(selectedRequest)}</h2>
+                    <span className={`tone-pill tone-pill-${selectedRequestRow?.requestDisplayState ?? 'pending'}`}>
+                      {getDisplayStateLabel(selectedRequestRow?.requestDisplayState ?? 'pending')}
+                    </span>
+                  </div>
+                  <button className="ghost-button compact-button danger-button" onClick={() => setModalState(null)} type="button">
+                    close
+                  </button>
+                </div>
+
+                <div className="info-grid-tight">
+                  <InfoLine label="Destination" value={getDestinationLabel(selectedRequest.destination, selectedRequest.destinationWorkspaceAddress)} />
+                  <InfoLine label="Amount" value={`${formatRawUsdc(selectedRequest.amountRaw)} USDC`} />
+                  <InfoLine label="Requested" value={formatTimestamp(selectedRequest.requestedAt)} />
+                  <InfoLine label="Type" value={formatLabel(selectedRequest.requestType)} />
+                </div>
+
+                <div className="state-summary-grid request-state-grid">
+                  <div className="state-summary-card">
+                    <span>Approval</span>
+                    <strong>{getApprovalStateLabel(selectedRequestRow?.approvalState ?? inferApprovalStateFromRequestStatus(selectedRequest.status))}</strong>
+                  </div>
+                  <div className="state-summary-card">
+                    <span>Execution</span>
+                    <strong>{getExecutionStateLabel(selectedRequestRow?.executionState ?? inferExecutionStateFromRequestStatus(selectedRequest.status))}</strong>
+                  </div>
+                  <div className="state-summary-card">
+                    <span>Settlement</span>
+                    <strong>{getDisplayStateLabel(selectedRequestRow?.requestDisplayState ?? 'pending')}</strong>
+                  </div>
+                </div>
+
+                {selectedRequest.destination ? (
+                  <div className="registry-detail-group">
+                    <div className="registry-detail-head">
+                      <strong>Destination context</strong>
+                    </div>
+                    <div className="registry-detail-box">
+                      <strong>{selectedRequest.destination.label}</strong>
+                      <small>
+                        {selectedRequest.destination.trustState} // {selectedRequest.destination.isInternal ? 'internal' : 'external'}
+                        {selectedRequest.destination.counterparty ? ` // ${selectedRequest.destination.counterparty.displayName}` : ''}
+                      </small>
+                    </div>
+                  </div>
+                ) : null}
+
+                {selectedRequestRow?.latestExecution ? (
+                  <div className="registry-detail-group">
+                    <div className="registry-detail-head">
+                      <strong>Latest execution</strong>
+                    </div>
+                    <div className="registry-detail-box">
+                      <strong>{getExecutionStateLabel(selectedRequestRow.latestExecution.state)}</strong>
+                      <small>
+                        {selectedRequestRow.latestExecution.submittedSignature
+                          ? shortenAddress(selectedRequestRow.latestExecution.submittedSignature, 8, 8)
+                          : 'No submitted signature yet'}
+                      </small>
+                    </div>
+                  </div>
+                ) : null}
+
+                {selectedRequestRow?.matchExplanation ? (
+                  <div className="registry-detail-group">
+                    <div className="registry-detail-head">
+                      <strong>Settlement result</strong>
+                    </div>
+                    <div className="registry-detail-box">
+                      <p>{selectedRequestRow.matchExplanation}</p>
+                    </div>
+                  </div>
+                ) : null}
+
+                {selectedRequest.reason || selectedRequest.externalReference ? (
+                  <div className="info-grid-tight">
+                    {selectedRequest.externalReference ? (
+                      <InfoLine label="Reference" value={selectedRequest.externalReference} />
+                    ) : null}
+                    {selectedRequest.reason ? (
+                      <InfoLine label="Reason" value={selectedRequest.reason} />
+                    ) : null}
+                  </div>
+                ) : null}
+              </>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -1969,6 +2204,51 @@ function getApprovalStateLabel(state: string) {
   }
 }
 
+function inferApprovalStateFromRequestStatus(
+  status: string,
+): ReconciliationRow['approvalState'] {
+  switch (status) {
+    case 'draft':
+      return 'draft';
+    case 'pending_approval':
+      return 'pending_approval';
+    case 'escalated':
+      return 'escalated';
+    case 'rejected':
+      return 'rejected';
+    case 'closed':
+      return 'closed';
+    case 'approved':
+    case 'ready_for_execution':
+    case 'submitted_onchain':
+    case 'observed':
+    case 'matched':
+    case 'partially_matched':
+    case 'exception':
+      return 'approved';
+    case 'submitted':
+    default:
+      return 'submitted';
+  }
+}
+
+function mapApprovalTone(state: ReconciliationRow['approvalState']) {
+  switch (state) {
+    case 'approved':
+    case 'closed':
+      return 'matched';
+    case 'rejected':
+      return 'exception';
+    case 'pending_approval':
+    case 'escalated':
+      return 'partial';
+    case 'draft':
+    case 'submitted':
+    default:
+      return 'pending';
+  }
+}
+
 function getExecutionStateLabel(state: string) {
   switch (state) {
     case 'not_started':
@@ -1991,6 +2271,55 @@ function getExecutionStateLabel(state: string) {
       return 'rejected';
     default:
       return formatLabel(state);
+  }
+}
+
+function inferExecutionStateFromRequestStatus(
+  status: string,
+): ReconciliationRow['executionState'] {
+  switch (status) {
+    case 'rejected':
+      return 'rejected';
+    case 'closed':
+      return 'closed';
+    case 'submitted_onchain':
+      return 'submitted_onchain';
+    case 'observed':
+      return 'observed';
+    case 'matched':
+    case 'partially_matched':
+      return 'settled';
+    case 'exception':
+      return 'execution_exception';
+    case 'approved':
+    case 'ready_for_execution':
+      return 'ready_for_execution';
+    case 'draft':
+    case 'submitted':
+    case 'pending_approval':
+    case 'escalated':
+    default:
+      return 'not_started';
+  }
+}
+
+function mapExecutionTone(state: ReconciliationRow['executionState']) {
+  switch (state) {
+    case 'settled':
+    case 'closed':
+      return 'matched';
+    case 'broadcast_failed':
+    case 'execution_exception':
+    case 'rejected':
+      return 'exception';
+    case 'submitted_onchain':
+    case 'observed':
+      return 'partial';
+    case 'ready_for_execution':
+      return 'pending';
+    case 'not_started':
+    default:
+      return 'pending';
   }
 }
 

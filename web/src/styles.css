@@ -1649,19 +1649,20 @@ textarea:focus {
   height: 100%;
 }
 
-.registry-toolbar {
+.surface-toolbar {
   display: grid;
   grid-template-columns: minmax(260px, 1fr) auto;
   gap: var(--space-2);
-  align-items: end;
-  width: 100%;
+  align-items: center;
+  width: min(54%, 760px);
+  justify-self: end;
 }
 
-.registry-search {
-  max-width: 420px;
+.surface-search {
+  max-width: none;
 }
 
-.registry-toolbar-actions {
+.surface-toolbar-actions {
   display: flex;
   justify-content: flex-end;
   gap: var(--space-2);
@@ -1697,13 +1698,13 @@ textarea:focus {
   background: transparent;
 }
 
-.registry-panel-header {
-  align-items: start;
-  margin-bottom: 4px;
+.surface-panel-header {
+  align-items: center;
+  margin-bottom: 6px;
 }
 
-.registry-panel-copy {
-  width: 100%;
+.surface-panel-copy {
+  width: auto;
 }
 
 .registry-table-head,
@@ -1950,6 +1951,127 @@ textarea:focus {
   font-weight: 600;
 }
 
+.request-shell {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--space-3);
+}
+
+.request-table {
+  display: grid;
+  gap: 0;
+  border: 1px solid var(--line);
+  background: transparent;
+}
+
+.request-table-head,
+.request-table-row {
+  display: grid;
+  grid-template-columns:
+    120px
+    minmax(0, 1fr)
+    minmax(0, 1fr)
+    120px
+    150px
+    150px
+    160px
+    140px;
+  gap: 0;
+  align-items: stretch;
+}
+
+.request-table-head {
+  min-height: 52px;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+}
+
+.request-table-head > span,
+.request-row-button > span {
+  min-height: 100%;
+  padding: 10px 12px;
+  border-left: 1px solid var(--line);
+  display: grid;
+  align-content: center;
+  overflow: hidden;
+}
+
+.request-table-head > :first-child,
+.request-row-button > :first-child {
+  border-left: none;
+}
+
+.request-table-row {
+  border-top: 1px solid var(--line);
+  background: transparent;
+}
+
+.request-row-button {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns:
+    120px
+    minmax(0, 1fr)
+    minmax(0, 1fr)
+    120px
+    150px
+    150px
+    160px
+    140px;
+  align-items: stretch;
+  min-width: 0;
+  color: inherit;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  outline: none;
+}
+
+.request-row-button:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.request-cell-primary,
+.request-row-button > span {
+  min-width: 0;
+}
+
+.request-cell-single {
+  white-space: nowrap;
+}
+
+.request-cell-primary strong,
+.request-row-button > span strong {
+  font-size: 13px;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.request-row-button > span {
+  gap: 0;
+  font-size: var(--font-sm);
+}
+
+.request-cell-amount {
+  white-space: nowrap;
+}
+
+.request-state-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.request-modal {
+  width: min(920px, 100%);
+}
+
+.request-modal-hero {
+  min-height: auto;
+  padding-bottom: 0;
+}
+
 .registry-detail-group {
   display: grid;
   gap: 10px;
@@ -1996,6 +2118,31 @@ textarea:focus {
   padding: 34px;
   border: 1px solid var(--line-strong);
   background: var(--panel);
+}
+
+.registry-modal-wide {
+  width: min(920px, 100%);
+}
+
+.modal-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+  align-items: start;
+}
+
+.modal-span-full {
+  grid-column: 1 / -1;
+}
+
+.policy-form-grid {
+  max-width: none;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+
+.policy-inline-note {
+  padding: 10px 12px;
 }
 
 .registry-modal-hero {
@@ -2265,7 +2412,8 @@ textarea:focus {
   .queue-guide-grid,
   .queue-toolbar,
   .request-card-main,
-  .state-summary-grid {
+  .state-summary-grid,
+  .surface-toolbar {
     grid-template-columns: 1fr;
   }
 
@@ -2275,15 +2423,23 @@ textarea:focus {
 }
 
 @media (max-width: 860px) {
+  .modal-form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .policy-form-grid {
+    grid-template-columns: 1fr;
+  }
+
   .registry-sidecar {
     grid-template-columns: 1fr;
   }
 
-  .registry-toolbar {
+  .surface-toolbar {
     grid-template-columns: 1fr;
   }
 
-  .registry-toolbar-actions {
+  .surface-toolbar-actions {
     grid-column: auto;
     justify-content: flex-start;
   }
@@ -2305,6 +2461,26 @@ textarea:focus {
   }
 
   .registry-row-button > span {
+    border-left: none;
+  }
+
+  .request-table-head {
+    display: none;
+  }
+
+  .request-table-row {
+    grid-template-columns: 1fr;
+    gap: 0;
+  }
+
+  .request-row-button {
+    grid-column: auto;
+    grid-template-columns: 1fr;
+    gap: 8px;
+    padding-bottom: 8px;
+  }
+
+  .request-row-button > span {
     border-left: none;
   }
 }
