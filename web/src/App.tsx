@@ -1159,7 +1159,6 @@ export function App() {
 
             {route.name === 'workspaceHome' && currentWorkspace ? (
               <WorkspaceHomePage
-                approvalInbox={approvalInbox}
                 addresses={addresses}
                 currentWorkspace={currentWorkspace}
                 currentRole={currentRole}

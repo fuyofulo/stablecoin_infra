@@ -1,6 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import type {
-  ApprovalInboxItem,
   ApprovalPolicy,
   Counterparty,
   Destination,
@@ -13,7 +12,7 @@ import type {
   WorkspaceAddress,
   WorkspaceAddressLite,
 } from '../types';
-import { formatRawUsdc, formatTimestamp, orbTransactionUrl, shortenAddress } from '../lib/app';
+import { formatRawUsdc, formatTimestamp, formatTimestampCompact, orbTransactionUrl, shortenAddress } from '../lib/app';
 import { InfoLine, Metric } from '../components/ui';
 
 function TableSurfaceHeader({
@@ -61,7 +60,6 @@ function TableSurfaceHeader({
 }
 
 export function WorkspaceHomePage({
-  approvalInbox,
   addresses,
   currentRole,
   currentWorkspace,
@@ -84,7 +82,6 @@ export function WorkspaceHomePage({
   transferRequests,
   isLoadingReconciliationDetail,
 }: {
-  approvalInbox: ApprovalInboxItem[];
   addresses: WorkspaceAddress[];
   currentRole: string | null;
   currentWorkspace: Workspace;
@@ -127,6 +124,7 @@ export function WorkspaceHomePage({
   const [inspectorTab, setInspectorTab] = useState<'overview' | 'exceptions'>('overview');
   const [approvalComment, setApprovalComment] = useState('');
   const [executionSignature, setExecutionSignature] = useState('');
+  const [isRequestInspectorOpen, setIsRequestInspectorOpen] = useState(false);
 
   useEffect(() => {
     if (
@@ -147,6 +145,12 @@ export function WorkspaceHomePage({
       setExecutionSignature('');
     }
   }, [selectedReconciliationDetail?.latestExecution?.submittedSignature]);
+
+  useEffect(() => {
+    if (selectedReconciliationDetail) {
+      setIsRequestInspectorOpen(true);
+    }
+  }, [selectedReconciliationDetail?.transferRequestId]);
 
   return (
     <div className="page-stack">
@@ -173,15 +177,15 @@ export function WorkspaceHomePage({
         </div>
       </section>
 
-      <section className="workspace-home-grid">
+      <section className="workspace-home-grid workspace-home-grid-single">
         <div className="workspace-home-primary">
           <div className="content-panel content-panel-strong">
             <div className="panel-header panel-header-stack">
               <div>
-                <p className="eyebrow">Planned transfers</p>
-                <h2>Requests and matches</h2>
+                <p className="eyebrow">Live queue</p>
+                <h2>Requests in motion</h2>
                 <p className="compact-copy">
-                  The operator queue lives here. Watch the outcome first, then inspect settlement and execution context in the rail.
+                  This is the watch surface. Start with what is live, what needs attention, and what has already settled.
                 </p>
               </div>
               <span className="status-chip">{reconciliationRows.length} live</span>
@@ -200,49 +204,63 @@ export function WorkspaceHomePage({
               ))}
             </div>
 
-            <div className="stack-list">
+            <div className="request-table ops-request-table">
+              <div className="request-table-head">
+                <span>Request ID</span>
+                <span>Source</span>
+                <span>Destination</span>
+                <span>Amount</span>
+                <span>Approval</span>
+                <span>Execution</span>
+                <span>Settlement</span>
+                <span>Requested</span>
+              </div>
               {reconciliationRows.length ? (
                 reconciliationRows.map((row) => (
                   <div
                     key={row.transferRequestId}
                     className={
                       selectedReconciliationDetail?.transferRequestId === row.transferRequestId
-                        ? 'feed-row is-active'
-                        : 'feed-row'
+                        ? 'request-table-row is-active'
+                        : 'request-table-row'
                     }
-                    data-tone={row.requestDisplayState}
                   >
-                    <button className="feed-row-main request-card-main" onClick={() => onSelectReconciliation(row)} type="button">
-                      <div className="request-card-copy">
-                        <div className="request-card-title">
-                          <strong>{getTransferLabel(row)}</strong>
-                          <span className={`tone-pill tone-pill-${row.requestDisplayState}`}>
-                            {getDisplayStateLabel(row.requestDisplayState)}
-                          </span>
-                        </div>
-                        <div className="request-card-meta">
-                          <span className="meta-pill">to {getDestinationLabel(row.destination, row.destinationWorkspaceAddress)}</span>
-                          {row.destination?.counterparty ? (
-                            <span className="meta-pill">{row.destination.counterparty.displayName}</span>
-                          ) : null}
-                          {row.destination ? (
-                            <span className="meta-pill">
-                              {row.destination.trustState} // {row.destination.isInternal ? 'internal' : 'external'}
-                            </span>
-                          ) : null}
-                          <span className="meta-pill">{formatTimestamp(row.requestedAt)}</span>
-                          <span className="meta-pill">{formatLabel(row.requestType)}</span>
-                          {row.exceptions[0] ? (
-                            <span className="meta-pill meta-pill-danger">
-                              {getExceptionReasonLabel(row.exceptions[0].reasonCode)}
-                            </span>
-                          ) : null}
-                        </div>
-                      </div>
-                      <div className="request-card-amount">
+                    <button
+                      className="request-row-button"
+                      onClick={() => {
+                        setIsRequestInspectorOpen(true);
+                        onSelectReconciliation(row);
+                      }}
+                      type="button"
+                    >
+                      <span className="request-cell-primary">
+                        <strong>{shortenAddress(row.transferRequestId, 8, 6)}</strong>
+                      </span>
+                      <span className="request-cell-single">
+                        <strong>{row.sourceWorkspaceAddress ? getWalletNameLite(row.sourceWorkspaceAddress) : 'Unknown'}</strong>
+                      </span>
+                      <span className="request-cell-single">
+                        <strong>{getDestinationLabel(row.destination, row.destinationWorkspaceAddress)}</strong>
+                      </span>
+                      <span className="request-cell-amount request-cell-single">
                         <strong>{formatRawUsdc(row.amountRaw)}</strong>
-                        <small>USDC</small>
-                      </div>
+                      </span>
+                      <span className="request-cell-single">
+                        <span className={`tone-pill tone-pill-${mapApprovalTone(row.approvalState)}`}>
+                          {getApprovalStateLabel(row.approvalState)}
+                        </span>
+                      </span>
+                      <span className="request-cell-single">
+                        <span className={`tone-pill tone-pill-${mapExecutionTone(row.executionState)}`}>
+                          {getExecutionStateLabel(row.executionState)}
+                        </span>
+                      </span>
+                      <span className="request-cell-single">
+                        <span className={`tone-pill tone-pill-${row.requestDisplayState}`}>
+                          {getDisplayStateLabel(row.requestDisplayState)}
+                        </span>
+                      </span>
+                      <span className="request-cell-single">{formatTimestampCompact(row.requestedAt)}</span>
                     </button>
                   </div>
                 ))
@@ -357,66 +375,27 @@ export function WorkspaceHomePage({
             )}
           </div>
         </div>
+      </section>
 
-        <aside className="workspace-home-secondary">
-          <div className="content-panel content-panel-soft">
-            <div className="panel-header panel-header-stack">
-              <div>
-                <p className="eyebrow">Approval inbox</p>
-                <h2>Requests needing review</h2>
-                <p className="compact-copy">
-                  Policy-routed requests wait here until an operator approves, rejects, or escalates them.
-                </p>
-              </div>
-              <span className="status-chip">{approvalInbox.length}</span>
-            </div>
-            <div className="stack-list">
-              {approvalInbox.length ? (
-                approvalInbox.map((item) => (
-                  <button
-                    key={item.transferRequestId}
-                    className={
-                      selectedReconciliationDetail?.transferRequestId === item.transferRequestId
-                        ? 'feed-row is-active'
-                        : 'feed-row'
-                    }
-                    data-tone="pending"
-                    onClick={() => onSelectReconciliation(item)}
-                    type="button"
-                  >
-                    <div className="request-card-copy">
-                      <div className="request-card-title">
-                        <strong>{getTransferLabel(item)}</strong>
-                        <span className="meta-pill meta-pill-danger">{getApprovalStateLabel(item.approvalState)}</span>
-                      </div>
-                      <div className="request-card-meta">
-                        <span className="meta-pill">{formatRawUsdc(item.amountRaw)} USDC</span>
-                        <span className="meta-pill">{getDestinationLabel(item.destination, item.destinationWorkspaceAddress)}</span>
-                        {item.approvalEvaluation.reasons.map((reason) => (
-                          <span className="meta-pill meta-pill-danger" key={reason.code}>
-                            {getApprovalReasonLabel(reason.code)}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  </button>
-                ))
-              ) : (
-                <div className="empty-box compact">No requests currently require approval.</div>
-              )}
-            </div>
-          </div>
-
-          {selectedReconciliationDetail ? (
-            <div className="content-panel content-panel-strong workspace-inspector-panel">
+      {isRequestInspectorOpen ? (
+        <div className="registry-modal-backdrop" onClick={() => setIsRequestInspectorOpen(false)} role="presentation">
+          <div
+            className="registry-modal registry-modal-wide request-inspector-modal"
+            onClick={(event) => event.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+          >
+            {selectedReconciliationDetail ? (
               <div className="transfer-inspector-drawer transfer-inspector-sticky">
-                <div className="panel-header panel-header-stack">
-                  <div>
+                <div className="registry-modal-hero request-modal-hero">
+                  <div className="registry-modal-hero-copy">
                     <p className="eyebrow">Request inspector</p>
                     <h2>Request and match</h2>
                   </div>
+                  <button className="ghost-button danger-button" onClick={() => setIsRequestInspectorOpen(false)} type="button">
+                    close
+                  </button>
                 </div>
-
                 <div className="stack-list">
                   <InfoLine label="Transfer" value={getTransferLabel(selectedReconciliationDetail)} />
                   <InfoLine label="Requested amount" value={formatRawUsdc(selectedReconciliationDetail.amountRaw)} />
@@ -978,7 +957,6 @@ export function WorkspaceHomePage({
                   </div>
                 </div>
               </div>
-            </div>
           ) : isLoadingReconciliationDetail ? (
             <div className="empty-box compact transfer-empty-state">Loading request detail…</div>
           ) : (
@@ -986,8 +964,9 @@ export function WorkspaceHomePage({
               Select a request to inspect the settlement timeline, exceptions, and notes.
             </div>
           )}
-        </aside>
-      </section>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -1635,6 +1614,8 @@ export function WorkspacePolicyPage({
   currentWorkspace: Workspace;
   onUpdateApprovalPolicy: (event: FormEvent<HTMLFormElement>) => Promise<void>;
 }) {
+  const [modalState, setModalState] = useState<{ type: 'internal' | 'external' } | null>(null);
+
   return (
     <div className="page-stack page-stack-tight">
       <section className="section-headline section-headline-compact">
@@ -1642,7 +1623,7 @@ export function WorkspacePolicyPage({
           <p className="eyebrow">Approval Policy</p>
           <h1>{currentWorkspace.workspaceName}</h1>
           <p className="section-copy">
-            Define when a request can go live immediately and when it must pause in the approval inbox.
+            Control how internal and external requests become live.
           </p>
         </div>
       </section>
@@ -1661,91 +1642,181 @@ export function WorkspacePolicyPage({
           <div className="panel-header">
             <div>
               <p className="eyebrow">Policy</p>
-              <h2>When a request becomes live</h2>
+              <h2>Approval strategies</h2>
             </div>
           </div>
           {approvalPolicy ? (
-            <form className="form-stack modal-form-grid policy-form-grid" onSubmit={onUpdateApprovalPolicy}>
-              <div className="setup-hint-card modal-span-full policy-inline-note">
-                <strong>How this works</strong>
-                <p>Trusted destination requests can go live immediately, enter approval, or stay gated depending on these rules and thresholds.</p>
+            <div className="policy-stack">
+              <div className="setup-hint-card policy-inline-note">
+                <strong>Shared guardrails</strong>
+                <p>
+                  Policy is {approvalPolicy.isActive ? 'active' : 'inactive'}.
+                  {' '}
+                  {approvalPolicy.ruleJson.requireTrustedDestination
+                    ? 'Only trusted destinations can skip approval.'
+                    : 'Untrusted destinations can still be evaluated by the thresholds below.'}
+                </p>
               </div>
-              <label className="field">
-                <span>Policy name</span>
-                <input defaultValue={approvalPolicy.policyName} name="policyName" required />
-              </label>
-              <label className="field">
-                <span>Policy status</span>
-                <select defaultValue={approvalPolicy.isActive ? 'true' : 'false'} name="isActive">
-                  <option value="true">active</option>
-                  <option value="false">inactive</option>
-                </select>
-              </label>
-              <label className="field">
-                <span>Trusted destination required</span>
-                <select
-                  defaultValue={approvalPolicy.ruleJson.requireTrustedDestination ? 'true' : 'false'}
-                  name="requireTrustedDestination"
-                >
-                  <option value="true">yes</option>
-                  <option value="false">no</option>
-                </select>
-              </label>
-              <label className="field">
-                <span>Always require approval for external</span>
-                <select
-                  defaultValue={approvalPolicy.ruleJson.requireApprovalForExternal ? 'true' : 'false'}
-                  name="requireApprovalForExternal"
-                >
-                  <option value="false">no</option>
-                  <option value="true">yes</option>
-                </select>
-              </label>
-              <label className="field">
-                <span>Always require approval for internal</span>
-                <select
-                  defaultValue={approvalPolicy.ruleJson.requireApprovalForInternal ? 'true' : 'false'}
-                  name="requireApprovalForInternal"
-                >
-                  <option value="false">no</option>
-                  <option value="true">yes</option>
-                </select>
-              </label>
-              <label className="field">
-                <span>External approval threshold</span>
-                <input
-                  defaultValue={approvalPolicy.ruleJson.externalApprovalThresholdRaw}
-                  name="externalApprovalThresholdRaw"
-                  placeholder="50000000"
-                  required
-                />
-                <small className="field-note">
-                  Trusted external destinations at or above {formatRawUsdc(approvalPolicy.ruleJson.externalApprovalThresholdRaw)} USDC require approval.
-                </small>
-              </label>
-              <label className="field">
-                <span>Internal approval threshold</span>
-                <input
-                  defaultValue={approvalPolicy.ruleJson.internalApprovalThresholdRaw}
-                  name="internalApprovalThresholdRaw"
-                  placeholder="250000000"
-                  required
-                />
-                <small className="field-note">
-                  Trusted internal destinations at or above {formatRawUsdc(approvalPolicy.ruleJson.internalApprovalThresholdRaw)} USDC require approval.
-                </small>
-              </label>
-              <div className="exception-actions modal-span-full">
-                <button className="primary-button" disabled={!canManage} type="submit">
-                  Update approval policy
-                </button>
+
+              <div className="policy-strategy-grid">
+                <div className="policy-strategy-card">
+                  <div className="policy-strategy-head">
+                    <div className="policy-strategy-copy">
+                      <span className="eyebrow">External</span>
+                      <strong>{approvalPolicy.ruleJson.requireApprovalForExternal ? 'Always require approval' : 'Threshold based'}</strong>
+                      <p>Controls vendor, exchange, and other non-internal destinations.</p>
+                    </div>
+                    {canManage ? (
+                      <button className="primary-button compact-button" onClick={() => setModalState({ type: 'external' })} type="button">
+                        Edit external
+                      </button>
+                    ) : null}
+                  </div>
+                  <div className="policy-strategy-list">
+                    <div className="policy-strategy-row">
+                      <span>Threshold</span>
+                      <strong>{formatRawUsdc(approvalPolicy.ruleJson.externalApprovalThresholdRaw)} USDC</strong>
+                    </div>
+                    <div className="policy-strategy-row">
+                      <span>Behavior</span>
+                      <strong>
+                        {approvalPolicy.ruleJson.requireApprovalForExternal
+                          ? 'Every trusted external request goes to approval'
+                          : `Trusted external requests below ${formatRawUsdc(approvalPolicy.ruleJson.externalApprovalThresholdRaw)} USDC can go live`}
+                      </strong>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="policy-strategy-card">
+                  <div className="policy-strategy-head">
+                    <div className="policy-strategy-copy">
+                      <span className="eyebrow">Internal</span>
+                      <strong>{approvalPolicy.ruleJson.requireApprovalForInternal ? 'Always require approval' : 'Threshold based'}</strong>
+                      <p>Controls treasury-owned or otherwise internal destinations.</p>
+                    </div>
+                    {canManage ? (
+                      <button className="primary-button compact-button" onClick={() => setModalState({ type: 'internal' })} type="button">
+                        Edit internal
+                      </button>
+                    ) : null}
+                  </div>
+                  <div className="policy-strategy-list">
+                    <div className="policy-strategy-row">
+                      <span>Threshold</span>
+                      <strong>{formatRawUsdc(approvalPolicy.ruleJson.internalApprovalThresholdRaw)} USDC</strong>
+                    </div>
+                    <div className="policy-strategy-row">
+                      <span>Behavior</span>
+                      <strong>
+                        {approvalPolicy.ruleJson.requireApprovalForInternal
+                          ? 'Every trusted internal request goes to approval'
+                          : `Trusted internal requests below ${formatRawUsdc(approvalPolicy.ruleJson.internalApprovalThresholdRaw)} USDC can go live`}
+                      </strong>
+                    </div>
+                  </div>
+                </div>
               </div>
-            </form>
+            </div>
           ) : (
             <div className="empty-box compact">Approval policy unavailable.</div>
           )}
         </div>
       </section>
+
+      {modalState && approvalPolicy ? (
+        <div className="registry-modal-backdrop" onClick={() => setModalState(null)} role="presentation">
+          <div className="registry-modal" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true">
+            <div className="panel-header panel-header-stack">
+              <div>
+                <p className="eyebrow">Approval strategy</p>
+                <h2>{modalState.type === 'external' ? 'Edit external strategy' : 'Edit internal strategy'}</h2>
+                <p className="compact-copy">
+                  {modalState.type === 'external'
+                    ? 'Define when trusted external requests should pause in approval.'
+                    : 'Define when trusted internal requests should pause in approval.'}
+                </p>
+              </div>
+              <button className="ghost-button compact-button danger-button" onClick={() => setModalState(null)} type="button">
+                close
+              </button>
+            </div>
+
+            <form
+              className="form-stack modal-form-grid"
+              onSubmit={async (event) => {
+                await onUpdateApprovalPolicy(event);
+                setModalState(null);
+              }}
+            >
+              <input name="policyName" type="hidden" value={approvalPolicy.policyName} />
+              <input name="isActive" type="hidden" value={approvalPolicy.isActive ? 'true' : 'false'} />
+              <input
+                name="requireTrustedDestination"
+                type="hidden"
+                value={approvalPolicy.ruleJson.requireTrustedDestination ? 'true' : 'false'}
+              />
+              <input
+                name={modalState.type === 'external' ? 'requireApprovalForInternal' : 'requireApprovalForExternal'}
+                type="hidden"
+                value={
+                  modalState.type === 'external'
+                    ? (approvalPolicy.ruleJson.requireApprovalForInternal ? 'true' : 'false')
+                    : (approvalPolicy.ruleJson.requireApprovalForExternal ? 'true' : 'false')
+                }
+              />
+              <input
+                name={modalState.type === 'external' ? 'internalApprovalThresholdRaw' : 'externalApprovalThresholdRaw'}
+                type="hidden"
+                value={
+                  modalState.type === 'external'
+                    ? approvalPolicy.ruleJson.internalApprovalThresholdRaw
+                    : approvalPolicy.ruleJson.externalApprovalThresholdRaw
+                }
+              />
+
+              <label className="field">
+                <span>Strategy</span>
+                <select
+                  defaultValue={
+                    modalState.type === 'external'
+                      ? (approvalPolicy.ruleJson.requireApprovalForExternal ? 'true' : 'false')
+                      : (approvalPolicy.ruleJson.requireApprovalForInternal ? 'true' : 'false')
+                  }
+                  name={modalState.type === 'external' ? 'requireApprovalForExternal' : 'requireApprovalForInternal'}
+                >
+                  <option value="false">threshold based</option>
+                  <option value="true">always require approval</option>
+                </select>
+              </label>
+
+              <label className="field">
+                <span>Approval threshold</span>
+                <input
+                  defaultValue={
+                    modalState.type === 'external'
+                      ? approvalPolicy.ruleJson.externalApprovalThresholdRaw
+                      : approvalPolicy.ruleJson.internalApprovalThresholdRaw
+                  }
+                  name={modalState.type === 'external' ? 'externalApprovalThresholdRaw' : 'internalApprovalThresholdRaw'}
+                  required
+                />
+                <small className="field-note">
+                  {modalState.type === 'external'
+                    ? `Trusted external requests at or above ${formatRawUsdc(approvalPolicy.ruleJson.externalApprovalThresholdRaw)} USDC currently require approval.`
+                    : `Trusted internal requests at or above ${formatRawUsdc(approvalPolicy.ruleJson.internalApprovalThresholdRaw)} USDC currently require approval.`}
+                </small>
+              </label>
+
+              <div className="exception-actions modal-span-full">
+                <button className="primary-button" disabled={!canManage} type="submit">
+                  Save strategy
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -1858,7 +1929,7 @@ export function WorkspaceRequestsPage({
             title="Expected transfers"
           />
 
-          <div className="request-table">
+          <div className="request-table compact-request-table">
             <div className="request-table-head">
               <span>Request ID</span>
               <span>Source</span>
@@ -1899,7 +1970,7 @@ export function WorkspaceRequestsPage({
                       <span className="request-cell-single"><span className={`tone-pill tone-pill-${mapApprovalTone(approvalState)}`}>{getApprovalStateLabel(approvalState)}</span></span>
                       <span className="request-cell-single"><span className={`tone-pill tone-pill-${mapExecutionTone(executionState)}`}>{getExecutionStateLabel(executionState)}</span></span>
                       <span className="request-cell-single"><span className={`tone-pill tone-pill-${settlementState}`}>{getDisplayStateLabel(settlementState)}</span></span>
-                      <span className="request-cell-single">{formatTimestamp(item.requestedAt)}</span>
+                      <span className="request-cell-single">{formatTimestampCompact(item.requestedAt)}</span>
                     </button>
                   </div>
                 );

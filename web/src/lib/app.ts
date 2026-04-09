@@ -40,6 +40,20 @@ export function formatTimestamp(value: string) {
   });
 }
 
+export function formatTimestampCompact(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return date.toLocaleString(undefined, {
+    month: 'short',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
 export function shortenAddress(value: string | null | undefined, prefix = 6, suffix = 6) {
   if (!value) {
     return 'Unknown';
