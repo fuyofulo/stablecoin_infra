@@ -27,6 +27,17 @@ export function formatRawUsdc(amountRaw: string) {
   return `${negative ? '-' : ''}${whole}.${fraction}`;
 }
 
+export function formatRawUsdcCompact(amountRaw: string) {
+  const normalized = formatRawUsdc(amountRaw);
+  if (!normalized.includes('.')) {
+    return normalized;
+  }
+
+  const [whole, fraction] = normalized.split('.');
+  const trimmedFraction = fraction.replace(/0+$/, '');
+  return trimmedFraction.length ? `${whole}.${trimmedFraction}` : whole;
+}
+
 export function formatTimestamp(value: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
@@ -56,6 +67,33 @@ export function formatTimestampCompact(value: string) {
   });
 }
 
+export function formatRelativeTime(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  const diffMs = date.getTime() - Date.now();
+  const absMs = Math.abs(diffMs);
+  const minute = 60_000;
+  const hour = 60 * minute;
+  const day = 24 * hour;
+
+  const formatter = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' });
+
+  if (absMs < minute) {
+    return formatter.format(Math.round(diffMs / 1000), 'second');
+  }
+  if (absMs < hour) {
+    return formatter.format(Math.round(diffMs / minute), 'minute');
+  }
+  if (absMs < day) {
+    return formatter.format(Math.round(diffMs / hour), 'hour');
+  }
+
+  return formatter.format(Math.round(diffMs / day), 'day');
+}
+
 export function shortenAddress(value: string | null | undefined, prefix = 6, suffix = 6) {
   if (!value) {
     return 'Unknown';
@@ -70,6 +108,10 @@ export function shortenAddress(value: string | null | undefined, prefix = 6, suf
 
 export function orbTransactionUrl(signature: string) {
   return `https://orbmarkets.io/tx/${signature}?tab=summary`;
+}
+
+export function solanaAccountUrl(address: string) {
+  return `https://explorer.solana.com/address/${address}`;
 }
 
 export function parseRoute(pathname: string): Route {

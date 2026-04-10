@@ -1,4 +1,4 @@
-import type {
+import {
   AddressLabel,
   ApprovalDecision,
   ApprovalPolicy,
@@ -608,7 +608,8 @@ export async function getReconciliationDetail(workspaceId: string, transferReque
     'solana',
     relatedObservedPayments
       .map((payment) => payment.destinationWallet)
-      .filter((value): value is string => Boolean(value)),
+      .filter((value): value is string => Boolean(value))
+      .filter((value) => value !== expectedDestinationWallet),
   );
   const annotatedObservedPayments = relatedObservedPayments.map((payment) =>
     annotateObservedPayment(payment, expectedDestinationWallet, addressLabels),
@@ -1457,18 +1458,29 @@ function applyExceptionStateOverlay(
     return row;
   }
 
+  const rowUpdatedAt = new Date(normalizeClickHouseDateTime(row.updated_at) ?? row.updated_at).getTime();
+  const stateUpdatedAt = state.updatedAt.getTime();
+  const stateIsNewer = Number.isFinite(rowUpdatedAt) ? stateUpdatedAt >= rowUpdatedAt : true;
   const updatedAt = state.updatedAt.toISOString();
-  return {
+  const merged: ExceptionRow = {
     ...row,
-    status: state.status,
-    processed_at: updatedAt,
-    updated_at: updatedAt,
-    chain_to_process_ms: null,
     resolution_code: state.resolutionCode,
     severity_override: state.severity,
     assigned_to_user_id: state.assignedToUserId,
     assigned_to_user_email: state.assignedToUser?.email ?? null,
     assigned_to_user_display_name: state.assignedToUser?.displayName ?? null,
+  };
+
+  if (!stateIsNewer) {
+    return merged;
+  }
+
+  return {
+    ...merged,
+    status: state.status,
+    processed_at: updatedAt,
+    updated_at: updatedAt,
+    chain_to_process_ms: null,
   };
 }
 
@@ -1902,6 +1914,11 @@ async function hydrateAddressLabelsForQueueItems(
   }
 
   const relatedPayments = await queryObservedPaymentsBySignatures(signaturesToHydrate);
+  const expectedDestinationWallets = new Set(
+    items
+      .map((item) => item.destination?.walletAddress ?? item.destinationWorkspaceAddress?.address ?? null)
+      .filter((value): value is string => Boolean(value)),
+  );
   const destinationWallets = uniqueValues(
     relatedPayments
       .map((payment) => payment.destinationWallet)
@@ -1912,7 +1929,10 @@ async function hydrateAddressLabelsForQueueItems(
     return;
   }
 
-  await getOrResolveAddressLabels('solana', destinationWallets);
+  await getOrResolveAddressLabels(
+    'solana',
+    destinationWallets.filter((wallet) => !expectedDestinationWallets.has(wallet)),
+  );
 }
 
 function safeJsonParse(value: string | null) {

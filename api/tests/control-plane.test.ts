@@ -2151,6 +2151,59 @@ test('phase e exception queue supports assignment, severity override, and resolu
   assert.equal(queue.items[0].resolutionCode, 'vendor_confirmed');
 });
 
+test('newer worker exception rows override older operator exception state while preserving metadata', async () => {
+  const setup = await createSeededPartialExceptionRequest();
+  const operator = await prisma.user.findUniqueOrThrow({
+    where: {
+      email: 'beta@example.com',
+    },
+  });
+
+  await prisma.exceptionState.create({
+    data: {
+      workspaceId: setup.workspace.workspaceId,
+      exceptionId: setup.exceptionId,
+      status: 'reviewed',
+      updatedByUserId: operator.userId,
+      assignedToUserId: operator.userId,
+      resolutionCode: 'awaiting_follow_up',
+      severity: 'critical',
+    },
+  });
+
+  await insertClickHouseRows('exceptions', [
+    {
+      workspace_id: setup.workspace.workspaceId,
+      exception_id: setup.exceptionId,
+      transfer_request_id: setup.transferRequest.transferRequestId,
+      signature: setup.signature,
+      observed_transfer_id: setup.transferId,
+      exception_type: 'partial_settlement',
+      severity: 'warning',
+      status: 'dismissed',
+      explanation: 'Residual requested amount was later satisfied by a follow-on payment.',
+      properties_json: JSON.stringify({ remainingAmountRaw: '0' }),
+      observed_event_time: '2030-04-06 13:31:15.083',
+      processed_at: '2030-04-06 13:31:44.010',
+      created_at: '2026-04-06 13:30:44.010',
+      updated_at: '2030-04-06 13:31:44.010',
+    },
+  ]);
+
+  const queueResponse = await fetch(
+    `${baseUrl}/workspaces/${setup.workspace.workspaceId}/reconciliation-queue/${setup.transferRequest.transferRequestId}`,
+    { headers: authHeaders(setup.sessionToken) },
+  );
+  assert.equal(queueResponse.status, 200);
+  const queueItem = await queueResponse.json();
+
+  assert.equal(queueItem.requestDisplayState, 'partial');
+  assert.equal(queueItem.exceptions[0].status, 'dismissed');
+  assert.equal(queueItem.exceptions[0].assignedToUserId, operator.userId);
+  assert.equal(queueItem.exceptions[0].resolutionCode, 'awaiting_follow_up');
+  assert.equal(queueItem.exceptions[0].severity, 'critical');
+});
+
 test('phase e exports produce csv and record export history', async () => {
   const setup = await createSeededPartialExceptionRequest();
 

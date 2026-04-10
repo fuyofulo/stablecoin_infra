@@ -954,6 +954,71 @@ impl YellowstoneWorker {
                     };
 
                     settlement_match_rows.push(settlement_match);
+
+                    if allocation.match_status == "matched_partial" {
+                        exception_rows.push(ExceptionRow {
+                            workspace_id: workspace_id.clone(),
+                            exception_id: request.transfer_request_id.clone(),
+                            transfer_request_id: Some(request.transfer_request_id.clone()),
+                            signature: Some(context.signature.clone()),
+                            observed_transfer_id: representative_transfer_id.clone(),
+                            exception_type: "partial_settlement".to_string(),
+                            severity: "warning".to_string(),
+                            status: "open".to_string(),
+                            explanation: format!(
+                                "Observed settlement only partially satisfied planned transfer {}. {} USDC remains outstanding.",
+                                request.transfer_request_id,
+                                format_amount(allocation.remaining_request_raw),
+                            ),
+                            properties_json: Some(
+                                json!({
+                                    "destination_wallet": destination_wallet,
+                                    "requested_amount_raw": request.amount_raw,
+                                    "matched_amount_raw": allocation.allocated_total_raw,
+                                    "remaining_request_raw": allocation.remaining_request_raw,
+                                    "fill_count": allocation.fill_count,
+                                    "route_group": payment.route_group,
+                                    "payment_kind": payment.payment_kind,
+                                })
+                                .to_string(),
+                            ),
+                            observed_event_time: Some(context.event_time),
+                            processed_at: Some(processing_time),
+                            created_at: processing_time,
+                            updated_at: processing_time,
+                        });
+                    } else if allocation.remaining_request_raw == 0 && allocation.fill_count > 1 {
+                        exception_rows.push(ExceptionRow {
+                            workspace_id: workspace_id.clone(),
+                            exception_id: request.transfer_request_id.clone(),
+                            transfer_request_id: Some(request.transfer_request_id.clone()),
+                            signature: Some(context.signature.clone()),
+                            observed_transfer_id: representative_transfer_id.clone(),
+                            exception_type: "partial_settlement".to_string(),
+                            severity: "warning".to_string(),
+                            status: "dismissed".to_string(),
+                            explanation: format!(
+                                "Partial settlement gap for planned transfer {} was later fully satisfied.",
+                                request.transfer_request_id,
+                            ),
+                            properties_json: Some(
+                                json!({
+                                    "destination_wallet": destination_wallet,
+                                    "requested_amount_raw": request.amount_raw,
+                                    "matched_amount_raw": allocation.allocated_total_raw,
+                                    "remaining_request_raw": allocation.remaining_request_raw,
+                                    "fill_count": allocation.fill_count,
+                                    "route_group": payment.route_group,
+                                    "payment_kind": payment.payment_kind,
+                                })
+                                .to_string(),
+                            ),
+                            observed_event_time: Some(context.event_time),
+                            processed_at: Some(processing_time),
+                            created_at: processing_time,
+                            updated_at: processing_time,
+                        });
+                    }
                 }
 
                 if remaining_observation_raw > 0 {
@@ -1493,6 +1558,23 @@ mod tests {
             )
             .await;
 
+        let partial_exceptions = harness
+            .query_rows(&format!(
+                "SELECT exception_type, status, transfer_request_id FROM usdc_ops.exceptions FINAL WHERE exception_id = '{}' FORMAT JSONEachRow",
+                transfer_request_id
+            ))
+            .await;
+        assert_eq!(partial_exceptions.len(), 1);
+        assert_eq!(
+            partial_exceptions[0]["exception_type"],
+            Value::String("partial_settlement".to_string())
+        );
+        assert_eq!(partial_exceptions[0]["status"], Value::String("open".to_string()));
+        assert_eq!(
+            partial_exceptions[0]["transfer_request_id"],
+            Value::String(transfer_request_id.clone())
+        );
+
         worker
             .handle_update(
                 make_usdc_transaction_update(
@@ -1527,6 +1609,23 @@ mod tests {
         assert_eq!(matches[0]["matched_amount_raw"], Value::String("10000".to_string()));
         assert_eq!(matches[0]["amount_variance_raw"], Value::String("0".to_string()));
         assert_eq!(matches[0]["candidate_count"], Value::Number(2.into()));
+
+        let exceptions = harness
+            .query_rows(&format!(
+                "SELECT exception_type, status, transfer_request_id FROM usdc_ops.exceptions FINAL WHERE exception_id = '{}' FORMAT JSONEachRow",
+                transfer_request_id
+            ))
+            .await;
+        assert_eq!(exceptions.len(), 1);
+        assert_eq!(
+            exceptions[0]["exception_type"],
+            Value::String("partial_settlement".to_string())
+        );
+        assert_eq!(exceptions[0]["status"], Value::String("dismissed".to_string()));
+        assert_eq!(
+            exceptions[0]["transfer_request_id"],
+            Value::String(transfer_request_id.clone())
+        );
     }
 
     fn should_run_clickhouse_tests() -> bool {
