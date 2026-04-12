@@ -2,18 +2,18 @@ import { Router, type Response } from 'express';
 import { z } from 'zod';
 import {
   attachPaymentOrderSignature,
-  buildPaymentOrderAuditRows,
-  buildPaymentOrderProofPacket,
   cancelPaymentOrder,
   createPaymentOrder,
   createPaymentOrderExecution,
   getPaymentOrderDetail,
-  isPaymentOrderState,
   listPaymentOrders,
   preparePaymentOrderExecution,
   updatePaymentOrder,
   submitPaymentOrder,
 } from '../payment-orders.js';
+import { buildPaymentOrderAuditRows, buildPaymentOrderProofPacket } from '../payment-order-proof.js';
+import { isPaymentOrderState } from '../payment-order-state.js';
+import { isSolanaSignatureLike } from '../solana.js';
 import { assertWorkspaceAccess, assertWorkspaceAdmin } from '../workspace-access.js';
 
 export const paymentOrdersRouter = Router();
@@ -61,6 +61,7 @@ const updatePaymentOrderSchema = z.object({
 const listPaymentOrdersQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(250).default(100),
   state: z.string().refine((value) => isPaymentOrderState(value), 'Invalid payment order state').optional(),
+  paymentRunId: z.string().uuid().optional(),
 });
 
 const createExecutionSchema = z.object({
@@ -74,7 +75,7 @@ const prepareExecutionSchema = z.object({
 });
 
 const attachSignatureSchema = z.object({
-  submittedSignature: z.string().trim().min(1).optional(),
+  submittedSignature: z.string().trim().refine(isSolanaSignatureLike, 'Invalid Solana signature').optional(),
   externalReference: z.string().trim().max(500).optional(),
   submittedAt: z.string().datetime().optional(),
   metadataJson: z.record(z.any()).default({}),
@@ -96,6 +97,7 @@ paymentOrdersRouter.get('/workspaces/:workspaceId/payment-orders', async (req, r
     const result = await listPaymentOrders(workspaceId, {
       limit: query.limit,
       state: query.state,
+      paymentRunId: query.paymentRunId,
     });
     res.json({ servedAt: new Date().toISOString(), ...result });
   } catch (error) {

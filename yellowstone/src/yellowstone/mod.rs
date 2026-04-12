@@ -1,20 +1,26 @@
-use crate::control_plane::{WorkspaceRegistry, WorkspaceRegistryCache, WorkspaceTransferRequestMatch};
-use crate::storage::{
-    ClickHouseWriter, ExceptionRow, MatcherEventRow, ObservedPaymentRow, ObservedTransferRow,
-    ObservedTransactionRow, RawObservationRow, RequestBookSnapshotRow, SettlementMatchRow,
+use crate::control_plane::{
+    WorkspaceRegistry, WorkspaceRegistryCache, WorkspaceTransferRequestMatch,
 };
-use crate::yellowstone::matcher::{allocate_observation, BookRequest, MatcherState, RequestFillState};
+use crate::storage::{
+    ClickHouseWriter, ExceptionRow, MatcherEventRow, ObservedPaymentRow, ObservedTransactionRow,
+    ObservedTransferRow, RawObservationRow, RequestBookSnapshotRow, SettlementMatchRow,
+};
+use crate::yellowstone::formatting::{
+    coption_pubkey_to_string, format_amount, parse_amount_raw, token_account_state_label,
+};
+use crate::yellowstone::matcher::{
+    BookRequest, MatcherState, RequestFillState, allocate_observation,
+};
 use crate::yellowstone::payment_reconstruction::reconstruct_observed_payments;
-use crate::yellowstone::transaction_context::{build_transaction_context, TransactionContext};
+use crate::yellowstone::transaction_context::{TransactionContext, build_transaction_context};
 use crate::yellowstone::transfer_reconstruction::reconstruct_observed_transfers;
-use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
+use base64::engine::general_purpose::STANDARD as BASE64;
 use chrono::{DateTime, Utc};
 use futures::{SinkExt, StreamExt};
 use serde_json::json;
-use spl_token::solana_program::program_option::COption;
 use spl_token::solana_program::program_pack::Pack;
-use spl_token::state::{Account as SplTokenAccount, AccountState as SplTokenAccountState, Mint as SplTokenMint};
+use spl_token::state::{Account as SplTokenAccount, Mint as SplTokenMint};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
@@ -23,6 +29,7 @@ use yellowstone_grpc_proto::geyser::subscribe_update::UpdateOneof;
 use yellowstone_grpc_proto::prelude::SubscribeUpdate;
 
 pub mod client;
+mod formatting;
 pub mod matcher;
 pub mod payment_reconstruction;
 pub mod subscriptions;
@@ -212,7 +219,10 @@ impl YellowstoneWorker {
 
             reconnect_backoff = STREAM_RECONNECT_INITIAL_BACKOFF;
             match replay_from_slot {
-                Some(slot) => println!("Subscribed to updates from slot {}. Waiting for data...", slot),
+                Some(slot) => println!(
+                    "Subscribed to updates from slot {}. Waiting for data...",
+                    slot
+                ),
                 None => println!("Subscribed to updates! Waiting for data..."),
             }
 
@@ -237,7 +247,9 @@ impl YellowstoneWorker {
                         self.handle_update(update, &mut worker_state).await;
                     }
                     Some(Err(error)) => {
-                        if replay_from_slot_supported && error.to_string().contains("from_slot is not supported") {
+                        if replay_from_slot_supported
+                            && error.to_string().contains("from_slot is not supported")
+                        {
                             replay_from_slot_supported = false;
                             eprintln!(
                                 "Yellowstone server does not support replay from slot. Retrying without from_slot in {:?}...",
@@ -353,7 +365,9 @@ impl YellowstoneWorker {
             )
         };
 
-        self.writer.insert_observed_transactions(&transactions).await?;
+        self.writer
+            .insert_observed_transactions(&transactions)
+            .await?;
         self.writer.insert_observed_transfers(&transfers).await?;
         self.writer.insert_observed_payments(&payments).await?;
 
@@ -465,7 +479,11 @@ impl YellowstoneWorker {
                             _ => {
                                 println!(
                                     "account={} filters=[{}] owner_program={} write_version={} data_len={}",
-                                    pubkey, filters, owner_program, account.write_version, account.data.len()
+                                    pubkey,
+                                    filters,
+                                    owner_program,
+                                    account.write_version,
+                                    account.data.len()
                                 );
                             }
                         }
@@ -481,7 +499,10 @@ impl YellowstoneWorker {
                         .as_ref()
                         .map(|tx| bs58::encode(&tx.signature).into_string())
                         .unwrap_or_else(|| "none".to_string());
-                    println!("TRANSACTION filters=[{}] slot={} signature={}", filters, tx.slot, signature);
+                    println!(
+                        "TRANSACTION filters=[{}] slot={} signature={}",
+                        filters, tx.slot, signature
+                    );
                 }
 
                 if let Some(context) = build_transaction_context(&tx, update_time) {
@@ -511,7 +532,10 @@ impl YellowstoneWorker {
             Some(UpdateOneof::Slot(slot)) => {
                 self.observe_slot(slot.slot);
                 if self.debug_stream_logs {
-                    println!("SLOT filters=[{}] slot={} status={}", filters, slot.slot, slot.status);
+                    println!(
+                        "SLOT filters=[{}] slot={} status={}",
+                        filters, slot.slot, slot.status
+                    );
                 }
             }
             Some(UpdateOneof::Block(block)) => {
@@ -519,7 +543,10 @@ impl YellowstoneWorker {
                 if self.debug_stream_logs {
                     println!(
                         "BLOCK filters=[{}] slot={} txs={} accounts={}",
-                        filters, block.slot, block.executed_transaction_count, block.updated_account_count
+                        filters,
+                        block.slot,
+                        block.executed_transaction_count,
+                        block.updated_account_count
                     );
                 }
             }
@@ -557,7 +584,10 @@ impl YellowstoneWorker {
 
         if cfg!(test) {
             if let Err(error) = self.flush_pending_raw_observations(true).await {
-                eprintln!("Failed to flush buffered raw observations in tests: {}", error);
+                eprintln!(
+                    "Failed to flush buffered raw observations in tests: {}",
+                    error
+                );
             }
             if let Err(error) = self.flush_pending_materialized_observations(true).await {
                 eprintln!(
@@ -596,12 +626,7 @@ impl YellowstoneWorker {
             .refresh_registry_for_matching_retry(&registry, &context)
             .await;
         if self
-            .materialize_observed_settlement(
-                &registry,
-                &context,
-                worker_received_at,
-                worker_state,
-            )
+            .materialize_observed_settlement(&registry, &context, worker_received_at, worker_state)
             .await
         {
             let mut recent_signatures = self.recent_signatures.lock().await;
@@ -676,8 +701,10 @@ impl YellowstoneWorker {
             ),
         };
 
-        let mut observed_transfer_ids_by_route_group: HashMap<String, Vec<(String, Option<String>, i128)>> =
-            HashMap::new();
+        let mut observed_transfer_ids_by_route_group: HashMap<
+            String,
+            Vec<(String, Option<String>, i128)>,
+        > = HashMap::new();
         let mut observed_transfer_rows = Vec::with_capacity(observed_transfers.len());
 
         for transfer in &observed_transfers {
@@ -749,7 +776,6 @@ impl YellowstoneWorker {
         let mut exception_rows = Vec::new();
 
         for payment in observed_payments {
-
             let Some(destination_wallet) = payment.destination_wallet.clone() else {
                 continue;
             };
@@ -763,7 +789,9 @@ impl YellowstoneWorker {
                 .and_then(|transfers| {
                     transfers
                         .iter()
-                        .filter(|(_, wallet, _)| wallet.as_deref() == Some(destination_wallet.as_str()))
+                        .filter(|(_, wallet, _)| {
+                            wallet.as_deref() == Some(destination_wallet.as_str())
+                        })
                         .max_by_key(|(_, _, amount_raw)| *amount_raw)
                         .or_else(|| transfers.first())
                         .map(|(transfer_id, _, _)| transfer_id.clone())
@@ -781,22 +809,26 @@ impl YellowstoneWorker {
 
                 let windowed_requests: Vec<&WorkspaceTransferRequestMatch> = pending_requests
                     .iter()
-                    .filter(|request| is_within_match_window(request.requested_at, context.event_time))
+                    .filter(|request| {
+                        is_within_match_window(request.requested_at, context.event_time)
+                    })
                     .collect();
 
                 let (allocatable_requests, match_rule, match_rule_label) =
                     select_requests_for_observation(&windowed_requests, &context.signature);
                 let signature_matched_request_count = allocatable_requests
                     .iter()
-                    .filter(|request| request.submitted_signature.as_deref() == Some(context.signature.as_str()))
+                    .filter(|request| {
+                        request.submitted_signature.as_deref() == Some(context.signature.as_str())
+                    })
                     .count();
 
                 let book_requests: Vec<BookRequest<'_>> = windowed_requests
                     .iter()
                     .filter(|request| {
-                        allocatable_requests
-                            .iter()
-                            .any(|candidate| candidate.transfer_request_id == request.transfer_request_id)
+                        allocatable_requests.iter().any(|candidate| {
+                            candidate.transfer_request_id == request.transfer_request_id
+                        })
                     })
                     .map(|request| {
                         let snapshot_state = worker_state
@@ -825,8 +857,11 @@ impl YellowstoneWorker {
                     })
                     .collect();
 
-                let allocation_result =
-                    allocate_observation(payment.gross_amount_raw, context.event_time, &book_requests);
+                let allocation_result = allocate_observation(
+                    payment.gross_amount_raw,
+                    context.event_time,
+                    &book_requests,
+                );
                 let remaining_observation_raw = allocation_result.remaining_observation_raw;
                 let eligible_request_count = allocation_result.eligible_request_count;
 
@@ -864,10 +899,9 @@ impl YellowstoneWorker {
                 matcher_event_rows.push(observation_event);
 
                 for allocation in allocation_result.allocations {
-                    let Some(request) = windowed_requests
-                        .iter()
-                        .find(|request| request.transfer_request_id == allocation.transfer_request_id)
-                    else {
+                    let Some(request) = windowed_requests.iter().find(|request| {
+                        request.transfer_request_id == allocation.transfer_request_id
+                    }) else {
                         continue;
                     };
 
@@ -1102,7 +1136,11 @@ impl YellowstoneWorker {
             return false;
         }
 
-        if let Err(error) = self.writer.upsert_settlement_matches(&settlement_match_rows).await {
+        if let Err(error) = self
+            .writer
+            .upsert_settlement_matches(&settlement_match_rows)
+            .await
+        {
             eprintln!("Failed to upsert settlement matches batch: {}", error);
             return false;
         }
@@ -1114,7 +1152,6 @@ impl YellowstoneWorker {
 
         true
     }
-
 }
 
 impl YellowstoneWorker {
@@ -1178,14 +1215,20 @@ impl YellowstoneWorker {
 }
 
 fn is_within_match_window(requested_at: DateTime<Utc>, observed_at: DateTime<Utc>) -> bool {
-    let delta = observed_at.signed_duration_since(requested_at).num_seconds();
+    let delta = observed_at
+        .signed_duration_since(requested_at)
+        .num_seconds();
     (-MATCH_WINDOW_BEFORE_REQUEST_SECONDS..=MATCH_WINDOW_AFTER_REQUEST_SECONDS).contains(&delta)
 }
 
 fn select_requests_for_observation<'a>(
     windowed_requests: &'a [&'a WorkspaceTransferRequestMatch],
     observed_signature: &str,
-) -> (Vec<&'a WorkspaceTransferRequestMatch>, &'static str, &'static str) {
+) -> (
+    Vec<&'a WorkspaceTransferRequestMatch>,
+    &'static str,
+    &'static str,
+) {
     let signature_requests: Vec<&WorkspaceTransferRequestMatch> = windowed_requests
         .iter()
         .copied()
@@ -1233,25 +1276,8 @@ fn should_retry_matching_with_fresh_registry(
     })
 }
 
-fn format_amount(amount_raw: i128) -> String {
-    let negative = amount_raw < 0;
-    let amount = amount_raw.abs();
-    let whole = amount / 1_000_000;
-    let frac = amount % 1_000_000;
-
-    if negative {
-        format!("-{}.{:06}", whole, frac)
-    } else {
-        format!("{}.{:06}", whole, frac)
-    }
-}
-
 fn next_reconnect_backoff(current: Duration) -> Duration {
     (current * 2).min(STREAM_RECONNECT_MAX_BACKOFF)
-}
-
-fn parse_amount_raw(value: &str) -> i128 {
-    value.parse::<i128>().unwrap_or_default()
 }
 
 async fn hydrate_matcher_state(
@@ -1275,37 +1301,25 @@ async fn hydrate_matcher_state(
     Ok(())
 }
 
-fn timestamp_to_utc(value: &yellowstone_grpc_proto::prost_types::Timestamp) -> Option<DateTime<Utc>> {
+fn timestamp_to_utc(
+    value: &yellowstone_grpc_proto::prost_types::Timestamp,
+) -> Option<DateTime<Utc>> {
     DateTime::<Utc>::from_timestamp(value.seconds, value.nanos as u32)
-}
-
-fn coption_pubkey_to_string(value: &COption<spl_token::solana_program::pubkey::Pubkey>) -> String {
-    match value {
-        COption::Some(pubkey) => pubkey.to_string(),
-        COption::None => "none".to_string(),
-    }
-}
-
-fn token_account_state_label(state: SplTokenAccountState) -> &'static str {
-    match state {
-        SplTokenAccountState::Uninitialized => "uninitialized",
-        SplTokenAccountState::Initialized => "initialized",
-        SplTokenAccountState::Frozen => "frozen",
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::control_plane::{
-        WorkspaceAddressMatch, WorkspaceRegistry, WorkspaceRegistryCache, WorkspaceTransferRequestMatch,
+        WorkspaceAddressMatch, WorkspaceRegistry, WorkspaceRegistryCache,
+        WorkspaceTransferRequestMatch,
     };
     use crate::storage::ClickHouseWriter;
     use reqwest::Client;
     use serde_json::Value;
     use spl_token::solana_program::program_option::COption;
     use spl_token::solana_program::pubkey::Pubkey;
-    use spl_token::state::Account as SplAccount;
+    use spl_token::state::{Account as SplAccount, AccountState as SplTokenAccountState};
     use std::str::FromStr;
     use yellowstone_grpc_proto::geyser::{
         SubscribeUpdateAccount, SubscribeUpdateAccountInfo, SubscribeUpdateTransaction,
@@ -1315,13 +1329,6 @@ mod tests {
         CompiledInstruction, InnerInstruction, InnerInstructions, Message, MessageHeader,
         TokenBalance, Transaction, TransactionStatusMeta, UiTokenAmount,
     };
-
-    #[test]
-    fn format_amount_renders_usdc_decimals() {
-        assert_eq!(format_amount(1), "0.000001");
-        assert_eq!(format_amount(12_345_678), "12.345678");
-        assert_eq!(format_amount(-12_345_678), "-12.345678");
-    }
 
     #[test]
     fn request_selection_prefers_submitted_signature_over_fifo_candidates() {
@@ -1351,7 +1358,10 @@ mod tests {
 
         assert_eq!(match_rule, "payment_submitted_signature_allocator");
         assert_eq!(selected_requests.len(), 1);
-        assert_eq!(selected_requests[0].transfer_request_id, "signature-request");
+        assert_eq!(
+            selected_requests[0].transfer_request_id,
+            "signature-request"
+        );
     }
 
     #[test]
@@ -1411,7 +1421,9 @@ mod tests {
         let context =
             build_transaction_context(&tx, Utc::now()).expect("transaction context should build");
 
-        assert!(should_retry_matching_with_fresh_registry(&registry, &context));
+        assert!(should_retry_matching_with_fresh_registry(
+            &registry, &context
+        ));
     }
 
     #[test]
@@ -1452,7 +1464,9 @@ mod tests {
         let context =
             build_transaction_context(&tx, Utc::now()).expect("transaction context should build");
 
-        assert!(!should_retry_matching_with_fresh_registry(&registry, &context));
+        assert!(!should_retry_matching_with_fresh_registry(
+            &registry, &context
+        ));
     }
 
     #[tokio::test]
@@ -1600,8 +1614,14 @@ mod tests {
                 "SELECT exception_type, severity, status FROM usdc_ops.exceptions FINAL FORMAT JSONEachRow",
             )
             .await;
-        assert_eq!(exceptions[0]["exception_type"], Value::String("unexpected_observation".to_string()));
-        assert_eq!(exceptions[0]["severity"], Value::String("warning".to_string()));
+        assert_eq!(
+            exceptions[0]["exception_type"],
+            Value::String("unexpected_observation".to_string())
+        );
+        assert_eq!(
+            exceptions[0]["severity"],
+            Value::String("warning".to_string())
+        );
         assert_eq!(exceptions[0]["status"], Value::String("open".to_string()));
     }
 
@@ -1675,7 +1695,10 @@ mod tests {
             partial_exceptions[0]["exception_type"],
             Value::String("partial_settlement".to_string())
         );
-        assert_eq!(partial_exceptions[0]["status"], Value::String("open".to_string()));
+        assert_eq!(
+            partial_exceptions[0]["status"],
+            Value::String("open".to_string())
+        );
         assert_eq!(
             partial_exceptions[0]["transfer_request_id"],
             Value::String(transfer_request_id.clone())
@@ -1711,9 +1734,18 @@ mod tests {
                 transfer_request_id
             ))
             .await;
-        assert_eq!(matches[0]["match_status"], Value::String("matched_split".to_string()));
-        assert_eq!(matches[0]["matched_amount_raw"], Value::String("10000".to_string()));
-        assert_eq!(matches[0]["amount_variance_raw"], Value::String("0".to_string()));
+        assert_eq!(
+            matches[0]["match_status"],
+            Value::String("matched_split".to_string())
+        );
+        assert_eq!(
+            matches[0]["matched_amount_raw"],
+            Value::String("10000".to_string())
+        );
+        assert_eq!(
+            matches[0]["amount_variance_raw"],
+            Value::String("0".to_string())
+        );
         assert_eq!(matches[0]["candidate_count"], Value::Number(2.into()));
 
         let exceptions = harness
@@ -1727,7 +1759,10 @@ mod tests {
             exceptions[0]["exception_type"],
             Value::String("partial_settlement".to_string())
         );
-        assert_eq!(exceptions[0]["status"], Value::String("dismissed".to_string()));
+        assert_eq!(
+            exceptions[0]["status"],
+            Value::String("dismissed".to_string())
+        );
         assert_eq!(
             exceptions[0]["transfer_request_id"],
             Value::String(transfer_request_id.clone())
@@ -1960,8 +1995,14 @@ mod tests {
             ))
             .await;
         assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0]["route_group"], Value::String(format!("{}:ix:0", signature)));
-        assert_eq!(rows[0]["leg_role"], Value::String("direct_settlement".to_string()));
+        assert_eq!(
+            rows[0]["route_group"],
+            Value::String(format!("{}:ix:0", signature))
+        );
+        assert_eq!(
+            rows[0]["leg_role"],
+            Value::String("direct_settlement".to_string())
+        );
 
         let instruction_index = &rows[0]["instruction_index"];
         assert!(
@@ -2006,22 +2047,33 @@ mod tests {
                 "observed_transactions",
                 "raw_observations",
             ] {
-                self.execute(&format!("TRUNCATE TABLE usdc_ops.{}", table)).await;
+                self.execute(&format!("TRUNCATE TABLE usdc_ops.{}", table))
+                    .await;
             }
         }
 
         async fn query_count(&self, query: &str) -> u64 {
-            let rows = self.query_rows(&format!("{} FORMAT JSONEachRow", strip_format(query))).await;
+            let rows = self
+                .query_rows(&format!("{} FORMAT JSONEachRow", strip_format(query)))
+                .await;
             rows[0]["count"]
                 .as_u64()
-                .or_else(|| rows[0]["count"].as_str().and_then(|value| value.parse().ok()))
+                .or_else(|| {
+                    rows[0]["count"]
+                        .as_str()
+                        .and_then(|value| value.parse().ok())
+                })
                 .expect("count should be numeric")
         }
 
         async fn query_rows(&self, query: &str) -> Vec<Value> {
             let response = self
                 .client
-                .post(format!("{}/?query={}", self.base_url, urlencoding::encode(query)))
+                .post(format!(
+                    "{}/?query={}",
+                    self.base_url,
+                    urlencoding::encode(query)
+                ))
                 .body("\n")
                 .send()
                 .await
@@ -2041,7 +2093,11 @@ mod tests {
 
         async fn execute(&self, query: &str) {
             self.client
-                .post(format!("{}/?query={}", self.base_url, urlencoding::encode(query)))
+                .post(format!(
+                    "{}/?query={}",
+                    self.base_url,
+                    urlencoding::encode(query)
+                ))
                 .body("\n")
                 .send()
                 .await

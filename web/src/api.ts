@@ -14,6 +14,9 @@ import type {
   PaymentOrder,
   PaymentProofPacket,
   PaymentRequest,
+  PaymentRun,
+  PaymentRunExecutionPreparation,
+  PaymentRunImportResult,
   PaymentRequestsCsvImportResult,
   ReconciliationDetail,
   OrganizationDirectoryItem,
@@ -494,6 +497,26 @@ export const api = {
       `/workspaces/${workspaceId}/payment-requests?${params.toString()}`,
     );
   },
+  listPaymentRuns(workspaceId: string) {
+    return request<{ servedAt: string; items: PaymentRun[] }>(`/workspaces/${workspaceId}/payment-runs`);
+  },
+  getPaymentRunDetail(workspaceId: string, paymentRunId: string) {
+    return request<PaymentRun>(`/workspaces/${workspaceId}/payment-runs/${paymentRunId}`);
+  },
+  importPaymentRunCsv(
+    workspaceId: string,
+    input: {
+      csv: string;
+      runName?: string;
+      sourceWorkspaceAddressId?: string;
+      submitOrderNow?: boolean;
+    },
+  ) {
+    return request<PaymentRunImportResult>(`/workspaces/${workspaceId}/payment-runs/import-csv`, {
+      method: 'POST',
+      body: JSON.stringify(input),
+    });
+  },
   createPaymentRequest(
     workspaceId: string,
     input: {
@@ -611,6 +634,40 @@ export const api = {
         body: JSON.stringify(input ?? {}),
       },
     );
+  },
+  preparePaymentRunExecution(
+    workspaceId: string,
+    paymentRunId: string,
+    input?: {
+      sourceWorkspaceAddressId?: string;
+    },
+  ) {
+    return request<PaymentRunExecutionPreparation>(
+      `/workspaces/${workspaceId}/payment-runs/${paymentRunId}/prepare-execution`,
+      {
+        method: 'POST',
+        body: JSON.stringify(input ?? {}),
+      },
+    );
+  },
+  attachPaymentRunSignature(
+    workspaceId: string,
+    paymentRunId: string,
+    input: {
+      submittedSignature: string;
+      submittedAt?: string;
+    },
+  ) {
+    return request<{ executionRecords: unknown[]; paymentRun: PaymentRun }>(
+      `/workspaces/${workspaceId}/payment-runs/${paymentRunId}/attach-signature`,
+      {
+        method: 'POST',
+        body: JSON.stringify(input),
+      },
+    );
+  },
+  getPaymentRunProof(workspaceId: string, paymentRunId: string) {
+    return request<Record<string, unknown>>(`/workspaces/${workspaceId}/payment-runs/${paymentRunId}/proof`);
   },
   attachPaymentOrderSignature(
     workspaceId: string,

@@ -56,6 +56,7 @@ export async function getPaymentRequestDetail(workspaceId: string, paymentReques
 export async function createPaymentRequest(args: {
   workspaceId: string;
   actorUserId: string;
+  paymentRunId?: string | null;
   payeeId?: string | null;
   destinationId: string;
   amountRaw: string | bigint;
@@ -95,6 +96,7 @@ export async function createPaymentRequest(args: {
   const request = await prisma.paymentRequest.create({
     data: {
       workspaceId: args.workspaceId,
+      paymentRunId: args.paymentRunId ?? null,
       payeeId: args.payeeId ?? null,
       destinationId: destination.destinationId,
       counterpartyId: destination.counterpartyId,
@@ -117,6 +119,7 @@ export async function createPaymentRequest(args: {
     workspaceId: args.workspaceId,
     paymentRequestId: request.paymentRequestId,
     actorUserId: args.actorUserId,
+    paymentRunId: args.paymentRunId,
     sourceWorkspaceAddressId: args.sourceWorkspaceAddressId,
     submitNow: args.submitOrderNow ?? false,
   });
@@ -128,6 +131,7 @@ export async function promotePaymentRequestToOrder(args: {
   workspaceId: string;
   paymentRequestId: string;
   actorUserId: string;
+  paymentRunId?: string | null;
   sourceWorkspaceAddressId?: string | null;
   submitNow?: boolean;
 }) {
@@ -148,6 +152,7 @@ export async function promotePaymentRequestToOrder(args: {
     workspaceId: args.workspaceId,
     actorUserId: args.actorUserId,
     destinationId: request.destinationId,
+    paymentRunId: args.paymentRunId ?? request.paymentRunId,
     payeeId: request.payeeId,
     sourceWorkspaceAddressId: args.sourceWorkspaceAddressId ?? null,
     amountRaw: request.amountRaw,
@@ -161,6 +166,7 @@ export async function promotePaymentRequestToOrder(args: {
     paymentRequestId: request.paymentRequestId,
     metadataJson: {
       paymentRequestId: request.paymentRequestId,
+      paymentRunId: args.paymentRunId ?? request.paymentRunId,
       inputSource: 'payment_request',
       payeeId: request.payeeId,
     },
@@ -204,6 +210,7 @@ export async function importPaymentRequestsFromCsv(args: {
   createOrderNow?: boolean;
   submitOrderNow?: boolean;
   sourceWorkspaceAddressId?: string | null;
+  paymentRunId?: string | null;
 }) {
   const rows = parseCsv(args.csv);
   if (!rows.length) {
@@ -241,6 +248,7 @@ export async function importPaymentRequestsFromCsv(args: {
       const paymentRequest = await createPaymentRequest({
         workspaceId: args.workspaceId,
         actorUserId: args.actorUserId,
+        paymentRunId: args.paymentRunId,
         payeeId: payee?.payeeId,
         destinationId: destination.destinationId,
         amountRaw,
@@ -254,6 +262,7 @@ export async function importPaymentRequestsFromCsv(args: {
         metadataJson: {
           inputSource: 'csv_import',
           csvRowNumber: rowNumber,
+          paymentRunId: args.paymentRunId ?? null,
           payeeName,
         },
       });
@@ -477,6 +486,7 @@ function serializePaymentRequest(request: PaymentRequestWithRelations) {
   return {
     paymentRequestId: request.paymentRequestId,
     workspaceId: request.workspaceId,
+    paymentRunId: request.paymentRunId,
     payeeId: request.payeeId,
     destinationId: request.destinationId,
     counterpartyId: request.counterpartyId,

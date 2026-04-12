@@ -7,6 +7,14 @@ export const internalRouter = Router();
 
 internalRouter.use((req, res, next) => {
   if (!config.controlPlaneServiceToken) {
+    if (config.nodeEnv === 'production') {
+      res.status(503).json({
+        error: 'InternalServiceTokenNotConfigured',
+        message: 'Internal service routes require CONTROL_PLANE_SERVICE_TOKEN in production',
+      });
+      return;
+    }
+
     next();
     return;
   }

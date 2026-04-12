@@ -7,10 +7,6 @@ use yellowstone_grpc_proto::geyser::{
 const USDC_MINT: &str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 const SPL_TOKEN_PROGRAM_ID: &str = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
 
-pub fn create_subscription_request() -> SubscribeRequest {
-    create_subscription_request_from_slot(None)
-}
-
 pub fn create_subscription_request_from_slot(from_slot: Option<u64>) -> SubscribeRequest {
     let mut transactions = HashMap::new();
     let mut blocks_meta = HashMap::new();
@@ -48,11 +44,11 @@ pub fn create_subscription_request_from_slot(from_slot: Option<u64>) -> Subscrib
 
 #[cfg(test)]
 mod tests {
-    use super::{create_subscription_request, create_subscription_request_from_slot};
+    use super::create_subscription_request_from_slot;
 
     #[test]
     fn subscription_request_uses_transactions_and_blocks_meta_only() {
-        let request = create_subscription_request();
+        let request = create_subscription_request_from_slot(None);
 
         assert!(request.accounts.is_empty());
         assert_eq!(request.transactions.len(), 1);

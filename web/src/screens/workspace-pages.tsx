@@ -11,6 +11,8 @@ import type {
   PaymentExecutionPreparation,
   PaymentOrder,
   PaymentRequest,
+  PaymentRun,
+  PaymentRunExecutionPreparation,
   ReconciliationDetail,
   ReconciliationRow,
   TransferRequest,
@@ -1924,12 +1926,16 @@ export function WorkspaceRequestsPage({
   onCreatePaymentOrderExecution,
   onDownloadPaymentOrderAuditExport,
   onDownloadPaymentOrderProof,
+  onDownloadPaymentRunProof,
   onImportPaymentRequestsCsv,
   onPreparePaymentOrderExecution,
+  onPreparePaymentRunExecution,
   onSignPreparedPaymentOrder,
+  onSignPreparedPaymentRun,
   onSubmitPaymentOrder,
   paymentOrders,
   paymentRequests,
+  paymentRuns,
   reconciliationRows,
 }: {
   addresses: WorkspaceAddress[];
@@ -1942,24 +1948,38 @@ export function WorkspaceRequestsPage({
   onCreatePaymentOrderExecution: (paymentOrderId: string, event: FormEvent<HTMLFormElement>) => Promise<void>;
   onDownloadPaymentOrderAuditExport: (paymentOrderId: string) => Promise<void>;
   onDownloadPaymentOrderProof: (paymentOrderId: string) => Promise<void>;
+  onDownloadPaymentRunProof: (paymentRunId: string) => Promise<void>;
   onImportPaymentRequestsCsv: (event: FormEvent<HTMLFormElement>) => Promise<{ ok: boolean; message?: string }>;
   onPreparePaymentOrderExecution: (
     paymentOrderId: string,
     input?: { sourceWorkspaceAddressId?: string },
   ) => Promise<PaymentExecutionPreparation | null>;
+  onPreparePaymentRunExecution: (
+    paymentRunId: string,
+    input?: { sourceWorkspaceAddressId?: string },
+  ) => Promise<PaymentRunExecutionPreparation | null>;
   onSignPreparedPaymentOrder: (paymentOrderId: string, packet: PaymentExecutionPacket, walletOptionId?: string) => Promise<string | null>;
+  onSignPreparedPaymentRun: (paymentRunId: string, packet: PaymentExecutionPacket, walletOptionId?: string) => Promise<string | null>;
   onSubmitPaymentOrder: (paymentOrderId: string) => Promise<void>;
   paymentOrders: PaymentOrder[];
   paymentRequests: PaymentRequest[];
+  paymentRuns: PaymentRun[];
   reconciliationRows: ReconciliationRow[];
 }) {
-  const [modalState, setModalState] = useState<{ type: 'create' } | { type: 'import-csv' } | { type: 'view'; paymentOrderId: string } | null>(null);
+  const [modalState, setModalState] = useState<
+    | { type: 'create' }
+    | { type: 'import-csv' }
+    | { type: 'view-run'; paymentRunId: string }
+    | { type: 'view'; paymentOrderId: string }
+    | null
+  >(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedRequestDestinationId, setSelectedRequestDestinationId] = useState('');
   const [submitNow, setSubmitNow] = useState(true);
   const [csvImportMessage, setCsvImportMessage] = useState<string | null>(null);
   const [executionSourceWalletId, setExecutionSourceWalletId] = useState('');
   const [preparedExecutionByOrderId, setPreparedExecutionByOrderId] = useState<Record<string, PaymentExecutionPacket>>({});
+  const [preparedExecutionByRunId, setPreparedExecutionByRunId] = useState<Record<string, PaymentExecutionPacket>>({});
   const [browserWallets, setBrowserWallets] = useState<BrowserWalletOption[]>(() => discoverSolanaWallets());
   const [selectedBrowserWalletId, setSelectedBrowserWalletId] = useState('');
   const [walletSigningState, setWalletSigningState] = useState<{
@@ -2025,6 +2045,10 @@ export function WorkspaceRequestsPage({
     modalState?.type === 'view'
       ? paymentOrders.find((item) => item.paymentOrderId === modalState.paymentOrderId) ?? null
       : null;
+  const selectedRun =
+    modalState?.type === 'view-run'
+      ? paymentRuns.find((item) => item.paymentRunId === modalState.paymentRunId) ?? null
+      : null;
   const selectedOrderDetail = selectedOrder?.reconciliationDetail ?? null;
   const selectedRequestRow = selectedOrder?.transferRequestId
     ? reconciliationByRequestId.get(selectedOrder.transferRequestId) ?? selectedOrderDetail
@@ -2032,6 +2056,10 @@ export function WorkspaceRequestsPage({
   const selectedOrderPreparedExecution =
     selectedOrder
       ? preparedExecutionByOrderId[selectedOrder.paymentOrderId] ?? getLatestPreparedExecutionPacket(selectedOrder)
+      : null;
+  const selectedRunPreparedExecution =
+    selectedRun
+      ? preparedExecutionByRunId[selectedRun.paymentRunId] ?? null
       : null;
   const selectedOrderProgress =
     selectedOrder
@@ -2068,7 +2096,8 @@ export function WorkspaceRequestsPage({
   }, []);
 
   useEffect(() => {
-    if (!selectedOrderPreparedExecution) {
+    const activePreparedExecution = selectedOrderPreparedExecution ?? selectedRunPreparedExecution;
+    if (!activePreparedExecution) {
       return;
     }
 
@@ -2080,11 +2109,11 @@ export function WorkspaceRequestsPage({
     }
 
     const exactSignerWallet = browserWallets.find(
-      (wallet) => wallet.ready && wallet.address === selectedOrderPreparedExecution.signerWallet,
+      (wallet) => wallet.ready && wallet.address === activePreparedExecution.signerWallet,
     );
     const connectableWallet = browserWallets.find((wallet) => wallet.ready && wallet.address === null);
     setSelectedBrowserWalletId(exactSignerWallet?.id ?? connectableWallet?.id ?? '');
-  }, [browserWallets, selectedBrowserWalletId, selectedOrderPreparedExecution]);
+  }, [browserWallets, selectedBrowserWalletId, selectedOrderPreparedExecution, selectedRunPreparedExecution]);
 
   return (
     <div className="page-stack page-stack-tight">
@@ -2133,6 +2162,47 @@ export function WorkspaceRequestsPage({
             </button>
             <small>CSV columns: payee, destination, amount, reference, due_date.</small>
           </div>
+
+          {paymentRuns.length ? (
+            <div className="request-table compact-request-table payment-order-table payment-run-table">
+              <div className="request-table-head">
+                <span>Run</span>
+                <span>Rows</span>
+                <span>Total</span>
+                <span>Ready</span>
+                <span>State</span>
+                <span>Created</span>
+              </div>
+              {paymentRuns.map((run) => (
+                <div key={run.paymentRunId} className="request-table-row">
+                  <button
+                    className="request-row-button"
+                    onClick={() => {
+                      setExecutionSourceWalletId(run.sourceWorkspaceAddressId ?? '');
+                      setModalState({ type: 'view-run', paymentRunId: run.paymentRunId });
+                    }}
+                    type="button"
+                  >
+                    <span className="request-cell-primary">
+                      <strong>{run.runName}</strong>
+                      <small>{shortenAddress(run.paymentRunId, 8, 6)}</small>
+                    </span>
+                    <span className="request-cell-single">{run.totals.orderCount}</span>
+                    <span className="request-cell-single">
+                      <strong>{formatRawUsdcCompact(run.totals.totalAmountRaw)} USDC</strong>
+                    </span>
+                    <span className="request-cell-single">
+                      {run.totals.readyCount}/{run.totals.orderCount}
+                    </span>
+                    <span className="request-cell-single">
+                      <span className={`tone-pill tone-pill-${getRunTone(run.derivedState)}`}>{formatLabel(run.derivedState)}</span>
+                    </span>
+                    <span className="request-cell-single">{formatTimestampCompact(run.createdAt)}</span>
+                  </button>
+                </div>
+              ))}
+            </div>
+          ) : null}
 
           <div className="request-table compact-request-table payment-order-table">
             <div className="request-table-head">
@@ -2400,6 +2470,192 @@ export function WorkspaceRequestsPage({
               </>
             ) : null}
 
+            {modalState.type === 'view-run' && selectedRun ? (
+              <>
+                <div className="registry-modal-hero request-modal-hero">
+                  <div className="registry-modal-hero-copy">
+                    <h2>{selectedRun.runName}</h2>
+                    <span className={`tone-pill tone-pill-${getRunTone(selectedRun.derivedState)}`}>
+                      {formatLabel(selectedRun.derivedState)}
+                    </span>
+                  </div>
+                  <div className="panel-header-actions">
+                    <button className="primary-button compact-button" onClick={() => void onDownloadPaymentRunProof(selectedRun.paymentRunId)} type="button">
+                      export run proof
+                    </button>
+                    <button className="ghost-button compact-button danger-button" onClick={() => setModalState(null)} type="button">
+                      close
+                    </button>
+                  </div>
+                </div>
+
+                <div className="info-grid-tight">
+                  <InfoLine label="Rows" value={String(selectedRun.totals.orderCount)} />
+                  <InfoLine label="Total" value={`${formatRawUsdcCompact(selectedRun.totals.totalAmountRaw)} USDC`} />
+                  <InfoLine label="Ready rows" value={`${selectedRun.totals.readyCount}/${selectedRun.totals.orderCount}`} />
+                  <InfoLine label="Needs approval" value={String(selectedRun.totals.pendingApprovalCount)} />
+                  <InfoLine label="Exceptions" value={String(selectedRun.totals.exceptionCount)} />
+                  <InfoLine label="Source wallet" value={selectedRun.sourceWorkspaceAddress ? getWalletName(selectedRun.sourceWorkspaceAddress) : 'Not set'} />
+                </div>
+
+                {!['settled', 'closed', 'cancelled'].includes(selectedRun.derivedState) ? (
+                  <div className="registry-detail-group">
+                    <div className="registry-detail-head">
+                      <strong>Batch execution</strong>
+                    </div>
+                    <div className="execution-prepare-panel">
+                      <div className="execution-prepare-copy">
+                        <strong>{selectedRunPreparedExecution ? 'Batch packet prepared' : 'Prepare one transaction for this run'}</strong>
+                        <p>
+                          This builds one wallet-signed Solana transaction with multiple USDC transfers. Rows still reconcile independently after settlement.
+                        </p>
+                      </div>
+                      <label className="field">
+                        <span>Source wallet</span>
+                        <select
+                          onChange={(event) => setExecutionSourceWalletId(event.target.value)}
+                          value={executionSourceWalletId}
+                        >
+                          <option value="">Select source wallet</option>
+                          {addresses.filter((address) => address.isActive).map((address) => (
+                            <option key={address.workspaceAddressId} value={address.workspaceAddressId}>
+                              {getWalletName(address)}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <button
+                        className="primary-button compact-button"
+                        disabled={!canManage || !executionSourceWalletId}
+                        onClick={async () => {
+                          const prepared = await onPreparePaymentRunExecution(selectedRun.paymentRunId, {
+                            sourceWorkspaceAddressId: executionSourceWalletId,
+                          });
+                          if (prepared) {
+                            setPreparedExecutionByRunId((current) => ({
+                              ...current,
+                              [selectedRun.paymentRunId]: prepared.executionPacket,
+                            }));
+                          }
+                        }}
+                        type="button"
+                      >
+                        prepare batch packet
+                      </button>
+                    </div>
+
+                    {selectedRunPreparedExecution ? (
+                      <div className="execution-packet-card">
+                        <InfoLine label="From" value={`${shortenAddress(selectedRunPreparedExecution.source.walletAddress, 6, 6)} // ${shortenAddress(selectedRunPreparedExecution.source.tokenAccountAddress, 6, 6)}`} />
+                        <InfoLine label="Transfers" value={String(selectedRunPreparedExecution.transfers?.length ?? 0)} />
+                        <InfoLine label="Total" value={`${formatRawUsdcCompact(selectedRunPreparedExecution.amountRaw)} ${selectedRunPreparedExecution.token.symbol}`} />
+                        <InfoLine label="Instructions" value={`${selectedRunPreparedExecution.instructions.length} Solana instruction(s)`} />
+                        <InfoLine label="Required signer" value={shortenAddress(selectedRunPreparedExecution.signerWallet, 6, 6)} />
+                        <label className="field modal-span-full">
+                          <span>Browser wallet</span>
+                          <select
+                            onChange={(event) => {
+                              setSelectedBrowserWalletId(event.target.value);
+                              setWalletSigningState(null);
+                            }}
+                            value={selectedBrowserWalletId}
+                          >
+                            <option value="">Select wallet to sign</option>
+                            {browserWallets.map((wallet) => (
+                              <option key={wallet.id} value={wallet.id} disabled={!wallet.ready}>
+                                {formatBrowserWalletOption(wallet)}
+                              </option>
+                            ))}
+                          </select>
+                          <small className="field-note">
+                            Required signer: {shortenAddress(selectedRunPreparedExecution.signerWallet, 6, 6)}.
+                          </small>
+                        </label>
+                        {walletSigningState ? (
+                          <div className="registry-detail-box modal-span-full">
+                            <strong>
+                              {walletSigningState.status === 'signing'
+                                ? 'Waiting for wallet'
+                                : walletSigningState.status === 'success'
+                                  ? 'Batch transaction submitted'
+                                  : 'Wallet signing failed'}
+                            </strong>
+                            <small>{walletSigningState.message}</small>
+                          </div>
+                        ) : null}
+                        <button
+                          className="primary-button compact-button modal-span-full"
+                          disabled={!canManage || !selectedBrowserWalletId || walletSigningState?.status === 'signing'}
+                          onClick={async () => {
+                            setWalletSigningState({
+                              status: 'signing',
+                              message: 'Approve the batch transaction in the selected browser wallet.',
+                            });
+                            try {
+                              const signature = await onSignPreparedPaymentRun(
+                                selectedRun.paymentRunId,
+                                selectedRunPreparedExecution,
+                                selectedBrowserWalletId,
+                              );
+                              if (!signature) {
+                                setWalletSigningState({
+                                  status: 'error',
+                                  message: 'The wallet flow finished without returning a transaction signature.',
+                                });
+                                return;
+                              }
+                              setWalletSigningState({
+                                status: 'success',
+                                message: `Submitted ${shortenAddress(signature, 8, 8)}. Each row is now watching for settlement under the same signature.`,
+                              });
+                            } catch (error) {
+                              setWalletSigningState({
+                                status: 'error',
+                                message: error instanceof Error ? error.message : 'Failed to sign and submit payment run.',
+                              });
+                            }
+                          }}
+                          type="button"
+                        >
+                          {walletSigningState?.status === 'signing' ? 'waiting for wallet...' : 'sign and submit batch'}
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
+
+                <div className="request-table compact-request-table payment-order-table">
+                  <div className="request-table-head">
+                    <span>Row</span>
+                    <span>Destination</span>
+                    <span>Amount</span>
+                    <span>State</span>
+                    <span>Reference</span>
+                    <span>Created</span>
+                  </div>
+                  {paymentOrders.filter((order) => order.paymentRunId === selectedRun.paymentRunId).map((order) => (
+                    <div key={order.paymentOrderId} className="request-table-row">
+                      <button
+                        className="request-row-button"
+                        onClick={() => setModalState({ type: 'view', paymentOrderId: order.paymentOrderId })}
+                        type="button"
+                      >
+                        <span className="request-cell-primary">
+                          <strong>{order.payee?.name ?? shortenAddress(order.paymentOrderId, 8, 6)}</strong>
+                          <small>{shortenAddress(order.paymentOrderId, 8, 6)}</small>
+                        </span>
+                        <span className="request-cell-single">{order.destination.label}</span>
+                        <span className="request-cell-single">{formatRawUsdcCompact(order.amountRaw)} {order.asset.toUpperCase()}</span>
+                        <span className="request-cell-single">{formatLabel(order.derivedState)}</span>
+                        <span className="request-cell-single">{order.externalReference ?? order.invoiceNumber ?? '-'}</span>
+                        <span className="request-cell-single">{formatTimestampCompact(order.createdAt)}</span>
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </>
+            ) : null}
+
             {modalState.type === 'view' && selectedOrder ? (
               <>
                 <div className="registry-modal-hero request-modal-hero">
@@ -2553,7 +2809,7 @@ export function WorkspaceRequestsPage({
                     {selectedOrderPreparedExecution ? (
                       <div className="execution-packet-card">
                         <InfoLine label="From" value={`${shortenAddress(selectedOrderPreparedExecution.source.walletAddress, 6, 6)} // ${shortenAddress(selectedOrderPreparedExecution.source.tokenAccountAddress, 6, 6)}`} />
-                        <InfoLine label="To" value={`${shortenAddress(selectedOrderPreparedExecution.destination.walletAddress, 6, 6)} // ${shortenAddress(selectedOrderPreparedExecution.destination.tokenAccountAddress, 6, 6)}`} />
+                        <InfoLine label="To" value={selectedOrderPreparedExecution.destination ? `${shortenAddress(selectedOrderPreparedExecution.destination.walletAddress, 6, 6)} // ${shortenAddress(selectedOrderPreparedExecution.destination.tokenAccountAddress, 6, 6)}` : 'Batch destinations'} />
                         <InfoLine label="Amount" value={`${formatRawUsdcCompact(selectedOrderPreparedExecution.amountRaw)} ${selectedOrderPreparedExecution.token.symbol}`} />
                         <InfoLine label="Instructions" value={`${selectedOrderPreparedExecution.instructions.length} Solana instruction(s)`} />
                         <InfoLine label="Required signer" value={shortenAddress(selectedOrderPreparedExecution.signerWallet, 6, 6)} />
@@ -3424,6 +3680,19 @@ function getInputProgress(request: PaymentRequest | null): {
     description: 'The payment request exists. Create the controlled order next.',
     tone: 'pending',
   };
+}
+
+function getRunTone(state: string): 'pending' | 'partial' | 'matched' | 'exception' {
+  if (state === 'settled' || state === 'closed') {
+    return 'matched';
+  }
+  if (state === 'exception' || state === 'cancelled') {
+    return 'exception';
+  }
+  if (state === 'execution_recorded' || state === 'submitted_onchain' || state === 'partially_settled') {
+    return 'partial';
+  }
+  return 'pending';
 }
 
 function getLatestPreparedExecutionPacket(order: PaymentOrder): PaymentExecutionPacket | null {

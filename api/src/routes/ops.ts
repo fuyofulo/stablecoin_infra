@@ -4,7 +4,6 @@ import { z } from 'zod';
 import { queryClickHouse } from '../clickhouse.js';
 import { config } from '../config.js';
 import {
-  getExceptionDetail,
   getReconciliationDetail,
   listReconciliationQueue,
   listWorkspaceExceptions,

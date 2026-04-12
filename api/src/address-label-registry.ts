@@ -71,6 +71,7 @@ async function resolveAddressLabelsFromOrb(chain: string, addresses: string[]) {
 
     const payload = (await response.json()) as OrbResolveResponse;
     const tags = payload.tags ?? {};
+    const labeledAddresses = new Set<string>();
     const rows = Object.entries(tags)
       .map(([address, tag]) => {
         if (!tag) {
@@ -82,6 +83,7 @@ async function resolveAddressLabelsFromOrb(chain: string, addresses: string[]) {
           return null;
         }
 
+        labeledAddresses.add(address);
         const normalized = normalizeOrbTag(address, name, tag);
         return prisma.addressLabel.upsert({
           where: {
@@ -100,14 +102,30 @@ async function resolveAddressLabelsFromOrb(chain: string, addresses: string[]) {
       })
       .filter((item): item is ReturnType<typeof prisma.addressLabel.upsert> => Boolean(item));
 
-    if (!rows.length) {
+    const negativeRows = addresses
+      .filter((address) => !labeledAddresses.has(address))
+      .map((address) => prisma.addressLabel.upsert({
+        where: {
+          chain_address: {
+            chain,
+            address,
+          },
+        },
+        update: normalizeUnresolvedOrbTag(address),
+        create: {
+          chain,
+          address,
+          ...normalizeUnresolvedOrbTag(address),
+        },
+      }));
+
+    if (!rows.length && negativeRows.length) {
       console.warn(
-        `[address-label-registry] Orb returned no usable labels for ${addresses.length} unresolved address(es): ${addresses.join(', ')}`,
+        `[address-label-registry] Orb returned no usable labels for ${negativeRows.length} unresolved address(es); cached as unlabeled: ${addresses.join(', ')}`,
       );
-      return [];
     }
 
-    return await prisma.$transaction(rows);
+    return await prisma.$transaction([...rows, ...negativeRows]);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.warn(
@@ -115,6 +133,31 @@ async function resolveAddressLabelsFromOrb(chain: string, addresses: string[]) {
     );
     return [];
   }
+}
+
+function normalizeUnresolvedOrbTag(address: string) {
+  return {
+    entityName: shortenAddress(address),
+    entityType: 'unlabeled_address',
+    labelKind: 'unlabeled',
+    roleTags: ['orb_unlabeled'],
+    source: 'orb_auto_negative',
+    sourceRef: config.orbTagsResolveUrl,
+    confidence: 'unresolved',
+    isActive: true,
+    notes: 'Orb returned no usable label for this address. Cached to avoid repeated lookup.',
+  } satisfies Pick<
+    AddressLabel,
+    | 'entityName'
+    | 'entityType'
+    | 'labelKind'
+    | 'roleTags'
+    | 'source'
+    | 'sourceRef'
+    | 'confidence'
+    | 'isActive'
+    | 'notes'
+  >;
 }
 
 function normalizeOrbTag(
@@ -158,4 +201,11 @@ function normalizeOrbTag(
     | 'isActive'
     | 'notes'
   >;
+}
+
+function shortenAddress(address: string) {
+  if (address.length <= 12) {
+    return address;
+  }
+  return `${address.slice(0, 6)}...${address.slice(-6)}`;
 }

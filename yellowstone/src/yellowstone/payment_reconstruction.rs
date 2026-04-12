@@ -1,5 +1,5 @@
-use crate::yellowstone::transfer_reconstruction::ObservedTransfer;
 use crate::yellowstone::transaction_context::TransactionContext;
+use crate::yellowstone::transfer_reconstruction::ObservedTransfer;
 use std::collections::HashMap;
 use uuid::Uuid;
 
@@ -57,11 +57,18 @@ pub fn reconstruct_observed_payments(
         }
 
         let mut destination_entries = destination_totals.into_iter().collect::<Vec<_>>();
-        destination_entries.sort_by(|left, right| right.1.cmp(&left.1).then_with(|| left.0.cmp(&right.0)));
+        destination_entries
+            .sort_by(|left, right| right.1.cmp(&left.1).then_with(|| left.0.cmp(&right.0)));
 
         let destination_wallet = destination_entries.first().map(|entry| entry.0.clone());
-        let net_destination_amount_raw = destination_entries.first().map(|entry| entry.1).unwrap_or_default();
-        let gross_amount_raw = grouped_transfers.iter().map(|transfer| transfer.amount_raw).sum::<i128>();
+        let net_destination_amount_raw = destination_entries
+            .first()
+            .map(|entry| entry.1)
+            .unwrap_or_default();
+        let gross_amount_raw = grouped_transfers
+            .iter()
+            .map(|transfer| transfer.amount_raw)
+            .sum::<i128>();
         let fee_amount_raw = gross_amount_raw - net_destination_amount_raw;
         let distinct_destinations = destination_entries.len() as u32;
         let route_count = grouped_transfers.len() as u32;
@@ -74,7 +81,10 @@ pub fn reconstruct_observed_payments(
             "multi_destination_route".to_string()
         };
 
-        let confidence_band = if grouped_transfers.iter().all(|transfer| transfer.source_wallet.is_some()) {
+        let confidence_band = if grouped_transfers
+            .iter()
+            .all(|transfer| transfer.source_wallet.is_some())
+        {
             "high".to_string()
         } else {
             "medium".to_string()

@@ -236,6 +236,93 @@ test('CSV import creates unreviewed destinations for raw wallet addresses', asyn
   assert.ok(importedAddresses.every((item: { source: string; usdcAtaAddress: string | null }) => item.source === 'csv_import' && item.usdcAtaAddress));
 });
 
+test('payment runs import CSV rows and prepare one batch execution packet', async () => {
+  const setup = await createPaymentOrderSetup();
+  const secondDestinationAddress = await post(
+    `/workspaces/${setup.workspace.workspaceId}/addresses`,
+    {
+      chain: 'solana',
+      address: Keypair.generate().publicKey.toBase58(),
+      displayName: `Second vendor ${crypto.randomUUID().slice(0, 8)}`,
+    },
+    setup.sessionToken,
+  );
+  const secondDestination = await post(
+    `/workspaces/${setup.workspace.workspaceId}/destinations`,
+    {
+      linkedWorkspaceAddressId: secondDestinationAddress.workspaceAddressId,
+      label: `Second payout ${crypto.randomUUID().slice(0, 8)}`,
+      trustState: 'trusted',
+      destinationType: 'vendor_wallet',
+      isInternal: false,
+    },
+    setup.sessionToken,
+  );
+  const csv = [
+    'payee,destination,amount,reference,due_date',
+    `Acme Corp,${setup.destination.label},0.01,RUN-1001,2026-04-15`,
+    `Beta Supplies,${secondDestination.label},0.02,RUN-1002,2026-04-18`,
+  ].join('\n');
+
+  const imported = await post(
+    `/workspaces/${setup.workspace.workspaceId}/payment-runs/import-csv`,
+    {
+      runName: 'April payroll run',
+      csv,
+      sourceWorkspaceAddressId: setup.sourceAddress.workspaceAddressId,
+      submitOrderNow: true,
+    },
+    setup.sessionToken,
+  );
+
+  assert.equal(imported.importResult.imported, 2);
+  assert.equal(imported.importResult.failed, 0);
+  assert.equal(imported.paymentRun.runName, 'April payroll run');
+  assert.equal(imported.paymentRun.totals.orderCount, 2);
+  assert.equal(imported.paymentRun.totals.totalAmountRaw, '30000');
+
+  const prepared = await post(
+    `/workspaces/${setup.workspace.workspaceId}/payment-runs/${imported.paymentRun.paymentRunId}/prepare-execution`,
+    {
+      sourceWorkspaceAddressId: setup.sourceAddress.workspaceAddressId,
+    },
+    setup.sessionToken,
+  );
+
+  assert.equal(prepared.executionRecords.length, 2);
+  assert.equal(prepared.executionPacket.kind, 'solana_spl_usdc_transfer_batch');
+  assert.equal(prepared.executionPacket.transfers.length, 2);
+  assert.equal(prepared.executionPacket.instructions.length, 4);
+  assert.equal(prepared.executionPacket.amountRaw, '30000');
+  assert.equal(prepared.paymentRun.derivedState, 'execution_recorded');
+
+  const preparedAgain = await post(
+    `/workspaces/${setup.workspace.workspaceId}/payment-runs/${imported.paymentRun.paymentRunId}/prepare-execution`,
+    {
+      sourceWorkspaceAddressId: setup.sourceAddress.workspaceAddressId,
+    },
+    setup.sessionToken,
+  );
+  assert.deepEqual(
+    preparedAgain.executionRecords.map((record: { executionRecordId: string }) => record.executionRecordId),
+    prepared.executionRecords.map((record: { executionRecordId: string }) => record.executionRecordId),
+  );
+
+  const signature = '5'.repeat(88);
+  const attached = await post(
+    `/workspaces/${setup.workspace.workspaceId}/payment-runs/${imported.paymentRun.paymentRunId}/attach-signature`,
+    {
+      submittedSignature: signature,
+      submittedAt: '2026-04-10T12:00:00.000Z',
+    },
+    setup.sessionToken,
+  );
+
+  assert.equal(attached.executionRecords.length, 2);
+  assert.ok(attached.executionRecords.every((record: { submittedSignature: string; state: string }) => record.submittedSignature === signature && record.state === 'submitted_onchain'));
+  assert.equal(attached.paymentRun.derivedState, 'submitted_onchain');
+});
+
 test('payment order duplicate references and unsafe source wallets are rejected', async () => {
   const setup = await createPaymentOrderSetup();
 
@@ -405,6 +492,15 @@ test('payment orders prepare a signer-ready Solana USDC transfer packet', async 
   assert.equal(prepared.executionRecord.executionSource, 'prepared_solana_transfer');
   assert.equal(prepared.executionRecord.state, 'ready_for_execution');
   assert.equal(prepared.executionRecord.metadataJson.preparedExecution.executionRecordId, prepared.executionRecord.executionRecordId);
+
+  const preparedAgain = await post(
+    `/workspaces/${setup.workspace.workspaceId}/payment-orders/${draftOrder.paymentOrderId}/prepare-execution`,
+    {
+      sourceWorkspaceAddressId: setup.sourceAddress.workspaceAddressId,
+    },
+    setup.sessionToken,
+  );
+  assert.equal(preparedAgain.executionRecord.executionRecordId, prepared.executionRecord.executionRecordId);
 
   const transferRequest = await prisma.transferRequest.findUniqueOrThrow({
     where: { transferRequestId: prepared.paymentOrder.transferRequestId },

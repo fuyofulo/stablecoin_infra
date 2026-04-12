@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { prisma } from '../prisma.js';
 import { config } from '../config.js';
-import { normalizeClickHouseDateTime, queryClickHouse } from '../clickhouse.js';
+import { escapeClickHouseString, normalizeClickHouseDateTime, queryClickHouse } from '../clickhouse.js';
 import {
   addExceptionNote,
   applyExceptionAction,
@@ -365,8 +365,4 @@ function safeJsonParse(value: string | null) {
 
 function uniqueValues(values: string[]) {
   return [...new Set(values)];
-}
-
-function escapeClickHouseString(value: string) {
-  return value.replaceAll('\\', '\\\\').replaceAll("'", "\\'");
 }

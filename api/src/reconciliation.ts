@@ -17,11 +17,18 @@ import {
   getOrCreateWorkspaceApprovalPolicy,
   serializeApprovalPolicy,
 } from './approval-policy.js';
-import { normalizeClickHouseDateTime, queryClickHouse } from './clickhouse.js';
+import { escapeClickHouseString, normalizeClickHouseDateTime, queryClickHouse } from './clickhouse.js';
 import { config } from './config.js';
 import { getOrResolveAddressLabels } from './address-label-registry.js';
 import { serializeExecutionRecord } from './execution-records.js';
 import { prisma } from './prisma.js';
+import {
+  buildTimeline,
+  parseTransferRequestEvent,
+  serializeExceptionNote,
+  serializeTransferRequestEvent,
+  serializeTransferRequestNote,
+} from './reconciliation-timeline.js';
 import { createTransferRequestEvent } from './transfer-request-events.js';
 import {
   deriveApprovalState,
@@ -52,10 +59,6 @@ type TransferRequestWithRelations = TransferRequest & {
   executionRecords?: (ExecutionRecord & {
     executorUser: Pick<User, 'userId' | 'email' | 'displayName'> | null;
   })[];
-};
-
-type ExecutionRecordWithRelations = ExecutionRecord & {
-  executorUser: Pick<User, 'userId' | 'email' | 'displayName'> | null;
 };
 
 type ExceptionStateOverlay = {
@@ -1209,164 +1212,6 @@ function serializeDestination(
   };
 }
 
-export function parseTransferRequestEvent(event: TransferRequestEvent) {
-  const linkedTransferIds = Array.isArray(event.linkedTransferIds)
-    ? event.linkedTransferIds.filter((value): value is string => typeof value === 'string')
-    : [];
-
-  return {
-    ...event,
-    linkedTransferIds,
-  };
-}
-
-export function serializeTransferRequestEvent(event: ReturnType<typeof parseTransferRequestEvent>) {
-  return {
-    transferRequestEventId: event.transferRequestEventId,
-    transferRequestId: event.transferRequestId,
-    workspaceId: event.workspaceId,
-    eventType: event.eventType,
-    actorType: event.actorType,
-    actorId: event.actorId,
-    eventSource: event.eventSource,
-    beforeState: event.beforeState,
-    afterState: event.afterState,
-    linkedSignature: event.linkedSignature,
-    linkedPaymentId: event.linkedPaymentId,
-    linkedTransferIds: event.linkedTransferIds,
-    payloadJson: event.payloadJson,
-    createdAt: event.createdAt,
-  };
-}
-
-export function serializeTransferRequestNote(
-  note: TransferRequestNote & {
-    authorUser: Pick<User, 'userId' | 'email' | 'displayName'> | null;
-  },
-) {
-  return {
-    transferRequestNoteId: note.transferRequestNoteId,
-    transferRequestId: note.transferRequestId,
-    workspaceId: note.workspaceId,
-    body: note.body,
-    createdAt: note.createdAt,
-    authorUser: serializeUserRef(note.authorUser),
-  };
-}
-
-function serializeExceptionNote(
-  note: Prisma.ExceptionNoteGetPayload<{
-    include: {
-      authorUser: {
-        select: {
-          userId: true;
-          email: true;
-          displayName: true;
-        };
-      };
-    };
-  }>,
-) {
-  return {
-    exceptionNoteId: note.exceptionNoteId,
-    exceptionId: note.exceptionId,
-    workspaceId: note.workspaceId,
-    body: note.body,
-    createdAt: note.createdAt,
-    authorUser: serializeUserRef(note.authorUser),
-  };
-}
-
-export function buildTimeline(args: {
-  events: ReturnType<typeof parseTransferRequestEvent>[];
-  notes: ReturnType<typeof serializeTransferRequestNote>[];
-  approvalDecisions: ReturnType<typeof serializeApprovalDecision>[];
-  executionRecords: ReturnType<typeof serializeExecutionRecord>[];
-  observedExecutionTransaction: ReturnType<typeof serializeObservedTransaction> | null;
-  match: ReturnType<typeof serializeMatch> | null;
-  exceptions: Array<ReturnType<typeof serializeException> & { notes?: ReturnType<typeof serializeExceptionNote>[] }>;
-}) {
-  const items = [
-    ...args.events.map((event) => ({
-      timelineType: 'request_event' as const,
-      createdAt: event.createdAt,
-      eventType: event.eventType,
-      actorType: event.actorType,
-      actorId: event.actorId,
-      eventSource: event.eventSource,
-      beforeState: event.beforeState,
-      afterState: event.afterState,
-      linkedSignature: event.linkedSignature,
-      linkedPaymentId: event.linkedPaymentId,
-      linkedTransferIds: event.linkedTransferIds,
-      payloadJson: event.payloadJson,
-    })),
-    ...args.notes.map((note) => ({
-      timelineType: 'request_note' as const,
-      createdAt: note.createdAt,
-      body: note.body,
-      authorUser: note.authorUser,
-    })),
-    ...args.approvalDecisions.map((decision) => ({
-      timelineType: 'approval_decision' as const,
-      createdAt: decision.createdAt,
-      action: decision.action,
-      comment: decision.comment,
-      actorUser: decision.actorUser,
-      payloadJson: decision.payloadJson,
-    })),
-    ...args.executionRecords.map((record) => ({
-      timelineType: 'execution_record' as const,
-      createdAt: record.updatedAt,
-      state: record.state,
-      executionSource: record.executionSource,
-      submittedSignature: record.submittedSignature,
-      executorUser: record.executorUser,
-    })),
-    ...(args.observedExecutionTransaction
-      ? [
-          {
-            timelineType: 'observed_execution' as const,
-            createdAt: args.observedExecutionTransaction.createdAt,
-            signature: args.observedExecutionTransaction.signature,
-            slot: args.observedExecutionTransaction.slot,
-            status: args.observedExecutionTransaction.status,
-          },
-        ]
-      : []),
-    ...(args.match
-      ? [
-          {
-            timelineType: 'match_result' as const,
-            createdAt: args.match.matchedAt ?? args.match.updatedAt,
-            matchStatus: args.match.matchStatus,
-            explanation: args.match.explanation,
-            linkedSignature: args.match.signature,
-            linkedTransferIds: args.match.observedTransferId ? [args.match.observedTransferId] : [],
-          },
-        ]
-      : []),
-    ...args.exceptions.map((exception) => ({
-      timelineType: 'exception' as const,
-      createdAt: exception.updatedAt,
-      exceptionId: exception.exceptionId,
-      reasonCode: exception.reasonCode,
-      severity: exception.severity,
-      status: exception.status,
-      explanation: exception.explanation,
-      linkedSignature: exception.signature,
-      linkedTransferIds: exception.observedTransferId ? [exception.observedTransferId] : [],
-      notes: exception.notes ?? [],
-    })),
-  ];
-
-  return items.sort((left, right) => {
-    const leftTime = new Date(left.createdAt).getTime();
-    const rightTime = new Date(right.createdAt).getTime();
-    return leftTime - rightTime;
-  });
-}
-
 function serializeMatch(row: SettlementMatchRow) {
   return {
     signature: row.signature,
@@ -1951,10 +1796,6 @@ function collectSubmittedExecutionSignatures(transferRequests: TransferRequestWi
       .map((request) => request.executionRecords?.[0]?.submittedSignature)
       .filter((value): value is string => Boolean(value)),
   );
-}
-
-function escapeClickHouseString(value: string) {
-  return value.replaceAll('\\', '\\\\').replaceAll("'", "\\'");
 }
 
 function uniqueValues(values: string[]) {

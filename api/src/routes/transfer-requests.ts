@@ -9,6 +9,7 @@ import {
 } from '../execution-records.js';
 import { prisma } from '../prisma.js';
 import { getReconciliationDetail, serializeTransferRequest } from '../reconciliation.js';
+import { isSolanaSignatureLike } from '../solana.js';
 import { createTransferRequestEvent } from '../transfer-request-events.js';
 import {
   ACTIVE_MATCHING_REQUEST_STATUSES,
@@ -66,7 +67,7 @@ const transitionTransferRequestSchema = z.object({
   toStatus: z.enum(REQUEST_STATUSES),
   note: z.string().trim().min(1).max(5000).optional(),
   payloadJson: z.record(z.any()).default({}),
-  linkedSignature: z.string().trim().min(1).optional(),
+  linkedSignature: z.string().trim().refine(isSolanaSignatureLike, 'Invalid Solana signature').optional(),
   linkedPaymentId: z.string().uuid().optional(),
   linkedTransferIds: z.array(z.string().uuid()).max(64).default([]),
 });
@@ -77,7 +78,7 @@ const createExecutionRecordSchema = z.object({
 });
 
 const updateExecutionRecordSchema = z.object({
-  submittedSignature: z.string().trim().min(1).optional(),
+  submittedSignature: z.string().trim().refine(isSolanaSignatureLike, 'Invalid Solana signature').optional(),
   state: z.string().trim().min(1).optional(),
   submittedAt: z.string().datetime().optional(),
   metadataJson: z.record(z.any()).default({}),

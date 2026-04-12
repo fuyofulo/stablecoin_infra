@@ -2,6 +2,7 @@ import { config } from './config.js';
 
 const CLICKHOUSE_DATETIME_PATTERN =
   /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d{1,6})?$/;
+const CLICKHOUSE_IDENTIFIER_PATTERN = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
 
 export async function queryClickHouse<T = Record<string, unknown>>(query: string): Promise<T[]> {
   const response = await fetch(
@@ -48,6 +49,7 @@ export async function insertClickHouseRows(table: string, rows: Array<Record<str
     return;
   }
 
+  assertClickHouseIdentifier(table, 'table');
   const payload = rows.map((row) => JSON.stringify(row)).join('\n') + '\n';
   await executeClickHouse(
     `INSERT INTO ${config.clickhouseDatabase}.${table} FORMAT JSONEachRow`,
@@ -67,4 +69,14 @@ export function normalizeClickHouseDateTime(
   }
 
   return value;
+}
+
+export function escapeClickHouseString(value: string) {
+  return value.replaceAll('\\', '\\\\').replaceAll("'", "\\'");
+}
+
+function assertClickHouseIdentifier(value: string, label: string) {
+  if (!CLICKHOUSE_IDENTIFIER_PATTERN.test(value)) {
+    throw new Error(`Invalid ClickHouse ${label} identifier "${value}"`);
+  }
 }

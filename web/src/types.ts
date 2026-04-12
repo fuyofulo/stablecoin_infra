@@ -376,6 +376,7 @@ export type Payee = {
 export type PaymentRequest = {
   paymentRequestId: string;
   workspaceId: string;
+  paymentRunId: string | null;
   payeeId: string | null;
   destinationId: string;
   counterpartyId: string | null;
@@ -411,12 +412,17 @@ export type PreparedSolanaInstruction = {
 };
 
 export type PaymentExecutionPacket = {
-  kind: 'solana_spl_usdc_transfer';
+  kind: 'solana_spl_usdc_transfer' | 'solana_spl_usdc_transfer_batch';
   version: number;
   network: string;
-  paymentOrderId: string;
-  transferRequestId: string;
-  executionRecordId: string;
+  paymentOrderId?: string;
+  paymentRunId?: string;
+  runName?: string;
+  paymentOrderIds?: string[];
+  transferRequestId?: string;
+  transferRequestIds?: string[];
+  executionRecordId?: string;
+  executionRecordIds?: string[];
   createdAt: string;
   source: {
     workspaceAddressId: string;
@@ -424,13 +430,27 @@ export type PaymentExecutionPacket = {
     tokenAccountAddress: string;
     label: string | null;
   };
-  destination: {
+  destination?: {
     destinationId: string;
     label: string;
     walletAddress: string;
     tokenAccountAddress: string;
     counterpartyName: string | null;
   };
+  transfers?: Array<{
+    paymentOrderId: string;
+    transferRequestId: string;
+    executionRecordId: string;
+    destination: {
+      destinationId: string;
+      label: string;
+      walletAddress: string;
+      tokenAccountAddress: string;
+    };
+    amountRaw: string;
+    memo: string | null;
+    reference: string | null;
+  }>;
   token: {
     symbol: string;
     mint: string;
@@ -456,10 +476,47 @@ export type PaymentExecutionPreparation = {
   paymentOrder: PaymentOrder;
 };
 
+export type PaymentRun = {
+  paymentRunId: string;
+  workspaceId: string;
+  sourceWorkspaceAddressId: string | null;
+  runName: string;
+  inputSource: string;
+  state: string;
+  derivedState: string;
+  metadataJson: Record<string, unknown>;
+  createdByUserId: string | null;
+  createdAt: string;
+  updatedAt: string;
+  sourceWorkspaceAddress: WorkspaceAddress | null;
+  createdByUser: User | null;
+  totals: {
+    orderCount: number;
+    totalAmountRaw: string;
+    settledCount: number;
+    exceptionCount: number;
+    pendingApprovalCount: number;
+    readyCount: number;
+  };
+  paymentOrders?: PaymentOrder[];
+};
+
+export type PaymentRunImportResult = {
+  paymentRun: PaymentRun;
+  importResult: PaymentRequestsCsvImportResult;
+};
+
+export type PaymentRunExecutionPreparation = {
+  executionRecords: ExecutionRecord[];
+  executionPacket: PaymentExecutionPacket;
+  paymentRun: PaymentRun;
+};
+
 export type PaymentOrder = {
   paymentOrderId: string;
   workspaceId: string;
   paymentRequestId: string | null;
+  paymentRunId: string | null;
   payeeId: string | null;
   destinationId: string;
   counterpartyId: string | null;

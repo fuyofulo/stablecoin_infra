@@ -5,6 +5,7 @@ import { AddressInfo } from 'node:net';
 import { createApp } from '../src/app.js';
 import { config } from '../src/config.js';
 import { executeClickHouse, insertClickHouseRows } from '../src/clickhouse.js';
+import { getOrResolveAddressLabels } from '../src/address-label-registry.js';
 import { prisma } from '../src/prisma.js';
 import { deriveUsdcAtaForWallet } from '../src/solana.js';
 
@@ -75,9 +76,30 @@ test('health endpoint returns ok', async () => {
   const response = await fetch(`${baseUrl}/health`);
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), { ok: true });
+
+  const capabilitiesResponse = await fetch(`${baseUrl}/capabilities`);
+  assert.equal(capabilitiesResponse.status, 200);
+  const capabilities = await capabilitiesResponse.json();
+  assert.equal(capabilities.product, 'stablecoin-ops-control-plane');
+  assert.equal(capabilities.version, 1);
+  assert.ok(
+    capabilities.workflows.some((workflow: { id: string }) => workflow.id === 'csv_to_payment_run'),
+  );
 });
 
 test('login creates a user session and session starts without organizations', async () => {
+  const invalidLoginResponse = await fetch(`${baseUrl}/auth/login`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({ email: 'not-an-email' }),
+  });
+  assert.equal(invalidLoginResponse.status, 400);
+  const invalidLogin = await invalidLoginResponse.json();
+  assert.equal(invalidLogin.error, 'ValidationError');
+  assert.ok(Array.isArray(invalidLogin.issues));
+
   const login = await post('/auth/login', {
     email: 'ops@example.com',
     displayName: 'Ops User',
@@ -1479,7 +1501,7 @@ test('reconciliation detail auto-resolves unknown fee recipient labels from Orb 
   const transferId = crypto.randomUUID();
   const paymentId = crypto.randomUUID();
   const feePaymentId = crypto.randomUUID();
-  const signature = '8b2X1EnKR4examplejyqJkWUGpX';
+  const signature = '8'.repeat(88);
   const eventTime = '2026-04-07 11:13:00.000';
   const createdAt = '2026-04-07 11:18:00.000';
   const jupiterAuthority9 = '3LoAYHuSd7Gh8d7RTFnhvYtiTiefdZ5ByamU42vkzd76';
@@ -1997,7 +2019,8 @@ test('address label resolver skips null Orb tags and still stores usable labels'
     });
     assert.equal(stored?.entityName, 'Jupiter Aggregator Authority 16');
 
-    const skipped = await prisma.addressLabel.findUnique({
+    const resolvedLabels = await getOrResolveAddressLabels('solana', [nullAddress]);
+    const skipped = resolvedLabels.get(nullAddress) ?? await prisma.addressLabel.findUnique({
       where: {
         chain_address: {
           chain: 'solana',
@@ -2005,7 +2028,8 @@ test('address label resolver skips null Orb tags and still stores usable labels'
         },
       },
     });
-    assert.equal(skipped, null);
+    assert.equal(skipped?.confidence, 'unresolved');
+    assert.equal(skipped?.labelKind, 'unlabeled');
   } finally {
     globalThis.fetch = originalFetch;
     config.orbTagsResolveEnabled = originalEnabled;
@@ -2345,6 +2369,20 @@ test('internal service routes enforce the control-plane token when configured', 
   assert.equal(setup.transferRequest.status, 'approved');
 
   const originalToken = config.controlPlaneServiceToken;
+  const originalNodeEnv = config.nodeEnv;
+
+  config.controlPlaneServiceToken = '';
+  config.nodeEnv = 'production';
+
+  try {
+    const response = await fetch(`${baseUrl}/internal/workspaces`);
+    assert.equal(response.status, 503);
+    const payload = await response.json();
+    assert.equal(payload.error, 'InternalServiceTokenNotConfigured');
+  } finally {
+    config.nodeEnv = originalNodeEnv;
+  }
+
   config.controlPlaneServiceToken = 'internal-secret';
 
   try {
@@ -2380,6 +2418,7 @@ test('internal service routes enforce the control-plane token when configured', 
     assert.equal(context.transferRequests[0].status, 'approved');
   } finally {
     config.controlPlaneServiceToken = originalToken;
+    config.nodeEnv = originalNodeEnv;
   }
 });
 

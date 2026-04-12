@@ -49,10 +49,7 @@ impl ClickHouseWriter {
         }
     }
 
-    pub async fn insert_raw_observations(
-        &self,
-        rows: &[RawObservationRow],
-    ) -> QueryResult<()> {
+    pub async fn insert_raw_observations(&self, rows: &[RawObservationRow]) -> QueryResult<()> {
         self.insert_json_each_row_many_chunked(
             "raw_observations",
             rows,
@@ -73,10 +70,7 @@ impl ClickHouseWriter {
         .await
     }
 
-    pub async fn insert_observed_transfers(
-        &self,
-        rows: &[ObservedTransferRow],
-    ) -> QueryResult<()> {
+    pub async fn insert_observed_transfers(&self, rows: &[ObservedTransferRow]) -> QueryResult<()> {
         self.insert_json_each_row_many_chunked(
             "observed_transfers",
             rows,
@@ -85,10 +79,7 @@ impl ClickHouseWriter {
         .await
     }
 
-    pub async fn insert_observed_payments(
-        &self,
-        rows: &[ObservedPaymentRow],
-    ) -> QueryResult<()> {
+    pub async fn insert_observed_payments(&self, rows: &[ObservedPaymentRow]) -> QueryResult<()> {
         self.insert_json_each_row_many_chunked(
             "observed_payments",
             rows,
@@ -97,28 +88,14 @@ impl ClickHouseWriter {
         .await
     }
 
-    pub async fn upsert_settlement_matches(
-        &self,
-        rows: &[SettlementMatchRow],
-    ) -> QueryResult<()> {
-        self.insert_json_each_row_many_chunked(
-            "settlement_matches",
-            rows,
-            MATCHES_INSERT_ROWS,
-        )
-        .await
+    pub async fn upsert_settlement_matches(&self, rows: &[SettlementMatchRow]) -> QueryResult<()> {
+        self.insert_json_each_row_many_chunked("settlement_matches", rows, MATCHES_INSERT_ROWS)
+            .await
     }
 
-    pub async fn insert_matcher_events(
-        &self,
-        rows: &[MatcherEventRow],
-    ) -> QueryResult<()> {
-        self.insert_json_each_row_many_chunked(
-            "matcher_events",
-            rows,
-            MATCHER_EVENTS_INSERT_ROWS,
-        )
-        .await
+    pub async fn insert_matcher_events(&self, rows: &[MatcherEventRow]) -> QueryResult<()> {
+        self.insert_json_each_row_many_chunked("matcher_events", rows, MATCHER_EVENTS_INSERT_ROWS)
+            .await
     }
 
     pub async fn upsert_request_book_snapshots(
@@ -134,15 +111,13 @@ impl ClickHouseWriter {
     }
 
     pub async fn upsert_exceptions(&self, rows: &[ExceptionRow]) -> QueryResult<()> {
-        self.insert_json_each_row_many_chunked(
-            "exceptions",
-            rows,
-            EXCEPTIONS_INSERT_ROWS,
-        )
-        .await
+        self.insert_json_each_row_many_chunked("exceptions", rows, EXCEPTIONS_INSERT_ROWS)
+            .await
     }
 
-    pub async fn load_request_book_snapshots(&self) -> QueryResult<Vec<RequestBookSnapshotStateRow>> {
+    pub async fn load_request_book_snapshots(
+        &self,
+    ) -> QueryResult<Vec<RequestBookSnapshotStateRow>> {
         self.query_json_each_row(&format!(
                 "SELECT transfer_request_id, allocated_amount_raw, remaining_amount_raw, fill_count, book_status, last_signature FROM {}.request_book_snapshots FINAL FORMAT JSONEachRow",
                 self.database
@@ -425,10 +400,7 @@ pub struct ExceptionRow {
     pub updated_at: DateTime<Utc>,
 }
 
-fn serialize_clickhouse_datetime<S>(
-    value: &DateTime<Utc>,
-    serializer: S,
-) -> Result<S::Ok, S::Error>
+fn serialize_clickhouse_datetime<S>(value: &DateTime<Utc>, serializer: S) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
 {
@@ -443,7 +415,9 @@ where
     S: Serializer,
 {
     match value {
-        Some(value) => serializer.serialize_some(&value.format("%Y-%m-%d %H:%M:%S%.3f").to_string()),
+        Some(value) => {
+            serializer.serialize_some(&value.format("%Y-%m-%d %H:%M:%S%.3f").to_string())
+        }
         None => serializer.serialize_none(),
     }
 }
@@ -471,7 +445,10 @@ fn should_split_batch_after_error(error: &(dyn Error + Send + Sync)) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{chunk_ranges, should_split_batch_after_error, ClickHouseWriter, ASYNC_INSERT_BUSY_TIMEOUT_MS};
+    use super::{
+        ASYNC_INSERT_BUSY_TIMEOUT_MS, ClickHouseWriter, chunk_ranges,
+        should_split_batch_after_error,
+    };
     use std::error::Error;
     use std::fmt;
 
@@ -490,12 +467,17 @@ mod tests {
     fn chunk_ranges_splits_and_reverses_for_stack_processing() {
         assert_eq!(chunk_ranges(0, 128), Vec::<(usize, usize)>::new());
         assert_eq!(chunk_ranges(3, 128), vec![(0, 3)]);
-        assert_eq!(chunk_ranges(260, 128), vec![(256, 260), (128, 256), (0, 128)]);
+        assert_eq!(
+            chunk_ranges(260, 128),
+            vec![(256, 260), (128, 256), (0, 128)]
+        );
     }
 
     #[test]
     fn split_retry_only_triggers_for_memory_pressure_errors() {
-        let memory = TestError("ClickHouse HTTP 500 Internal Server Error: Code: 241. DB::Exception: MEMORY_LIMIT_EXCEEDED");
+        let memory = TestError(
+            "ClickHouse HTTP 500 Internal Server Error: Code: 241. DB::Exception: MEMORY_LIMIT_EXCEEDED",
+        );
         let generic = TestError("network timeout");
 
         assert!(should_split_batch_after_error(&memory));

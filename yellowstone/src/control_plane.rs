@@ -116,7 +116,8 @@ impl WorkspaceRegistryCache {
     }
 
     pub fn refresh_age(&self) -> Option<Duration> {
-        self.last_refresh_at.map(|last_refresh| last_refresh.elapsed())
+        self.last_refresh_at
+            .map(|last_refresh| last_refresh.elapsed())
     }
 
     pub fn should_log_refresh_error(&mut self) -> bool {
@@ -218,7 +219,9 @@ impl WorkspaceRegistry {
     }
 
     pub fn matches_for_wallet(&self, address: &str) -> Option<&[WorkspaceAddressMatch]> {
-        self.wallet_matches_by_address.get(address).map(Vec::as_slice)
+        self.wallet_matches_by_address
+            .get(address)
+            .map(Vec::as_slice)
     }
 
     pub fn pending_requests_for_destination_wallet(

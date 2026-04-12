@@ -1,4 +1,6 @@
-use crate::yellowstone::transaction_context::{InstructionContext, TokenBalanceChange, TransactionContext};
+use crate::yellowstone::transaction_context::{
+    InstructionContext, TokenBalanceChange, TransactionContext,
+};
 use spl_token::instruction::TokenInstruction;
 use std::collections::HashMap;
 
@@ -55,16 +57,24 @@ fn reconstruct_from_instructions(context: &TransactionContext) -> Vec<ObservedTr
 
         match token_instruction {
             TokenInstruction::Transfer { amount } => {
-                if let Some(transfer) =
-                    build_transfer_from_instruction(context, instruction, amount as i128, false, &change_by_token_account)
-                {
+                if let Some(transfer) = build_transfer_from_instruction(
+                    context,
+                    instruction,
+                    amount as i128,
+                    false,
+                    &change_by_token_account,
+                ) {
                     transfers.push(transfer);
                 }
             }
             TokenInstruction::TransferChecked { amount, .. } => {
-                if let Some(transfer) =
-                    build_transfer_from_instruction(context, instruction, amount as i128, true, &change_by_token_account)
-                {
+                if let Some(transfer) = build_transfer_from_instruction(
+                    context,
+                    instruction,
+                    amount as i128,
+                    true,
+                    &change_by_token_account,
+                ) {
                     transfers.push(transfer);
                 }
             }
@@ -101,7 +111,9 @@ fn build_transfer_from_instruction(
     let source_wallet = change_by_token_account
         .get(&source_token_account)
         .map(|change| change.wallet_owner.clone());
-    let destination_change = change_by_token_account.get(&destination_token_account).copied();
+    let destination_change = change_by_token_account
+        .get(&destination_token_account)
+        .copied();
     let destination_wallet = destination_change.map(|change| change.wallet_owner.clone());
 
     Some(ObservedTransfer {
@@ -205,7 +217,10 @@ fn reconstruct_from_balance_deltas(context: &TransactionContext) -> Vec<Observed
                 amount_raw: remaining_credit,
                 instruction_index: None,
                 inner_instruction_index: None,
-                route_group: format!("{}:unattributed:{}", context.signature, credit.token_account),
+                route_group: format!(
+                    "{}:unattributed:{}",
+                    context.signature, credit.token_account
+                ),
                 leg_role: "unknown".to_string(),
                 properties_json: Some(
                     serde_json::json!({
@@ -250,7 +265,8 @@ fn classify_leg_roles(transfers: &mut [ObservedTransfer]) {
     }
 
     for transfer in transfers.iter_mut() {
-        if transfer.source_wallet.is_some() && transfer.source_wallet == transfer.destination_wallet {
+        if transfer.source_wallet.is_some() && transfer.source_wallet == transfer.destination_wallet
+        {
             transfer.leg_role = "self_change".to_string();
             continue;
         }
@@ -271,7 +287,7 @@ fn classify_leg_roles(transfers: &mut [ObservedTransfer]) {
 
 #[cfg(test)]
 mod tests {
-    use super::{classify_leg_roles, ObservedTransfer};
+    use super::{ObservedTransfer, classify_leg_roles};
 
     fn make_transfer(
         route_group: &str,

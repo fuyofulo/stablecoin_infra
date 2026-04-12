@@ -22,21 +22,8 @@ import {
 } from './solana.js';
 import { createTransferRequestEvent } from './transfer-request-events.js';
 import { serializePayee } from './payees.js';
-
-export const PAYMENT_ORDER_STATES = [
-  'draft',
-  'pending_approval',
-  'approved',
-  'ready_for_execution',
-  'execution_recorded',
-  'partially_settled',
-  'settled',
-  'exception',
-  'closed',
-  'cancelled',
-] as const;
-
-export type PaymentOrderState = (typeof PAYMENT_ORDER_STATES)[number];
+export { PAYMENT_ORDER_STATES, isPaymentOrderState, type PaymentOrderState } from './payment-order-state.js';
+import type { PaymentOrderState } from './payment-order-state.js';
 
 export type PaymentOrderWithRelations = PaymentOrder & {
   workspace?: unknown;
@@ -61,10 +48,6 @@ export type PaymentOrderWithRelations = PaymentOrder & {
 
 type PaymentOrderClient = typeof prisma | Prisma.TransactionClient;
 
-export function isPaymentOrderState(value: string): value is PaymentOrderState {
-  return PAYMENT_ORDER_STATES.includes(value as PaymentOrderState);
-}
-
 export async function createPaymentOrder(
   args: {
     workspaceId: string;
@@ -81,6 +64,7 @@ export async function createPaymentOrder(
     sourceBalanceSnapshotJson?: Prisma.InputJsonValue;
     metadataJson?: Prisma.InputJsonValue;
     paymentRequestId?: string | null;
+    paymentRunId?: string | null;
     payeeId?: string | null;
     submitNow?: boolean;
   },
@@ -146,6 +130,7 @@ export async function createPaymentOrder(
       data: {
         workspaceId: args.workspaceId,
         paymentRequestId: args.paymentRequestId ?? null,
+        paymentRunId: args.paymentRunId ?? null,
         payeeId: args.payeeId ?? null,
         destinationId: destination.destinationId,
         counterpartyId: destination.counterpartyId,
@@ -178,6 +163,7 @@ export async function createPaymentOrder(
         amountRaw: paymentOrder.amountRaw.toString(),
         asset: paymentOrder.asset,
         paymentRequestId: paymentOrder.paymentRequestId,
+        paymentRunId: paymentOrder.paymentRunId,
         payeeId: paymentOrder.payeeId,
       },
     });
@@ -201,12 +187,14 @@ export async function listPaymentOrders(
   options?: {
     limit?: number;
     state?: string;
+    paymentRunId?: string;
   },
 ) {
   const paymentOrders = await prisma.paymentOrder.findMany({
     where: {
       workspaceId,
       ...(options?.state ? { state: options.state } : {}),
+      ...(options?.paymentRunId ? { paymentRunId: options.paymentRunId } : {}),
     },
     include: paymentOrderInclude,
     orderBy: { createdAt: 'desc' },
@@ -397,6 +385,7 @@ export async function submitPaymentOrder(
         dueAt: current.dueAt,
         propertiesJson: {
           paymentOrderId: current.paymentOrderId,
+          paymentRunId: current.paymentRunId,
           payeeId: current.payeeId,
           invoiceNumber: current.invoiceNumber,
           attachmentUrl: current.attachmentUrl,
@@ -416,6 +405,7 @@ export async function submitPaymentOrder(
       payloadJson: {
         source: 'payment_order',
         paymentOrderId: current.paymentOrderId,
+        paymentRunId: current.paymentRunId,
         amountRaw: transferRequest.amountRaw.toString(),
         asset: transferRequest.asset,
       },
@@ -700,6 +690,27 @@ export async function preparePaymentOrderExecution(args: {
     transferRequestId: transferRequest.transferRequestId,
   });
 
+  const reusableExecutionRecord = await findReusablePreparedExecution({
+    workspaceId: args.workspaceId,
+    transferRequestId: transferRequest.transferRequestId,
+    executionSource: 'prepared_solana_transfer',
+  });
+  const reusableExecutionPacket = reusableExecutionRecord
+    ? getPreparedExecutionPacket(reusableExecutionRecord.metadataJson)
+    : null;
+
+  if (
+    reusableExecutionRecord
+    && reusableExecutionPacket
+    && preparedExecutionPacketUsesSource(reusableExecutionPacket, current.sourceWorkspaceAddress)
+  ) {
+    return {
+      executionRecord: serializeExecutionRecord(reusableExecutionRecord),
+      executionPacket: reusableExecutionPacket,
+      paymentOrder: await getPaymentOrderDetail(args.workspaceId, args.paymentOrderId),
+    };
+  }
+
   const executionRecord = await prisma.$transaction(async (tx) => {
     const record = await tx.executionRecord.create({
       data: {
@@ -729,7 +740,7 @@ export async function preparePaymentOrderExecution(args: {
       executionRecordId: record.executionRecordId,
     };
 
-    await tx.executionRecord.update({
+    const updatedRecord = await tx.executionRecord.update({
       where: { executionRecordId: record.executionRecordId },
       data: {
         metadataJson: {
@@ -738,6 +749,7 @@ export async function preparePaymentOrderExecution(args: {
           preparedExecution,
         },
       },
+      include: executionRecordWithExecutorInclude,
     });
 
     if (transferRequest.status === 'approved') {
@@ -789,19 +801,16 @@ export async function preparePaymentOrderExecution(args: {
       },
     });
 
-    return {
-      ...record,
-      metadataJson: {
-        paymentOrderId: current.paymentOrderId,
-        externalExecutionReference: `prepared:${current.paymentOrderId}`,
-        preparedExecution,
-      },
-    };
+    return updatedRecord;
   });
+  const executionPacket = getPreparedExecutionPacket(executionRecord.metadataJson);
+  if (!executionPacket) {
+    throw new Error('Prepared execution packet was not persisted');
+  }
 
   return {
     executionRecord: serializeExecutionRecord(executionRecord),
-    executionPacket: executionRecord.metadataJson.preparedExecution,
+    executionPacket,
     paymentOrder: await getPaymentOrderDetail(args.workspaceId, args.paymentOrderId),
   };
 }
@@ -980,180 +989,6 @@ async function createExecutionRecordForSignature(
   });
 }
 
-export async function buildPaymentOrderAuditRows(workspaceId: string, paymentOrderId: string) {
-  const detail = await getPaymentOrderDetail(workspaceId, paymentOrderId);
-  const rows = [
-    {
-      section: 'payment_request',
-      key: 'payment_request_id',
-      value: detail.paymentRequestId ?? '',
-    },
-    {
-      section: 'payment_request',
-      key: 'reason',
-      value: detail.paymentRequest?.reason ?? '',
-    },
-    {
-      section: 'payment_order',
-      key: 'payment_order_id',
-      value: detail.paymentOrderId,
-    },
-    {
-      section: 'payment_order',
-      key: 'reference',
-      value: detail.externalReference ?? detail.invoiceNumber ?? '',
-    },
-    {
-      section: 'payment_order',
-      key: 'memo',
-      value: detail.memo ?? '',
-    },
-    {
-      section: 'payment_order',
-      key: 'amount_raw',
-      value: detail.amountRaw,
-    },
-    {
-      section: 'payment_order',
-      key: 'asset',
-      value: detail.asset,
-    },
-    {
-      section: 'source',
-      key: 'source_wallet',
-      value: detail.sourceWorkspaceAddress?.address ?? '',
-    },
-    {
-      section: 'destination',
-      key: 'destination_wallet',
-      value: detail.destination.walletAddress,
-    },
-    {
-      section: 'approval',
-      key: 'approval_state',
-      value: detail.reconciliationDetail?.approvalState ?? detail.derivedState,
-    },
-    {
-      section: 'execution',
-      key: 'submitted_signature',
-      value: detail.reconciliationDetail?.latestExecution?.submittedSignature ?? '',
-    },
-    {
-      section: 'settlement',
-      key: 'match_status',
-      value: detail.reconciliationDetail?.match?.matchStatus ?? '',
-    },
-    {
-      section: 'settlement',
-      key: 'matched_amount_raw',
-      value: detail.reconciliationDetail?.match?.matchedAmountRaw ?? '',
-    },
-    {
-      section: 'exceptions',
-      key: 'exception_count',
-      value: String(detail.reconciliationDetail?.exceptions.length ?? 0),
-    },
-  ];
-
-  for (const item of detail.reconciliationDetail?.timeline ?? []) {
-    rows.push({
-      section: 'timeline',
-      key: item.timelineType,
-      value: JSON.stringify(item),
-    });
-  }
-
-  return rows;
-}
-
-export async function buildPaymentOrderProofPacket(workspaceId: string, paymentOrderId: string) {
-  const detail = await getPaymentOrderDetail(workspaceId, paymentOrderId);
-  const reconciliation = detail.reconciliationDetail;
-  const match = reconciliation?.match ?? null;
-  const latestExecution = reconciliation?.latestExecution ?? null;
-
-  return {
-    packetType: 'stablecoin_payment_proof',
-    version: 1,
-    generatedAt: new Date().toISOString(),
-    workspaceId,
-    status: deriveProofStatus(detail.derivedState, reconciliation?.requestDisplayState ?? null),
-    intent: {
-      paymentRequestId: detail.paymentRequestId,
-      paymentOrderId: detail.paymentOrderId,
-      transferRequestId: detail.transferRequestId,
-      payee: detail.payee ? {
-        payeeId: detail.payee.payeeId,
-        name: detail.payee.name,
-      } : null,
-      reference: detail.externalReference ?? detail.invoiceNumber ?? null,
-      reason: detail.paymentRequest?.reason ?? detail.memo ?? null,
-      amountRaw: detail.amountRaw,
-      asset: detail.asset,
-      dueAt: detail.dueAt,
-      createdAt: detail.createdAt,
-    },
-    parties: {
-      source: detail.sourceWorkspaceAddress ? {
-        workspaceAddressId: detail.sourceWorkspaceAddress.workspaceAddressId,
-        label: detail.sourceWorkspaceAddress.displayName,
-        walletAddress: detail.sourceWorkspaceAddress.address,
-        usdcAtaAddress: detail.sourceWorkspaceAddress.usdcAtaAddress,
-      } : null,
-      destination: {
-        destinationId: detail.destination.destinationId,
-        label: detail.destination.label,
-        walletAddress: detail.destination.walletAddress,
-        tokenAccountAddress: detail.destination.tokenAccountAddress,
-        trustState: detail.destination.trustState,
-        isInternal: detail.destination.isInternal,
-      },
-      counterparty: detail.counterparty ? {
-        counterpartyId: detail.counterparty.counterpartyId,
-        displayName: detail.counterparty.displayName,
-      } : null,
-    },
-    approval: {
-      state: reconciliation?.approvalState ?? detail.derivedState,
-      decisions: reconciliation?.approvalDecisions.map((decision) => ({
-        action: decision.action,
-        actorType: decision.actorType,
-        actorEmail: decision.actor?.email ?? null,
-        comment: decision.comment,
-        createdAt: decision.createdAt,
-      })) ?? [],
-    },
-    execution: {
-      state: latestExecution?.state ?? null,
-      executionSource: latestExecution?.executionSource ?? null,
-      submittedSignature: latestExecution?.submittedSignature ?? null,
-      submittedAt: latestExecution?.submittedAt ?? null,
-      metadataJson: latestExecution?.metadataJson ?? null,
-    },
-    settlement: {
-      state: reconciliation?.settlementState ?? null,
-      matchStatus: match?.matchStatus ?? null,
-      matchRule: match?.matchRule ?? null,
-      matchedAmountRaw: match?.matchedAmountRaw ?? null,
-      amountVarianceRaw: match?.amountVarianceRaw ?? null,
-      signature: match?.signature ?? latestExecution?.submittedSignature ?? null,
-      observedEventTime: match?.observedEventTime ?? null,
-      matchedAt: match?.matchedAt ?? null,
-      confidenceBand: match?.confidenceBand ?? null,
-    },
-    exceptions: reconciliation?.exceptions.map((exception) => ({
-      exceptionId: exception.exceptionId,
-      type: exception.exceptionType,
-      reasonCode: exception.reasonCode,
-      status: exception.status,
-      severity: exception.severity,
-      explanation: exception.explanation,
-      signature: exception.signature,
-    })) ?? [],
-    auditTrail: reconciliation?.timeline ?? [],
-  };
-}
-
 async function buildPaymentOrderReadModel(order: PaymentOrderWithRelations) {
   const primaryTransferRequest = getPrimaryTransferRequest(order);
   const reconciliationDetail = primaryTransferRequest
@@ -1166,6 +1001,7 @@ async function buildPaymentOrderReadModel(order: PaymentOrderWithRelations) {
     paymentOrderId: order.paymentOrderId,
     workspaceId: order.workspaceId,
     paymentRequestId: order.paymentRequestId,
+    paymentRunId: order.paymentRunId,
     payeeId: order.payeeId,
     destinationId: order.destinationId,
     counterpartyId: order.counterpartyId,
@@ -1201,22 +1037,6 @@ async function buildPaymentOrderReadModel(order: PaymentOrderWithRelations) {
     events: (order.events ?? []).map(serializePaymentOrderEvent),
     reconciliationDetail,
   };
-}
-
-function deriveProofStatus(derivedState: PaymentOrderState, requestDisplayState: string | null) {
-  if (derivedState === 'closed') {
-    return 'closed';
-  }
-  if (requestDisplayState === 'matched' || derivedState === 'settled') {
-    return 'complete';
-  }
-  if (requestDisplayState === 'partial' || derivedState === 'partially_settled') {
-    return 'partial';
-  }
-  if (requestDisplayState === 'exception' || derivedState === 'exception') {
-    return 'exception';
-  }
-  return 'in_progress';
 }
 
 function derivePaymentOrderState(
@@ -1359,6 +1179,50 @@ function getPrimaryTransferRequest(order: {
     (left, right) => right.createdAt.getTime() - left.createdAt.getTime(),
   )[0] ?? null;
 }
+
+async function findReusablePreparedExecution(args: {
+  workspaceId: string;
+  transferRequestId: string;
+  executionSource: string;
+}) {
+  return prisma.executionRecord.findFirst({
+    where: {
+      workspaceId: args.workspaceId,
+      transferRequestId: args.transferRequestId,
+      executionSource: args.executionSource,
+      state: 'ready_for_execution',
+      submittedSignature: null,
+    },
+    include: executionRecordWithExecutorInclude,
+    orderBy: { createdAt: 'desc' },
+  });
+}
+
+function getPreparedExecutionPacket(metadataJson: unknown) {
+  if (!isRecordLike(metadataJson)) {
+    return null;
+  }
+
+  return metadataJson.preparedExecution ?? null;
+}
+
+function preparedExecutionPacketUsesSource(packet: unknown, source: WorkspaceAddress | null) {
+  if (!source || !isRecordLike(packet) || !isRecordLike(packet.source)) {
+    return false;
+  }
+
+  return packet.source.walletAddress === source.address;
+}
+
+const executionRecordWithExecutorInclude = {
+  executorUser: {
+    select: {
+      userId: true,
+      email: true,
+      displayName: true,
+    },
+  },
+} satisfies Prisma.ExecutionRecordInclude;
 
 const paymentOrderInclude = {
   paymentRequest: {

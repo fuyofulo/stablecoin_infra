@@ -40,6 +40,7 @@ model User {
   exportJobs                ExportJob[]
   paymentOrdersCreated      PaymentOrder[]    @relation("PaymentOrderCreatedByUser")
   paymentRequestsCreated    PaymentRequest[]  @relation("PaymentRequestRequestedByUser")
+  paymentRunsCreated        PaymentRun[]      @relation("PaymentRunCreatedByUser")
 
   @@map("users")
 }
@@ -92,6 +93,7 @@ model Workspace {
   exceptionNotes       ExceptionNote[]
   exceptionStates      ExceptionState[]
   exportJobs           ExportJob[]
+  paymentRuns          PaymentRun[]
   paymentOrders        PaymentOrder[]
   paymentOrderEvents   PaymentOrderEvent[]
   paymentRequests      PaymentRequest[]
@@ -121,6 +123,7 @@ model WorkspaceAddress {
   outboundTransferRequests TransferRequest[] @relation("TransferRequestSourceAddress")
   inboundTransferRequests  TransferRequest[] @relation("TransferRequestDestinationAddress")
   sourcePaymentOrders      PaymentOrder[]    @relation("PaymentOrderSourceAddress")
+  sourcePaymentRuns        PaymentRun[]      @relation("PaymentRunSourceAddress")
 
   @@unique([workspaceId, address])
   @@map("workspace_addresses")
@@ -218,6 +221,7 @@ model PaymentOrder {
   paymentOrderId             String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid @map("payment_order_id")
   workspaceId                String            @db.Uuid @map("workspace_id")
   paymentRequestId           String?           @unique @db.Uuid @map("payment_request_id")
+  paymentRunId               String?           @db.Uuid @map("payment_run_id")
   payeeId                    String?           @db.Uuid @map("payee_id")
   destinationId              String            @db.Uuid @map("destination_id")
   counterpartyId             String?           @db.Uuid @map("counterparty_id")
@@ -237,6 +241,7 @@ model PaymentOrder {
   updatedAt                  DateTime          @updatedAt @db.Timestamptz(6) @map("updated_at")
   workspace                  Workspace         @relation(fields: [workspaceId], references: [workspaceId], onDelete: Cascade)
   paymentRequest             PaymentRequest?   @relation(fields: [paymentRequestId], references: [paymentRequestId], onDelete: SetNull)
+  paymentRun                 PaymentRun?       @relation(fields: [paymentRunId], references: [paymentRunId], onDelete: SetNull)
   payee                      Payee?            @relation(fields: [payeeId], references: [payeeId], onDelete: SetNull)
   destination                Destination       @relation(fields: [destinationId], references: [destinationId], onDelete: Restrict)
   counterparty               Counterparty?     @relation(fields: [counterpartyId], references: [counterpartyId], onDelete: SetNull)
@@ -247,6 +252,7 @@ model PaymentOrder {
 
   @@index([workspaceId, state, createdAt(sort: Desc)])
   @@index([paymentRequestId])
+  @@index([paymentRunId, createdAt(sort: Desc)])
   @@index([payeeId, createdAt(sort: Desc)])
   @@index([destinationId, createdAt(sort: Desc)])
   @@index([sourceWorkspaceAddressId, createdAt(sort: Desc)])
@@ -256,6 +262,7 @@ model PaymentOrder {
 model PaymentRequest {
   paymentRequestId  String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid @map("payment_request_id")
   workspaceId       String        @db.Uuid @map("workspace_id")
+  paymentRunId      String?       @db.Uuid @map("payment_run_id")
   payeeId           String?       @db.Uuid @map("payee_id")
   destinationId     String        @db.Uuid @map("destination_id")
   counterpartyId    String?       @db.Uuid @map("counterparty_id")
@@ -270,6 +277,7 @@ model PaymentRequest {
   createdAt         DateTime      @default(now()) @db.Timestamptz(6) @map("created_at")
   updatedAt         DateTime      @updatedAt @db.Timestamptz(6) @map("updated_at")
   workspace         Workspace     @relation(fields: [workspaceId], references: [workspaceId], onDelete: Cascade)
+  paymentRun        PaymentRun?   @relation(fields: [paymentRunId], references: [paymentRunId], onDelete: SetNull)
   payee             Payee?        @relation(fields: [payeeId], references: [payeeId], onDelete: SetNull)
   destination       Destination   @relation(fields: [destinationId], references: [destinationId], onDelete: Restrict)
   counterparty      Counterparty? @relation(fields: [counterpartyId], references: [counterpartyId], onDelete: SetNull)
@@ -277,6 +285,7 @@ model PaymentRequest {
   paymentOrder      PaymentOrder?
 
   @@index([workspaceId, state, createdAt(sort: Desc)])
+  @@index([paymentRunId, createdAt(sort: Desc)])
   @@index([payeeId, createdAt(sort: Desc)])
   @@index([destinationId, createdAt(sort: Desc)])
   @@index([counterpartyId, createdAt(sort: Desc)])
@@ -304,6 +313,28 @@ model Payee {
   @@index([workspaceId, status, createdAt(sort: Desc)])
   @@index([defaultDestinationId, createdAt(sort: Desc)])
   @@map("payees")
+}
+
+model PaymentRun {
+  paymentRunId             String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid @map("payment_run_id")
+  workspaceId              String            @db.Uuid @map("workspace_id")
+  sourceWorkspaceAddressId String?           @db.Uuid @map("source_workspace_address_id")
+  runName                  String            @map("run_name")
+  inputSource              String            @default("manual") @map("input_source")
+  state                    String            @default("draft")
+  metadataJson             Json              @default("{}") @map("metadata_json")
+  createdByUserId          String?           @db.Uuid @map("created_by_user_id")
+  createdAt                DateTime          @default(now()) @db.Timestamptz(6) @map("created_at")
+  updatedAt                DateTime          @updatedAt @db.Timestamptz(6) @map("updated_at")
+  workspace                Workspace         @relation(fields: [workspaceId], references: [workspaceId], onDelete: Cascade)
+  sourceWorkspaceAddress   WorkspaceAddress? @relation("PaymentRunSourceAddress", fields: [sourceWorkspaceAddressId], references: [workspaceAddressId], onDelete: SetNull)
+  createdByUser            User?             @relation("PaymentRunCreatedByUser", fields: [createdByUserId], references: [userId], onDelete: SetNull)
+  paymentRequests          PaymentRequest[]
+  paymentOrders            PaymentOrder[]
+
+  @@index([workspaceId, state, createdAt(sort: Desc)])
+  @@index([sourceWorkspaceAddressId, createdAt(sort: Desc)])
+  @@map("payment_runs")
 }
 
 model PaymentOrderEvent {

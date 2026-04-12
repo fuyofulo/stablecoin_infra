@@ -10,6 +10,11 @@ export const SOLANA_CHAIN = 'solana';
 export const USDC_ASSET = 'usdc';
 export const USDC_DECIMALS = 6;
 export const USDC_MINT = new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
+export const SOLANA_SIGNATURE_PATTERN = /^[1-9A-HJ-NP-Za-km-z]{64,128}$/;
+
+export function isSolanaSignatureLike(value: string) {
+  return SOLANA_SIGNATURE_PATTERN.test(value);
+}
 
 export function deriveUsdcAtaForWallet(walletAddress: string) {
   const owner = new PublicKey(walletAddress);

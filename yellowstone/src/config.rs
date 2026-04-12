@@ -66,14 +66,12 @@ impl AppConfig {
 }
 
 fn non_empty_env(key: &str) -> Option<String> {
-    env::var(key)
-        .ok()
-        .and_then(|value| {
-            let trimmed = value.trim().to_string();
-            if trimmed.is_empty() {
-                None
-            } else {
-                Some(trimmed)
-            }
-        })
+    env::var(key).ok().and_then(|value| {
+        let trimmed = value.trim().to_string();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed)
+        }
+    })
 }

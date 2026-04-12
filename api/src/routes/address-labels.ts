@@ -20,7 +20,7 @@ const createAddressLabelSchema = z.object({
   roleTags: z.array(z.string().trim().min(1)).default([]),
   source: z.string().trim().min(1).default('manual'),
   sourceRef: z.string().trim().min(1).optional(),
-  confidence: z.enum(['seeded', 'verified', 'operator', 'unverified']).default('operator'),
+  confidence: z.enum(['seeded', 'verified', 'operator', 'unverified', 'unresolved']).default('operator'),
   isActive: z.boolean().default(true),
   notes: z.string().trim().min(1).optional(),
 });

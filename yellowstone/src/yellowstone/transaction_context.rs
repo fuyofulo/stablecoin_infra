@@ -79,7 +79,11 @@ pub fn build_transaction_context(
         .map(|header| header.num_required_signatures as usize)
         .unwrap_or_default()
         .min(account_keys.len());
-    let signers = account_keys.iter().take(signer_count).cloned().collect::<Vec<_>>();
+    let signers = account_keys
+        .iter()
+        .take(signer_count)
+        .cloned()
+        .collect::<Vec<_>>();
 
     let mut instruction_contexts = Vec::new();
     for (instruction_index, instruction) in message.instructions.iter().enumerate() {
@@ -91,7 +95,11 @@ pub fn build_transaction_context(
             instruction_index: instruction_index as u32,
             inner_instruction_index: None,
             program_id,
-            account_indices: instruction.accounts.iter().map(|value| *value as u32).collect(),
+            account_indices: instruction
+                .accounts
+                .iter()
+                .map(|value| *value as u32)
+                .collect(),
             data: instruction.data.clone(),
         });
     }
@@ -106,7 +114,11 @@ pub fn build_transaction_context(
                 instruction_index: inner_set.index,
                 inner_instruction_index: Some(inner_instruction_index as u32),
                 program_id,
-                account_indices: instruction.accounts.iter().map(|value| *value as u32).collect(),
+                account_indices: instruction
+                    .accounts
+                    .iter()
+                    .map(|value| *value as u32)
+                    .collect(),
                 data: instruction.data.clone(),
             });
         }

@@ -132,7 +132,11 @@ mod tests {
     use super::*;
     use chrono::Duration;
 
-    fn request(id: &str, requested_at: DateTime<Utc>, amount_raw: i128) -> WorkspaceTransferRequestMatch {
+    fn request(
+        id: &str,
+        requested_at: DateTime<Utc>,
+        amount_raw: i128,
+    ) -> WorkspaceTransferRequestMatch {
         WorkspaceTransferRequestMatch {
             transfer_request_id: id.to_string(),
             workspace_id: "workspace-1".to_string(),
