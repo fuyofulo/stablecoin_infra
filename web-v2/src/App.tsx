@@ -2,6 +2,7 @@ import type { FormEvent, ReactNode } from 'react';
 import { useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import { Link, Navigate, Route, Routes, useLocation, useNavigate, useParams } from 'react-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { AppSidebar } from './Sidebar';
 import { api } from './api';
 import type {
   ApprovalPolicy,
@@ -119,45 +120,7 @@ function AppShell({ session }: { session: AuthenticatedSession }) {
 
   return (
     <div className="app-shell">
-      <aside className="sidebar">
-        <div className="brand-block">
-          <span className="brand-mark" />
-          <div>
-            <strong>Stablecoin Ops</strong>
-            <span>Payment control</span>
-          </div>
-        </div>
-        <nav className="sidebar-nav" aria-label="Workspace navigation">
-          <NavGroup title="Workspaces">
-            {workspaces.map(({ organization, workspace }) => (
-              <div className="workspace-nav-block" key={workspace.workspaceId}>
-                <Link className="workspace-nav-title" to={`/workspaces/${workspace.workspaceId}`}>
-                  <span>{workspace.workspaceName}</span>
-                  <small>{organization.organizationName}</small>
-                </Link>
-                <div className="workspace-nav-links">
-                  <Link to={`/workspaces/${workspace.workspaceId}/runs`}>Runs</Link>
-                  <Link to={`/workspaces/${workspace.workspaceId}/requests`}>Requests</Link>
-                  <Link to={`/workspaces/${workspace.workspaceId}/payments`}>Payments</Link>
-                  <Link to={`/workspaces/${workspace.workspaceId}/approvals`}>Approvals</Link>
-                  <Link to={`/workspaces/${workspace.workspaceId}/execution`}>Execution</Link>
-                  <Link to={`/workspaces/${workspace.workspaceId}/settlement`}>Settlement</Link>
-                  <Link to={`/workspaces/${workspace.workspaceId}/exceptions`}>Exceptions</Link>
-                  <Link to={`/workspaces/${workspace.workspaceId}/proofs`}>Proofs</Link>
-                  <Link to={`/workspaces/${workspace.workspaceId}/registry`}>Address book</Link>
-                  <Link to={`/workspaces/${workspace.workspaceId}/policy`}>Policy</Link>
-                  <Link to={`/workspaces/${workspace.workspaceId}/ops`}>Ops health</Link>
-                </div>
-              </div>
-            ))}
-            {!workspaces.length ? <Link to="/setup"><span>Create workspace</span><small>Start in v2</small></Link> : null}
-          </NavGroup>
-        </nav>
-        <div className="sidebar-footer">
-          <span>{session.user.email}</span>
-          <button className="button button-secondary button-small" onClick={() => void logout()} type="button">Logout</button>
-        </div>
-      </aside>
+      <AppSidebar session={session} workspaceContexts={workspaces} onLogout={logout} />
       <main className="main-surface">
         <Routes>
           <Route path="/" element={<HomeRedirect session={session} />} />
@@ -2794,15 +2757,6 @@ function ScreenState({ title, description }: { title: string; description: strin
     <main className="screen-state">
       <EmptyState title={title} description={description} />
     </main>
-  );
-}
-
-function NavGroup({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <section>
-      <p>{title}</p>
-      {children}
-    </section>
   );
 }
 
