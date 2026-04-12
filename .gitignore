@@ -1,4 +1,5 @@
 .DS_Store
+.playwright-mcp/
 
 api/node_modules/
 api/dist/
@@ -11,5 +12,11 @@ web/*.tsbuildinfo
 web/vite.config.js
 web/vite.config.d.ts
 
-yellowstone/target/
+web-v2/node_modules/
+web-v2/dist/
+web-v2/.env
+web-v2/*.tsbuildinfo
+web-v2/vite.config.js
+web-v2/vite.config.d.ts
 
+yellowstone/target/

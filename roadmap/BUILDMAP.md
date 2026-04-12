@@ -206,6 +206,27 @@ The product is complete when an operator can do the full loop in one system:
 7. resolve exceptions
 8. export the final record
 
+## Frontend UX Redesign Track
+
+After Phase F, the main product risk is no longer whether the backend can model the workflow.
+
+The main product risk is whether an operator can understand and run the workflow without knowing the internal objects.
+
+Frontend redesign must therefore start from product journey and information architecture, not visual polish.
+
+Doc:
+
+- [frontend-master-ui-ux-plan.md](/Users/fuyofulo/code/stablecoin_intelligence/roadmap/frontend-master-ui-ux-plan.md)
+
+Required direction:
+
+- redesign around `request -> approval -> execution -> settlement -> proof`
+- give payment runs their own pages
+- give individual payments their own pages
+- reduce modal-driven core work
+- make proof export a first-class product surface
+- use a calm institutional finance UI inspired by Altitude's typography, spacing, and visual restraint
+
 ## Phase Exit Rule
 
 Each phase should be considered complete only when it satisfies three conditions:

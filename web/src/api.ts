@@ -13,6 +13,7 @@ import type {
   PaymentExecutionPreparation,
   PaymentOrder,
   PaymentProofPacket,
+  Payee,
   PaymentRequest,
   PaymentRun,
   PaymentRunExecutionPreparation,
@@ -496,6 +497,48 @@ export const api = {
     return request<{ servedAt: string; items: PaymentRequest[] }>(
       `/workspaces/${workspaceId}/payment-requests?${params.toString()}`,
     );
+  },
+  listPayees(workspaceId: string, status?: Payee['status']) {
+    const params = new URLSearchParams({ limit: '100' });
+    if (status) {
+      params.set('status', status);
+    }
+    return request<{ servedAt: string; items: Payee[] }>(
+      `/workspaces/${workspaceId}/payees?${params.toString()}`,
+    );
+  },
+  createPayee(
+    workspaceId: string,
+    input: {
+      name: string;
+      defaultDestinationId?: string | null;
+      externalReference?: string | null;
+      status?: string;
+      notes?: string | null;
+      metadataJson?: Record<string, unknown>;
+    },
+  ) {
+    return request<Payee>(`/workspaces/${workspaceId}/payees`, {
+      method: 'POST',
+      body: JSON.stringify(input),
+    });
+  },
+  updatePayee(
+    workspaceId: string,
+    payeeId: string,
+    input: {
+      name?: string;
+      defaultDestinationId?: string | null;
+      externalReference?: string | null;
+      status?: string;
+      notes?: string | null;
+      metadataJson?: Record<string, unknown>;
+    },
+  ) {
+    return request<Payee>(`/workspaces/${workspaceId}/payees/${payeeId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(input),
+    });
   },
   listPaymentRuns(workspaceId: string) {
     return request<{ servedAt: string; items: PaymentRun[] }>(`/workspaces/${workspaceId}/payment-runs`);
