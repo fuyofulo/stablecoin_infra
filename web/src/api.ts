@@ -406,6 +406,11 @@ export const api = {
       `/workspaces/${workspaceId}/exceptions?${params.toString()}`,
     );
   },
+  getWorkspaceException(workspaceId: string, exceptionId: string) {
+    return request<ExceptionItem & { notes: ExceptionNote[] }>(
+      `/workspaces/${workspaceId}/exceptions/${exceptionId}`,
+    );
+  },
   applyExceptionAction(
     workspaceId: string,
     exceptionId: string,
