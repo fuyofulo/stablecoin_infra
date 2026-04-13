@@ -493,10 +493,12 @@ export type PaymentRun = {
   totals: {
     orderCount: number;
     actionableCount: number;
+    cancelledCount: number;
     totalAmountRaw: string;
     settledCount: number;
     exceptionCount: number;
     pendingApprovalCount: number;
+    approvedCount: number;
     readyCount: number;
   };
   paymentOrders?: PaymentOrder[];

@@ -409,6 +409,7 @@ function PaymentsPage({ session }: { session: AuthenticatedSession }) {
   const queryClient = useQueryClient();
   const [message, setMessage] = useState<string | null>(null);
   const [importOpen, setImportOpen] = useState(false);
+  const [requestModalOpen, setRequestModalOpen] = useState(false);
   const [importStep, setImportStep] = useState<'edit' | 'preview'>('edit');
   const [csvText, setCsvText] = useState('');
   const [runName, setRunName] = useState('');
@@ -427,6 +428,16 @@ function PaymentsPage({ session }: { session: AuthenticatedSession }) {
   const addressesQuery = useQuery({
     queryKey: queryKeys(workspaceId).addresses,
     queryFn: () => api.listAddresses(workspaceId!),
+    enabled: Boolean(workspaceId),
+  });
+  const destinationsQuery = useQuery({
+    queryKey: queryKeys(workspaceId).destinations,
+    queryFn: () => api.listDestinations(workspaceId!),
+    enabled: Boolean(workspaceId),
+  });
+  const payeesQuery = useQuery({
+    queryKey: queryKeys(workspaceId).payees,
+    queryFn: () => api.listPayees(workspaceId!),
     enabled: Boolean(workspaceId),
   });
   const csvPreview = useMemo(() => parseCsvPreview(csvText, 15), [csvText]);
@@ -455,6 +466,36 @@ function PaymentsPage({ session }: { session: AuthenticatedSession }) {
     },
     onError: (error) => setMessage(error instanceof Error ? error.message : 'Unable to import CSV.'),
   });
+  const createRequestMutation = useMutation({
+    mutationFn: async (formData: FormData) => {
+      const destinationId = getFormString(formData, 'destinationId');
+      const amount = getFormString(formData, 'amount');
+      const reason = getFormString(formData, 'reason');
+      if (!destinationId || !amount || !reason) {
+        throw new Error('Destination, amount, and reason are required.');
+      }
+      return api.createPaymentRequest(workspaceId!, {
+        payeeId: getOptionalFormString(formData, 'payeeId') ?? undefined,
+        destinationId,
+        amountRaw: usdcToRaw(amount),
+        reason,
+        externalReference: getOptionalFormString(formData, 'externalReference') ?? undefined,
+        dueAt: normalizeDateInput(getOptionalFormString(formData, 'dueAt')),
+        createOrderNow: true,
+        sourceWorkspaceAddressId: getOptionalFormString(formData, 'sourceWorkspaceAddressId') ?? undefined,
+        submitOrderNow: true,
+      });
+    },
+    onSuccess: async () => {
+      setMessage('Payment request created.');
+      setRequestModalOpen(false);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys(workspaceId).paymentRequests }),
+        queryClient.invalidateQueries({ queryKey: queryKeys(workspaceId).paymentOrders }),
+      ]);
+    },
+    onError: (error) => setMessage(error instanceof Error ? error.message : 'Unable to create request.'),
+  });
 
   if (!workspaceId || !workspace) {
     return <ScreenState title="Workspace unavailable" description="Choose a workspace from the sidebar." />;
@@ -464,6 +505,8 @@ function PaymentsPage({ session }: { session: AuthenticatedSession }) {
   const standaloneOrders = paymentOrders.filter((order) => !order.paymentRunId);
   const paymentRuns = paymentRunsQuery.data?.items ?? [];
   const addresses = addressesQuery.data?.items ?? [];
+  const destinations = destinationsQuery.data?.items ?? [];
+  const payees = payeesQuery.data?.items ?? [];
   const unifiedRows = [
     ...standaloneOrders.map((order) => ({
       kind: 'payment' as const,
@@ -499,7 +542,7 @@ function PaymentsPage({ session }: { session: AuthenticatedSession }) {
       action={
         <div className="action-cluster">
           <button className="button button-secondary" type="button" onClick={() => setImportOpen(true)}>Import CSV batch</button>
-          <Link className="button button-primary" to={`/workspaces/${workspaceId}/requests`}>New payment request</Link>
+          <button className="button button-primary" type="button" onClick={() => setRequestModalOpen(true)}>New payment request</button>
         </div>
       }
     >
@@ -623,6 +666,60 @@ function PaymentsPage({ session }: { session: AuthenticatedSession }) {
             </div>
           </div>
         )}
+      </Modal>
+      <Modal open={requestModalOpen} onClose={() => setRequestModalOpen(false)} title="New payment request">
+        <form
+          className="form-stack"
+          onSubmit={(event) => {
+            event.preventDefault();
+            createRequestMutation.mutate(new FormData(event.currentTarget));
+          }}
+        >
+          <label className="field">
+            Payee
+            <select name="payeeId" defaultValue="">
+              <option value="">Optional</option>
+              {payees.map((payee) => <option key={payee.payeeId} value={payee.payeeId}>{payee.name}</option>)}
+            </select>
+          </label>
+          <label className="field">
+            Destination
+            <select name="destinationId" required defaultValue="">
+              <option value="" disabled>Select destination</option>
+              {destinations.filter((destination) => destination.isActive).map((destination) => (
+                <option key={destination.destinationId} value={destination.destinationId}>{destination.label} / {destination.trustState}</option>
+              ))}
+            </select>
+          </label>
+          <label className="field">
+            Source wallet
+            <select name="sourceWorkspaceAddressId" defaultValue="">
+              <option value="">Optional until execution</option>
+              {addresses.filter((address) => address.isActive).map((address) => (
+                <option key={address.workspaceAddressId} value={address.workspaceAddressId}>{walletLabel(address)}</option>
+              ))}
+            </select>
+          </label>
+          <label className="field">
+            Amount
+            <input name="amount" placeholder="0.01" required />
+          </label>
+          <label className="field">
+            Reason
+            <input name="reason" placeholder="Pay Acme Corp for INV-1001" required />
+          </label>
+          <label className="field">
+            Reference
+            <input name="externalReference" placeholder="INV-1001" />
+          </label>
+          <label className="field">
+            Due date
+            <input name="dueAt" type="date" />
+          </label>
+          <button className="button button-primary" disabled={createRequestMutation.isPending || !destinations.length} type="submit">
+            {createRequestMutation.isPending ? 'Creating...' : 'Create request'}
+          </button>
+        </form>
       </Modal>
     </PageFrame>
   );
@@ -982,6 +1079,14 @@ function PaymentRunDetailPage({ session }: { session: AuthenticatedSession }) {
   const [selectedWalletId, setSelectedWalletId] = useState<string | undefined>();
   const [wallets, setWallets] = useState<BrowserWalletOption[]>(() => discoverSolanaWallets());
   const [message, setMessage] = useState<string | null>(null);
+  const [expandedRunLifecycleStages, setExpandedRunLifecycleStages] = useState<Record<'imported' | 'reviewed' | 'approved' | 'submitted' | 'settled' | 'proven', boolean>>({
+    imported: false,
+    reviewed: false,
+    approved: false,
+    submitted: false,
+    settled: false,
+    proven: false,
+  });
   useEffect(() => subscribeSolanaWallets(setWallets), []);
   const workspace = findWorkspace(session, workspaceId);
   const addressesQuery = useQuery({
@@ -1135,6 +1240,37 @@ function PaymentRunDetailPage({ session }: { session: AuthenticatedSession }) {
       };
     })
     .sort((a, b) => b.ratio - a.ratio);
+  const runWorkflowSteps = buildRunWorkflow(run);
+  const runStageByLabel = new Map(runWorkflowSteps.map((step) => [step.label.toLowerCase(), step]));
+  const approvalEvents = runOrders
+    .flatMap((order) => (order.reconciliationDetail?.approvalDecisions ?? []).map((decision) => ({
+      order,
+      decision,
+    })))
+    .sort((a, b) => new Date(b.decision.createdAt).getTime() - new Date(a.decision.createdAt).getTime());
+  const resolvedApprovalEvents = approvalEvents.filter(({ decision }) => ['approve', 'reject', 'escalate'].includes(decision.action));
+  const submissionEvents = runOrders
+    .flatMap((order) => {
+      const latestExecution = order.reconciliationDetail?.latestExecution;
+      if (!latestExecution?.submittedSignature) return [];
+      return [{
+        order,
+        signature: latestExecution.submittedSignature,
+        submittedAt: latestExecution.submittedAt ?? latestExecution.createdAt ?? order.updatedAt,
+      }];
+    })
+    .sort((a, b) => new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime());
+  const settlementEvents = runOrders
+    .flatMap((order) => {
+      const match = order.reconciliationDetail?.match;
+      if (!match?.matchedAt) return [];
+      return [{
+        order,
+        matchStatus: match.matchStatus,
+        matchedAt: match.matchedAt,
+      }];
+    })
+    .sort((a, b) => new Date(b.matchedAt).getTime() - new Date(a.matchedAt).getTime());
 
   return (
     <PageFrame
@@ -1168,7 +1304,7 @@ function PaymentRunDetailPage({ session }: { session: AuthenticatedSession }) {
         </div>
       }
     >
-      <RunProgressTracker steps={buildRunWorkflow(run)} />
+      <RunProgressTracker steps={runWorkflowSteps} />
       {message ? <div className="notice">{message}</div> : null}
       <section className="panel" id="run-payments">
         <SectionHeader title="Run payments" description="Rows reconcile independently even when execution is prepared as one batch packet." />
@@ -1178,6 +1314,119 @@ function PaymentRunDetailPage({ session }: { session: AuthenticatedSession }) {
           onExportProof={(order) => orderProofMutation.mutate(order.paymentOrderId)}
           exportPending={orderProofMutation.isPending}
         />
+      </section>
+      <section className="panel panel-spaced">
+        <SectionHeader title="Lifecycle details" description="Stage-by-stage summary for this batch run." />
+        <div className="vertical-timeline">
+          {runWorkflowSteps.map((step) => {
+            const stageKey = step.label.startsWith('Import')
+              ? 'imported'
+              : step.label.startsWith('Review')
+                ? 'reviewed'
+                : step.label.startsWith('Approve')
+                  ? 'approved'
+                  : step.label.startsWith('Submit')
+                    ? 'submitted'
+                    : step.label.startsWith('Settle')
+                      ? 'settled'
+                      : 'proven';
+            return (
+            <article className={`vertical-timeline-item vertical-timeline-item-${step.state}`} key={step.label}>
+              <span className="vertical-timeline-marker" />
+              <div className="vertical-timeline-content">
+                <div className="vertical-timeline-title-row">
+                  <strong>{step.label}</strong>
+                  <button
+                    className="timeline-inline-toggle"
+                    onClick={() => {
+                      setExpandedRunLifecycleStages((s) => ({ ...s, [stageKey]: !s[stageKey] }));
+                    }}
+                    type="button"
+                    aria-label={expandedRunLifecycleStages[stageKey] ? `Collapse ${step.label} details` : `Expand ${step.label} details`}
+                  >
+                    {expandedRunLifecycleStages[stageKey] ? '▾' : '▸'}
+                  </button>
+                </div>
+                <p>{step.subtext}</p>
+                {step.label === 'Imported' && expandedRunLifecycleStages.imported ? (
+                  <CompactStageEvents
+                    items={[
+                      {
+                        title: 'Run created',
+                        body: `Imported ${run.totals.orderCount} row(s) into ${run.runName}.`,
+                        time: run.createdAt,
+                      },
+                    ]}
+                  />
+                ) : null}
+                {step.label === 'Reviewed' && expandedRunLifecycleStages.reviewed ? (
+                  <CompactStageEvents
+                    items={[
+                      {
+                        title: 'Review snapshot',
+                        body: `${run.totals.orderCount} total rows / ${run.totals.pendingApprovalCount} awaiting approval.`,
+                        time: run.updatedAt,
+                      },
+                    ]}
+                  />
+                ) : null}
+                {(step.label === 'Approved' || step.label === 'Approve') && expandedRunLifecycleStages.approved ? (
+                  resolvedApprovalEvents.length ? (
+                    <CompactStageEvents
+                      items={resolvedApprovalEvents.map(({ order, decision }) => ({
+                        title: `${decision.action.replaceAll('_', ' ')} · ${order.payee?.name ?? order.destination.label}`,
+                        body: `${decision.actorUser?.email ?? decision.actorType} · ${order.externalReference ?? order.invoiceNumber ?? 'No reference'}`,
+                        time: decision.createdAt,
+                      }))}
+                    />
+                  ) : (
+                    <p>No resolved approval decisions yet.</p>
+                  )
+                ) : null}
+                {(step.label === 'Submit' || step.label === 'Submitted') && expandedRunLifecycleStages.submitted ? (
+                  submissionEvents.length ? (
+                    <CompactStageEvents
+                      items={submissionEvents.map((event) => ({
+                        title: `${event.order.payee?.name ?? event.order.destination.label}`,
+                        body: `Signature ${shortenAddress(event.signature, 10, 8)}`,
+                        time: event.submittedAt,
+                      }))}
+                    />
+                  ) : (
+                    <p>No signatures submitted yet.</p>
+                  )
+                ) : null}
+                {(step.label === 'Settle' || step.label === 'Settled') && expandedRunLifecycleStages.settled ? (
+                  settlementEvents.length ? (
+                    <CompactStageEvents
+                      items={settlementEvents.map((event) => ({
+                        title: `${event.order.payee?.name ?? event.order.destination.label}`,
+                        body: event.matchStatus.replaceAll('_', ' '),
+                        time: event.matchedAt,
+                      }))}
+                    />
+                  ) : (
+                    <p>No settlement matches yet.</p>
+                  )
+                ) : null}
+                {(step.label === 'Prove' || step.label === 'Proven') && expandedRunLifecycleStages.proven ? (
+                  <CompactStageEvents
+                    items={[
+                      {
+                        title: runStageByLabel.get('proven')?.state === 'complete' ? 'Proof ready' : 'Proof pending',
+                        body: runStageByLabel.get('proven')?.state === 'complete'
+                          ? 'Run proof packet can be exported.'
+                          : 'Proof becomes ready after settlement completes.',
+                        time: run.updatedAt,
+                      },
+                    ]}
+                  />
+                ) : null}
+              </div>
+            </article>
+            );
+          })}
+        </div>
       </section>
       <Modal
         open={executionModalOpen}
@@ -3945,15 +4194,44 @@ function summarizePayment(order: PaymentOrder) {
 }
 
 function buildWorkflow(order: PaymentOrder) {
-  const states: PaymentOrderState[] = ['draft', 'pending_approval', 'ready_for_execution', 'execution_recorded', 'settled'];
-  const currentIndex = Math.max(states.indexOf(order.derivedState), 0);
-  const blocked = order.derivedState === 'exception' || order.derivedState === 'partially_settled' || order.derivedState === 'cancelled';
+  if (order.derivedState === 'cancelled') {
+    return [
+      { label: 'Imported', subtext: '1 row', state: 'complete' as const },
+      { label: 'Reviewed', subtext: 'Reviewed', state: 'complete' as const },
+      { label: 'Approval', subtext: 'Rejected', state: 'blocked' as const },
+      { label: 'Submit', subtext: 'Not started', state: 'pending' as const },
+      { label: 'Settle', subtext: 'Waiting', state: 'pending' as const },
+      { label: 'Prove', subtext: 'Pending', state: 'pending' as const },
+    ];
+  }
+
+  const currentIndexMap: Record<PaymentOrderState, number> = {
+    draft: 1,
+    pending_approval: 2,
+    approved: 3,
+    ready_for_execution: 3,
+    execution_recorded: 4,
+    settled: 5,
+    partially_settled: 4,
+    exception: 4,
+    cancelled: 4,
+    closed: 5,
+  };
+  const currentIndex = currentIndexMap[order.derivedState] ?? 1;
+  const blocked = order.derivedState === 'exception' || order.derivedState === 'partially_settled';
+  const reviewState = stepState(1, currentIndex, blocked);
+  const approveState = stepState(2, currentIndex, blocked);
+  const submitState = stepState(3, currentIndex, blocked);
+  const settleState = blocked ? ('blocked' as const) : stepState(4, currentIndex, false);
+  const proveState = order.derivedState === 'settled' || order.derivedState === 'closed' ? ('complete' as const) : blocked ? ('blocked' as const) : ('pending' as const);
+  const tenseLabel = (complete: boolean, past: string, present: string) => (complete ? past : present);
   return [
-    { label: 'Request', subtext: 'Intent captured', state: 'complete' as const },
-    { label: 'Approval', subtext: getApprovalLabel(order), state: stepState(1, currentIndex, blocked) },
-    { label: 'Execution', subtext: getExecutionLabel(order), state: stepState(2, currentIndex, blocked) },
-    { label: 'Settlement', subtext: getSettlementLabel(order), state: blocked ? 'blocked' as const : stepState(4, currentIndex, false) },
-    { label: 'Proof', subtext: order.derivedState === 'settled' || order.derivedState === 'closed' ? 'Ready' : 'Pending', state: order.derivedState === 'settled' || order.derivedState === 'closed' ? 'complete' as const : 'pending' as const },
+    { label: 'Imported', subtext: '1 row', state: 'complete' as const },
+    { label: tenseLabel(reviewState === 'complete', 'Reviewed', 'Review'), subtext: reviewState === 'complete' ? 'Reviewed' : 'Review pending', state: reviewState },
+    { label: tenseLabel(approveState === 'complete', 'Approved', 'Approve'), subtext: getApprovalLabel(order), state: approveState },
+    { label: tenseLabel(submitState === 'complete', 'Submitted', 'Submit'), subtext: getExecutionLabel(order), state: submitState },
+    { label: tenseLabel(settleState === 'complete', 'Settled', 'Settle'), subtext: getSettlementLabel(order), state: settleState },
+    { label: tenseLabel(proveState === 'complete', 'Proven', 'Prove'), subtext: proveState === 'complete' ? 'Ready' : 'Pending', state: proveState },
   ];
 }
 
@@ -3961,7 +4239,7 @@ function buildRunWorkflow(run: PaymentRun) {
   const state = run.derivedState;
   const blocked = state === 'exception' || state === 'partially_settled' || state === 'cancelled';
   const settled = state === 'settled' || state === 'closed';
-  const approvedDone = run.totals.readyCount > 0 || settled || state === 'execution_recorded' || state === 'exception' || state === 'partially_settled';
+  const approvedDone = run.totals.approvedCount > 0 || settled || state === 'execution_recorded' || state === 'exception' || state === 'partially_settled';
   const submittedDone = ['execution_recorded', 'partially_settled', 'settled', 'closed', 'exception'].includes(state);
   const reviewedCurrent = !approvedDone && run.totals.pendingApprovalCount > 0;
   const submittedCurrent = approvedDone && !submittedDone && !blocked;
@@ -3972,6 +4250,13 @@ function buildRunWorkflow(run: PaymentRun) {
   const settledState = blocked ? ('blocked' as const) : settled ? ('complete' as const) : settledCurrent ? ('current' as const) : ('pending' as const);
   const provenState = settled ? ('complete' as const) : ('pending' as const);
   const tenseLabel = (complete: boolean, past: string, present: string) => (complete ? past : present);
+  const approvedRows = run.totals.approvedCount;
+  const rejectedRows = run.totals.cancelledCount;
+  const approvalSummary = rejectedRows > 0
+    ? `${approvedRows} approved / ${rejectedRows} rejected`
+    : approvedDone
+      ? 'Ready rows exist'
+      : 'Waiting';
   return [
     { label: 'Imported', subtext: `${run.totals.orderCount} rows`, state: 'complete' as const },
     {
@@ -3981,7 +4266,7 @@ function buildRunWorkflow(run: PaymentRun) {
     },
     {
       label: tenseLabel(approvedState === 'complete', 'Approved', 'Approve'),
-      subtext: approvedDone ? 'Ready rows exist' : 'Waiting',
+      subtext: approvalSummary,
       state: approvedState,
     },
     {
@@ -4030,7 +4315,7 @@ function paymentTimelineStates(state: PaymentOrderState): Record<'request' | 'ap
 function getApprovalLabel(order: PaymentOrder) {
   if (order.derivedState === 'pending_approval') return 'Needs approval';
   if (order.derivedState === 'draft') return 'Draft';
-  if (order.derivedState === 'cancelled') return 'Cancelled';
+  if (order.derivedState === 'cancelled') return 'Rejected';
   return 'Approved';
 }
 

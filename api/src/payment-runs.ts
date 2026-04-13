@@ -508,10 +508,20 @@ function summarizeRunOrders(orders: Array<{ amountRaw: string; derivedState: str
   return {
     orderCount: orders.length,
     actionableCount: actionableOrders.length,
+    cancelledCount: orders.filter((order) => order.derivedState === 'cancelled').length,
     totalAmountRaw,
     settledCount: actionableOrders.filter((order) => ['settled', 'closed'].includes(order.derivedState)).length,
     exceptionCount: orders.filter((order) => order.derivedState === 'exception').length,
     pendingApprovalCount: actionableOrders.filter((order) => order.derivedState === 'pending_approval').length,
+    approvedCount: actionableOrders.filter((order) => [
+      'approved',
+      'ready_for_execution',
+      'execution_recorded',
+      'settled',
+      'closed',
+      'partially_settled',
+      'exception',
+    ].includes(order.derivedState)).length,
     readyCount: actionableOrders.filter((order) => ['approved', 'ready_for_execution', 'execution_recorded'].includes(order.derivedState)).length,
   };
 }
