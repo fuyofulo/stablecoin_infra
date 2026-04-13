@@ -30,7 +30,6 @@ import {
   orbTransactionUrl,
   shortenAddress,
   signAndSubmitPreparedPayment,
-  solanaAccountUrl,
   subscribeSolanaWallets,
   type BrowserWalletOption,
 } from './domain';
@@ -49,12 +48,20 @@ import {
   isPaymentOrderState,
   nextPaymentAction,
   paymentExecutionBucket,
-  runProgressLine,
   statusToneForPayment,
   toneForGenericState,
   trustDisplay,
 } from './status-labels';
-import { Collapsible, Drawer, Modal, Tabs } from './ui-primitives';
+import {
+  Collapsible,
+  DataTableShell,
+  Drawer,
+  EmptyPanel,
+  MetricTile,
+  Modal,
+  PanelHeader,
+  Tabs,
+} from './ui-primitives';
 
 function queryKeys(workspaceId?: string, paymentOrderId?: string) {
   return {
@@ -150,27 +157,35 @@ function LoginPage() {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const [error, setError] = useState<string | null>(null);
+  const [email, setEmail] = useState('');
   const loginMutation = useMutation({
-    mutationFn: (email: string) => api.login({ email }),
-    onSuccess: async (result) => {
+    mutationFn: (nextEmail: string) => api.login({ email: nextEmail }),
+    onSuccess: async (result, submittedEmail) => {
+      const expectedEmail = submittedEmail.trim().toLowerCase();
+      const actualEmail = result.user.email.trim().toLowerCase();
+      if (expectedEmail && expectedEmail !== actualEmail) {
+        api.clearSessionToken();
+        setError(`Sign-in mismatch: entered ${submittedEmail}, received session for ${result.user.email}. Please retry.`);
+        return;
+      }
       api.setSessionToken(result.sessionToken);
       await queryClient.invalidateQueries({ queryKey: queryKeys().session });
       navigate('/', { replace: true });
     },
     onError: (nextError) => {
-      setError(nextError instanceof Error ? nextError.message : 'Login failed');
+      setError(nextError instanceof Error ? nextError.message : 'Unable to sign in.');
     },
   });
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const formData = new FormData(event.currentTarget);
-    const email = String(formData.get('email') ?? '').trim();
-    if (!email) {
+    const normalizedEmail = email.trim();
+    if (!normalizedEmail) {
       setError('Email is required.');
       return;
     }
-    loginMutation.mutate(email);
+    setError(null);
+    loginMutation.mutate(normalizedEmail);
   }
 
   return (
@@ -184,10 +199,21 @@ function LoginPage() {
         <form className="login-form" onSubmit={handleSubmit}>
           <label>
             Email
-            <input name="email" type="email" placeholder="ops@company.com" autoComplete="email" />
+            <input
+              name="email"
+              type="email"
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+              placeholder="ops@company.com"
+              autoComplete="email"
+              autoCorrect="off"
+              autoCapitalize="off"
+              spellCheck={false}
+              inputMode="email"
+            />
           </label>
           <button className="button button-primary" disabled={loginMutation.isPending} type="submit">
-            {loginMutation.isPending ? 'Opening workspace...' : 'Open workspace'}
+            {loginMutation.isPending ? 'Signing in...' : 'Sign in'}
           </button>
         </form>
         {error ? <p className="form-error">{error}</p> : null}
@@ -237,7 +263,7 @@ function SetupPage({ session }: { session: AuthenticatedSession }) {
       await queryClient.invalidateQueries({ queryKey: queryKeys().session });
       navigate(`/workspaces/${workspace.workspaceId}`, { replace: true });
     },
-    onError: (error) => setMessage(error instanceof Error ? error.message : 'Could not create workspace.'),
+    onError: (error) => setMessage(error instanceof Error ? error.message : 'Unable to create workspace.'),
   });
 
   return (
@@ -248,7 +274,7 @@ function SetupPage({ session }: { session: AuthenticatedSession }) {
     >
       <div className="split-panels">
         <section className="panel">
-          <SectionHeader title="New operating workspace" description="Use a real workspace name or create the demo workspace for quick testing." />
+          <SectionHeader title="New operating workspace" description="Create a production workspace name, or provision a sample workspace for evaluation." />
           <form
             className="form-grid"
             onSubmit={(event) => {
@@ -275,7 +301,7 @@ function SetupPage({ session }: { session: AuthenticatedSession }) {
             </label>
             <label className="field checkbox-field">
               <input name="useDemo" type="checkbox" />
-              Create demo workspace
+              Provision sample workspace
             </label>
             <button className="button button-primary" disabled={createWorkspaceMutation.isPending} type="submit">
               {createWorkspaceMutation.isPending ? 'Creating...' : 'Create workspace'}
@@ -380,11 +406,54 @@ function CommandCenterPage({ session }: { session: AuthenticatedSession }) {
 
 function PaymentsPage({ session }: { session: AuthenticatedSession }) {
   const { workspaceId } = useParams<{ workspaceId: string }>();
+  const queryClient = useQueryClient();
+  const [message, setMessage] = useState<string | null>(null);
+  const [importOpen, setImportOpen] = useState(false);
+  const [importStep, setImportStep] = useState<'edit' | 'preview'>('edit');
+  const [csvText, setCsvText] = useState('');
+  const [runName, setRunName] = useState('');
+  const [sourceWorkspaceAddressId, setSourceWorkspaceAddressId] = useState('');
   const workspace = findWorkspace(session, workspaceId);
   const paymentOrdersQuery = useQuery({
     queryKey: queryKeys(workspaceId).paymentOrders,
     queryFn: () => api.listPaymentOrders(workspaceId!),
     enabled: Boolean(workspaceId),
+  });
+  const paymentRunsQuery = useQuery({
+    queryKey: queryKeys(workspaceId).paymentRuns,
+    queryFn: () => api.listPaymentRuns(workspaceId!),
+    enabled: Boolean(workspaceId),
+  });
+  const addressesQuery = useQuery({
+    queryKey: queryKeys(workspaceId).addresses,
+    queryFn: () => api.listAddresses(workspaceId!),
+    enabled: Boolean(workspaceId),
+  });
+  const csvPreview = useMemo(() => parseCsvPreview(csvText, 15), [csvText]);
+  const importMutation = useMutation({
+    mutationFn: async () => {
+      const csv = csvText.trim();
+      if (!csv) throw new Error('CSV is required.');
+      return api.importPaymentRunCsv(workspaceId!, {
+        csv,
+        runName: runName.trim() || undefined,
+        sourceWorkspaceAddressId: sourceWorkspaceAddressId || undefined,
+        submitOrderNow: true,
+      });
+    },
+    onSuccess: async (result) => {
+      setMessage(`Imported ${result.importResult.imported} row(s). Rows were submitted into approval.`);
+      setImportStep('edit');
+      setCsvText('');
+      setRunName('');
+      setImportOpen(false);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys(workspaceId).paymentRuns }),
+        queryClient.invalidateQueries({ queryKey: queryKeys(workspaceId).paymentRequests }),
+        queryClient.invalidateQueries({ queryKey: queryKeys(workspaceId).paymentOrders }),
+      ]);
+    },
+    onError: (error) => setMessage(error instanceof Error ? error.message : 'Unable to import CSV.'),
   });
 
   if (!workspaceId || !workspace) {
@@ -392,6 +461,35 @@ function PaymentsPage({ session }: { session: AuthenticatedSession }) {
   }
 
   const paymentOrders = paymentOrdersQuery.data?.items ?? [];
+  const standaloneOrders = paymentOrders.filter((order) => !order.paymentRunId);
+  const paymentRuns = paymentRunsQuery.data?.items ?? [];
+  const addresses = addressesQuery.data?.items ?? [];
+  const unifiedRows = [
+    ...standaloneOrders.map((order) => ({
+      kind: 'payment' as const,
+      id: order.paymentOrderId,
+      name: order.payee?.name ?? order.destination.label,
+      amountLabel: `${formatRawUsdcCompact(order.amountRaw)} ${order.asset}`,
+      sourceLabel: order.sourceWorkspaceAddress?.displayName ?? shortenAddress(order.sourceWorkspaceAddress?.address),
+      refLabel: order.externalReference ?? order.invoiceNumber ?? order.memo ?? 'N/A',
+      stateLabel: displayPaymentStatus(order.derivedState),
+      tone: statusToneForPayment(order.derivedState),
+      createdAt: order.createdAt,
+      to: `/workspaces/${workspaceId}/payments/${order.paymentOrderId}`,
+    })),
+    ...paymentRuns.map((run) => ({
+      kind: 'run' as const,
+      id: run.paymentRunId,
+      name: run.runName,
+      amountLabel: `${formatRawUsdcCompact(run.totals.totalAmountRaw)} USDC`,
+      sourceLabel: run.sourceWorkspaceAddress ? (walletLabel(run.sourceWorkspaceAddress) ?? 'N/A') : 'N/A',
+      refLabel: `${run.totals.orderCount} rows`,
+      stateLabel: displayRunStatus(run.derivedState),
+      tone: statusToneForPayment(run.derivedState),
+      createdAt: run.createdAt,
+      to: `/workspaces/${workspaceId}/runs/${run.paymentRunId}`,
+    })),
+  ].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
   return (
     <PageFrame
@@ -400,26 +498,132 @@ function PaymentsPage({ session }: { session: AuthenticatedSession }) {
       description="Review payment intent, execution, settlement, exceptions, and proof from one queue."
       action={
         <div className="action-cluster">
-          <Link className="button button-secondary" to={`/workspaces/${workspaceId}/runs`}>Import CSV batch</Link>
+          <button className="button button-secondary" type="button" onClick={() => setImportOpen(true)}>Import CSV batch</button>
           <Link className="button button-primary" to={`/workspaces/${workspaceId}/requests`}>New payment request</Link>
         </div>
       }
     >
       <div className="metric-strip">
-        <Metric label="Needs action" value={String(paymentOrders.filter(isActionableOrder).length)} />
-        <Metric label="Ready to sign" value={String(paymentOrders.filter((order) => order.derivedState === 'ready_for_execution').length)} />
-        <Metric label="Completed" value={String(paymentOrders.filter((order) => order.derivedState === 'settled' || order.derivedState === 'closed').length)} />
+        <Metric label="Needs action" value={String(standaloneOrders.filter(isActionableOrder).length)} />
+        <Metric label="Ready to sign" value={String(standaloneOrders.filter((order) => order.derivedState === 'ready_for_execution').length)} />
+        <Metric label="Completed" value={String(standaloneOrders.filter((order) => order.derivedState === 'settled' || order.derivedState === 'closed').length)} />
       </div>
       <section className="panel">
-        <SectionHeader title={`Payments [${paymentOrders.length}]`} description="Click a row to open the durable payment page." />
-        {paymentOrdersQuery.isLoading ? (
+        <SectionHeader title={`Payments and batches [${unifiedRows.length}]`} description="Individual payments and batch runs in one operational ledger." />
+        {paymentOrdersQuery.isLoading || paymentRunsQuery.isLoading ? (
           <EmptyState title="Loading payments" description="Fetching the payment queue." />
-        ) : paymentOrders.length ? (
-          <PaymentTable workspaceId={workspaceId} paymentOrders={paymentOrders} />
+        ) : unifiedRows.length ? (
+          <UnifiedPaymentsTable rows={unifiedRows} />
         ) : (
           <EmptyState title="No payments yet" description="Create a payment request or import a CSV batch to start the workflow." />
         )}
       </section>
+      {message ? <div className="notice panel-spaced">{message}</div> : null}
+      <Modal
+        open={importOpen}
+        onClose={() => {
+          setImportOpen(false);
+          setImportStep('edit');
+        }}
+        title="Import CSV batch"
+        size="wide"
+      >
+        {message ? <div className="notice">{message}</div> : null}
+        {importStep === 'edit' ? (
+          <div className="split-panels split-panels-wide-left">
+            <section>
+              <SectionHeader title="Batch settings" description="Name the run and optionally preselect a source wallet." />
+              <div className="form-stack">
+                <label className="field">
+                  Run name
+                  <input value={runName} onChange={(e) => setRunName(e.target.value)} placeholder="April contractor payouts" />
+                </label>
+                <label className="field">
+                  Source wallet
+                  <select value={sourceWorkspaceAddressId} onChange={(e) => setSourceWorkspaceAddressId(e.target.value)}>
+                    <option value="">Optional until execution</option>
+                    {addresses.filter((address) => address.isActive).map((address) => (
+                      <option key={address.workspaceAddressId} value={address.workspaceAddressId}>{walletLabel(address)}</option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+            </section>
+            <section>
+              <SectionHeader title="CSV input" description="Paste rows to preview before creating the run." />
+              <div className="form-stack">
+                <label className="field">
+                  CSV
+                  <textarea
+                    value={csvText}
+                    onChange={(e) => setCsvText(e.target.value)}
+                    rows={16}
+                    placeholder={[
+                      'payee,destination,amount,reference,due_date',
+                      'Acme Corp,8cZ65A8ERdVsXq3YnEdMNimwG7DhGe1tPszysJwh43Zx,0.01,INV-1001,2026-04-15',
+                    ].join('\n')}
+                  />
+                </label>
+                <button
+                  className="button button-primary"
+                  disabled={!csvText.trim()}
+                  type="button"
+                  onClick={() => {
+                    setMessage(null);
+                    const p = parseCsvPreview(csvText);
+                    if (p.parseError) {
+                      setMessage(p.parseError);
+                      return;
+                    }
+                    if (!p.headers.length) {
+                      setMessage('Add a header row and at least one data row.');
+                      return;
+                    }
+                    setImportStep('preview');
+                  }}
+                >
+                  Review import
+                </button>
+              </div>
+            </section>
+          </div>
+        ) : (
+          <div className="form-stack">
+            <p className="section-copy">
+              {csvPreview.rowCount} data row(s). Showing first {csvPreview.rows.length} row(s). Run name: {runName.trim() || 'N/A'}.
+            </p>
+            {csvPreview.parseError ? <div className="notice">{csvPreview.parseError}</div> : null}
+            <div style={{ overflowX: 'auto' }}>
+              <table className="csv-preview-table">
+                <thead>
+                  <tr>
+                    {csvPreview.headers.map((h) => (
+                      <th key={h}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {csvPreview.rows.map((row, ri) => (
+                    <tr key={ri}>
+                      {csvPreview.headers.map((_, ci) => (
+                        <td key={ci}>{row[ci] ?? ''}</td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="action-cluster">
+              <button className="button button-secondary" type="button" onClick={() => setImportStep('edit')}>
+                Edit CSV
+              </button>
+              <button className="button button-primary" disabled={importMutation.isPending} type="button" onClick={() => importMutation.mutate()}>
+                {importMutation.isPending ? 'Importing...' : 'Confirm import'}
+              </button>
+            </div>
+          </div>
+        )}
+      </Modal>
     </PageFrame>
   );
 }
@@ -428,6 +632,7 @@ function PaymentRequestsPage({ session }: { session: AuthenticatedSession }) {
   const { workspaceId } = useParams<{ workspaceId: string }>();
   const queryClient = useQueryClient();
   const [message, setMessage] = useState<string | null>(null);
+  const [requestModalOpen, setRequestModalOpen] = useState(false);
   const workspace = findWorkspace(session, workspaceId);
   const requestsQuery = useQuery({
     queryKey: queryKeys(workspaceId).paymentRequests,
@@ -476,12 +681,13 @@ function PaymentRequestsPage({ session }: { session: AuthenticatedSession }) {
     },
     onSuccess: async () => {
       setMessage('Payment request created.');
+      setRequestModalOpen(false);
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: queryKeys(workspaceId).paymentRequests }),
         queryClient.invalidateQueries({ queryKey: queryKeys(workspaceId).paymentOrders }),
       ]);
     },
-    onError: (error) => setMessage(error instanceof Error ? error.message : 'Could not create request.'),
+    onError: (error) => setMessage(error instanceof Error ? error.message : 'Unable to create request.'),
   });
 
   if (!workspaceId || !workspace) {
@@ -499,74 +705,76 @@ function PaymentRequestsPage({ session }: { session: AuthenticatedSession }) {
       eyebrow="Intake"
       title="Payment requests"
       description="Create the human-facing input object, then let the order workflow handle approval, execution, settlement, and proof."
-      action={<Link className="button button-secondary" to={`/workspaces/${workspaceId}/runs`}>Import CSV batch</Link>}
+      action={(
+        <div className="action-cluster">
+          <button className="button button-primary" type="button" onClick={() => setRequestModalOpen(true)}>+ New payment request</button>
+          <Link className="button button-secondary" to={`/workspaces/${workspaceId}/runs`}>Import CSV batch</Link>
+        </div>
+      )}
     >
-      <div className="split-panels split-panels-wide-left">
-        <section className="panel">
-          <SectionHeader title={`Requests [${requests.length}]`} description="Manual requests and imported rows become controlled payment orders." />
-          <PaymentRequestsTable workspaceId={workspaceId} requests={requests} ordersByRequest={ordersByRequest} />
-        </section>
-        <section className="panel">
-          <SectionHeader title="New payment request" description="Use decimal USDC here. The app converts it to raw units for the backend." />
-          <form
-            className="form-stack"
-            onSubmit={(event) => {
-              event.preventDefault();
-              createRequestMutation.mutate(new FormData(event.currentTarget));
-            }}
-          >
-            <label className="field">
-              Payee
-              <select name="payeeId" defaultValue="">
-                <option value="">Optional</option>
-                {payees.map((payee) => <option key={payee.payeeId} value={payee.payeeId}>{payee.name}</option>)}
-              </select>
-            </label>
-            <label className="field">
-              Destination
-              <select name="destinationId" required defaultValue="">
-                <option value="" disabled>Select destination</option>
-                {destinations.filter((destination) => destination.isActive).map((destination) => (
-                  <option key={destination.destinationId} value={destination.destinationId}>{destination.label} / {destination.trustState}</option>
-                ))}
-              </select>
-            </label>
-            <label className="field">
-              Source wallet
-              <select name="sourceWorkspaceAddressId" defaultValue="">
-                <option value="">Optional until execution</option>
-                {addresses.filter((address) => address.isActive).map((address) => (
-                  <option key={address.workspaceAddressId} value={address.workspaceAddressId}>{walletLabel(address)}</option>
-                ))}
-              </select>
-            </label>
-            <label className="field">
-              Amount
-              <input name="amount" placeholder="0.01" required />
-            </label>
-            <label className="field">
-              Reason
-              <input name="reason" placeholder="Pay Acme Corp for INV-1001" required />
-            </label>
-            <label className="field">
-              Reference
-              <input name="externalReference" placeholder="INV-1001" />
-            </label>
-            <label className="field">
-              Due date
-              <input name="dueAt" type="date" />
-            </label>
-            <label className="field checkbox-field">
-              <input name="submitOrderNow" type="checkbox" />
-              Submit into approval now
-            </label>
-            <button className="button button-primary" disabled={createRequestMutation.isPending || !destinations.length} type="submit">
-              {createRequestMutation.isPending ? 'Creating...' : 'Create request'}
-            </button>
-          </form>
-          {message ? <div className="notice">{message}</div> : null}
-        </section>
-      </div>
+      <section className="panel">
+        <SectionHeader title={`Requests [${requests.length}]`} description="Manual requests and imported rows become controlled payment orders." />
+        <PaymentRequestsTable workspaceId={workspaceId} requests={requests} ordersByRequest={ordersByRequest} />
+      </section>
+      {message ? <div className="notice panel-spaced">{message}</div> : null}
+      <Modal open={requestModalOpen} onClose={() => setRequestModalOpen(false)} title="New payment request">
+        <form
+          className="form-stack"
+          onSubmit={(event) => {
+            event.preventDefault();
+            createRequestMutation.mutate(new FormData(event.currentTarget));
+          }}
+        >
+          <label className="field">
+            Payee
+            <select name="payeeId" defaultValue="">
+              <option value="">Optional</option>
+              {payees.map((payee) => <option key={payee.payeeId} value={payee.payeeId}>{payee.name}</option>)}
+            </select>
+          </label>
+          <label className="field">
+            Destination
+            <select name="destinationId" required defaultValue="">
+              <option value="" disabled>Select destination</option>
+              {destinations.filter((destination) => destination.isActive).map((destination) => (
+                <option key={destination.destinationId} value={destination.destinationId}>{destination.label} / {destination.trustState}</option>
+              ))}
+            </select>
+          </label>
+          <label className="field">
+            Source wallet
+            <select name="sourceWorkspaceAddressId" defaultValue="">
+              <option value="">Optional until execution</option>
+              {addresses.filter((address) => address.isActive).map((address) => (
+                <option key={address.workspaceAddressId} value={address.workspaceAddressId}>{walletLabel(address)}</option>
+              ))}
+            </select>
+          </label>
+          <label className="field">
+            Amount
+            <input name="amount" placeholder="0.01" required />
+          </label>
+          <label className="field">
+            Reason
+            <input name="reason" placeholder="Pay Acme Corp for INV-1001" required />
+          </label>
+          <label className="field">
+            Reference
+            <input name="externalReference" placeholder="INV-1001" />
+          </label>
+          <label className="field">
+            Due date
+            <input name="dueAt" type="date" />
+          </label>
+          <label className="field checkbox-field">
+            <input name="submitOrderNow" type="checkbox" />
+            Submit into approval now
+          </label>
+          <button className="button button-primary" disabled={createRequestMutation.isPending || !destinations.length} type="submit">
+            {createRequestMutation.isPending ? 'Creating...' : 'Create request'}
+          </button>
+        </form>
+      </Modal>
     </PageFrame>
   );
 }
@@ -575,11 +783,11 @@ function PaymentRunsPage({ session }: { session: AuthenticatedSession }) {
   const { workspaceId } = useParams<{ workspaceId: string }>();
   const queryClient = useQueryClient();
   const [message, setMessage] = useState<string | null>(null);
+  const [importOpen, setImportOpen] = useState(false);
   const [importStep, setImportStep] = useState<'edit' | 'preview'>('edit');
   const [csvText, setCsvText] = useState('');
   const [runName, setRunName] = useState('');
   const [sourceWorkspaceAddressId, setSourceWorkspaceAddressId] = useState('');
-  const [submitOrderNow, setSubmitOrderNow] = useState(false);
   const workspace = findWorkspace(session, workspaceId);
   const runsQuery = useQuery({
     queryKey: queryKeys(workspaceId).paymentRuns,
@@ -593,29 +801,36 @@ function PaymentRunsPage({ session }: { session: AuthenticatedSession }) {
     enabled: Boolean(workspaceId),
   });
   const csvPreview = useMemo(() => parseCsvPreview(csvText, 15), [csvText]);
+  const duplicateRunName = useMemo(() => {
+    const normalized = runName.trim().toLowerCase();
+    if (!normalized) return null;
+    return (runsQuery.data?.items ?? []).find((run) => run.runName.trim().toLowerCase() === normalized) ?? null;
+  }, [runName, runsQuery.data?.items]);
   const importMutation = useMutation({
     mutationFn: async () => {
       const csv = csvText.trim();
       if (!csv) throw new Error('CSV is required.');
+      if (duplicateRunName) throw new Error(`Run name "${runName.trim()}" already exists. Choose a unique run name.`);
       return api.importPaymentRunCsv(workspaceId!, {
         csv,
         runName: runName.trim() || undefined,
         sourceWorkspaceAddressId: sourceWorkspaceAddressId || undefined,
-        submitOrderNow,
+        submitOrderNow: true,
       });
     },
     onSuccess: async (result) => {
-      setMessage(`Imported ${result.importResult.imported} row(s).`);
+      setMessage(`Imported ${result.importResult.imported} row(s). Rows were submitted into approval.`);
       setImportStep('edit');
       setCsvText('');
       setRunName('');
+      setImportOpen(false);
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: queryKeys(workspaceId).paymentRuns }),
         queryClient.invalidateQueries({ queryKey: queryKeys(workspaceId).paymentRequests }),
         queryClient.invalidateQueries({ queryKey: queryKeys(workspaceId).paymentOrders }),
       ]);
     },
-    onError: (error) => setMessage(error instanceof Error ? error.message : 'CSV import failed.'),
+    onError: (error) => setMessage(error instanceof Error ? error.message : 'Unable to import CSV.'),
   });
 
   if (!workspaceId || !workspace) {
@@ -630,119 +845,151 @@ function PaymentRunsPage({ session }: { session: AuthenticatedSession }) {
       eyebrow="Batch Intake"
       title="Payment runs"
       description="Import CSV payout sheets, review the batch, prepare one transaction, and export run-level proof."
+      action={
+        <button className="button button-primary" type="button" onClick={() => setImportOpen(true)}>
+          + Import CSV batch
+        </button>
+      }
     >
-      <div className="split-panels split-panels-wide-left">
-        <section className="panel">
-          <SectionHeader title={`Payment runs [${runs.length}]`} description="Each run is a durable page with its own execution and proof packet." />
-          <PaymentRunsTable workspaceId={workspaceId} runs={runs} />
-        </section>
-        <section className="panel">
-          <SectionHeader
-            title="Import CSV batch"
-            description="Paste rows, preview columns, then confirm. Expected columns include payee, destination, amount, reference, due_date."
-          />
-          {importStep === 'edit' ? (
-            <div className="form-stack">
-              <label className="field">
-                Run name
-                <input value={runName} onChange={(e) => setRunName(e.target.value)} placeholder="April contractor payouts" />
-              </label>
-              <label className="field">
-                Source wallet
-                <select value={sourceWorkspaceAddressId} onChange={(e) => setSourceWorkspaceAddressId(e.target.value)}>
-                  <option value="">Optional until execution</option>
-                  {addresses.filter((address) => address.isActive).map((address) => (
-                    <option key={address.workspaceAddressId} value={address.workspaceAddressId}>{walletLabel(address)}</option>
-                  ))}
-                </select>
-              </label>
-              <label className="field checkbox-field">
-                <input checked={submitOrderNow} onChange={(e) => setSubmitOrderNow(e.target.checked)} type="checkbox" />
-                Submit trusted rows into approval now
-              </label>
-              <label className="field">
-                CSV
-                <textarea
-                  value={csvText}
-                  onChange={(e) => setCsvText(e.target.value)}
-                  rows={10}
-                  placeholder={[
-                    'payee,destination,amount,reference,due_date',
-                    'Acme Corp,8cZ65A8ERdVsXq3YnEdMNimwG7DhGe1tPszysJwh43Zx,0.01,INV-1001,2026-04-15',
-                  ].join('\n')}
-                />
-              </label>
-              <button
-                className="button button-primary"
-                disabled={!csvText.trim()}
-                type="button"
-                onClick={() => {
-                  setMessage(null);
-                  const p = parseCsvPreview(csvText);
-                  if (p.parseError) {
-                    setMessage(p.parseError);
-                    return;
-                  }
-                  if (!p.headers.length) {
-                    setMessage('Add a header row and at least one data row.');
-                    return;
-                  }
-                  setImportStep('preview');
-                }}
-              >
-                Review import
-              </button>
-            </div>
-          ) : (
-            <div className="form-stack">
-              <p className="section-copy">
-                {csvPreview.rowCount} data row(s). Showing first {csvPreview.rows.length} row(s). Run name: {runName.trim() || '—'}.
-              </p>
-              {csvPreview.parseError ? <div className="notice">{csvPreview.parseError}</div> : null}
-              <div style={{ overflowX: 'auto' }}>
-                <table className="csv-preview-table">
-                  <thead>
-                    <tr>
-                      {csvPreview.headers.map((h) => (
-                        <th key={h}>{h}</th>
+      <Modal
+        open={importOpen}
+        onClose={() => {
+          setImportOpen(false);
+          setImportStep('edit');
+        }}
+        title="Import CSV batch"
+        size="wide"
+      >
+        {message ? <div className="notice">{message}</div> : null}
+        {importStep === 'edit' ? (
+          <div className="split-panels split-panels-wide-left">
+            <section>
+              <SectionHeader title="Batch settings" description="Name the run and optionally preselect a source wallet." />
+              <div className="form-stack">
+                <label className="field">
+                  Run name
+                  <input value={runName} onChange={(e) => setRunName(e.target.value)} placeholder="April contractor payouts" />
+                </label>
+                <label className="field">
+                  Source wallet
+                  <select value={sourceWorkspaceAddressId} onChange={(e) => setSourceWorkspaceAddressId(e.target.value)}>
+                    <option value="">Optional until execution</option>
+                    {addresses.filter((address) => address.isActive).map((address) => (
+                      <option key={address.workspaceAddressId} value={address.workspaceAddressId}>{walletLabel(address)}</option>
+                    ))}
+                  </select>
+                </label>
+                {duplicateRunName ? (
+                  <p className="section-copy form-error">Run name already exists. Use a unique name to avoid operator confusion.</p>
+                ) : null}
+              </div>
+            </section>
+            <section>
+              <SectionHeader title="CSV input" description="Paste rows to preview before creating the run." />
+              <div className="form-stack">
+                <label className="field">
+                  CSV
+                  <textarea
+                    value={csvText}
+                    onChange={(e) => setCsvText(e.target.value)}
+                    rows={16}
+                    placeholder={[
+                      'payee,destination,amount,reference,due_date',
+                      'Acme Corp,8cZ65A8ERdVsXq3YnEdMNimwG7DhGe1tPszysJwh43Zx,0.01,INV-1001,2026-04-15',
+                    ].join('\n')}
+                  />
+                </label>
+                <button
+                  className="button button-primary"
+                  disabled={!csvText.trim()}
+                  type="button"
+                  onClick={() => {
+                    setMessage(null);
+                    const p = parseCsvPreview(csvText);
+                    if (p.parseError) {
+                      setMessage(p.parseError);
+                      return;
+                    }
+                    if (!p.headers.length) {
+                      setMessage('Add a header row and at least one data row.');
+                      return;
+                    }
+                    setImportStep('preview');
+                  }}
+                >
+                  Review import
+                </button>
+              </div>
+            </section>
+          </div>
+        ) : (
+          <div className="form-stack">
+            <p className="section-copy">
+              {csvPreview.rowCount} data row(s). Showing first {csvPreview.rows.length} row(s). Run name: {runName.trim() || 'N/A'}.
+            </p>
+            {csvPreview.parseError ? <div className="notice">{csvPreview.parseError}</div> : null}
+            <div style={{ overflowX: 'auto' }}>
+              <table className="csv-preview-table">
+                <thead>
+                  <tr>
+                    {csvPreview.headers.map((h) => (
+                      <th key={h}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {csvPreview.rows.map((row, ri) => (
+                    <tr key={ri}>
+                      {csvPreview.headers.map((_, ci) => (
+                        <td key={ci}>{row[ci] ?? ''}</td>
                       ))}
                     </tr>
-                  </thead>
-                  <tbody>
-                    {csvPreview.rows.map((row, ri) => (
-                      <tr key={ri}>
-                        {csvPreview.headers.map((_, ci) => (
-                          <td key={ci}>{row[ci] ?? ''}</td>
-                        ))}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              <div className="action-cluster">
-                <button className="button button-secondary" type="button" onClick={() => setImportStep('edit')}>
-                  Edit CSV
-                </button>
-                <button className="button button-primary" disabled={importMutation.isPending} type="button" onClick={() => importMutation.mutate()}>
-                  {importMutation.isPending ? 'Importing...' : 'Confirm import'}
-                </button>
-              </div>
+                  ))}
+                </tbody>
+              </table>
             </div>
-          )}
-          {message ? <div className="notice">{message}</div> : null}
-        </section>
-      </div>
+            <div className="action-cluster">
+              <button className="button button-secondary" type="button" onClick={() => setImportStep('edit')}>
+                Edit CSV
+              </button>
+              <button className="button button-primary" disabled={importMutation.isPending || Boolean(duplicateRunName)} type="button" onClick={() => importMutation.mutate()}>
+                {importMutation.isPending ? 'Importing...' : 'Confirm import'}
+              </button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      <section className="panel">
+        <SectionHeader title={`Payment runs [${runs.length}]`} description="Each run is a durable page with its own execution and proof packet." />
+        <PaymentRunsTable workspaceId={workspaceId} runs={runs} />
+      </section>
+      {message ? <div className="notice panel-spaced">{message}</div> : null}
     </PageFrame>
   );
 }
 
 function PaymentRunDetailPage({ session }: { session: AuthenticatedSession }) {
   const { workspaceId, paymentRunId } = useParams<{ workspaceId: string; paymentRunId: string }>();
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [prepared, setPrepared] = useState<PaymentRunExecutionPreparation | null>(null);
   const [manualSignature, setManualSignature] = useState('');
+  const [executionModalOpen, setExecutionModalOpen] = useState(false);
+  const [walletModalOpen, setWalletModalOpen] = useState(false);
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+  const [selectedSourceAddressId, setSelectedSourceAddressId] = useState('');
+  const [selectedWalletId, setSelectedWalletId] = useState<string | undefined>();
+  const [wallets, setWallets] = useState<BrowserWalletOption[]>(() => discoverSolanaWallets());
   const [message, setMessage] = useState<string | null>(null);
+  useEffect(() => subscribeSolanaWallets(setWallets), []);
   const workspace = findWorkspace(session, workspaceId);
+  const addressesQuery = useQuery({
+    queryKey: queryKeys(workspaceId).addresses,
+    queryFn: () => api.listAddresses(workspaceId!),
+    enabled: Boolean(workspaceId),
+    refetchInterval: 15_000,
+  });
   const runQuery = useQuery({
     queryKey: queryKeys(workspaceId, paymentRunId).paymentRun,
     queryFn: () => api.getPaymentRunDetail(workspaceId!, paymentRunId!),
@@ -750,13 +997,15 @@ function PaymentRunDetailPage({ session }: { session: AuthenticatedSession }) {
     refetchInterval: 5_000,
   });
   const prepareMutation = useMutation({
-    mutationFn: () => api.preparePaymentRunExecution(workspaceId!, paymentRunId!),
+    mutationFn: (sourceWorkspaceAddressId: string) => api.preparePaymentRunExecution(workspaceId!, paymentRunId!, {
+      sourceWorkspaceAddressId,
+    }),
     onSuccess: async (result) => {
       setPrepared(result);
       setMessage('Batch execution packet prepared.');
       await queryClient.invalidateQueries({ queryKey: queryKeys(workspaceId, paymentRunId).paymentRun });
     },
-    onError: (error) => setMessage(error instanceof Error ? error.message : 'Could not prepare run.'),
+    onError: (error) => setMessage(error instanceof Error ? error.message : 'Unable to prepare run.'),
   });
   const attachMutation = useMutation({
     mutationFn: (signature: string) => api.attachPaymentRunSignature(workspaceId!, paymentRunId!, {
@@ -768,12 +1017,88 @@ function PaymentRunDetailPage({ session }: { session: AuthenticatedSession }) {
       setMessage('Batch signature attached.');
       await queryClient.invalidateQueries({ queryKey: queryKeys(workspaceId, paymentRunId).paymentRun });
     },
-    onError: (error) => setMessage(error instanceof Error ? error.message : 'Could not attach signature.'),
+    onError: (error) => setMessage(error instanceof Error ? error.message : 'Unable to attach signature.'),
+  });
+  const signMutation = useMutation({
+    mutationFn: async () => {
+      if (!effectiveSourceAddressId) throw new Error('Choose a source wallet before executing this run.');
+      let preparation = prepared;
+      if (!preparation || preparation.paymentRun.sourceWorkspaceAddressId !== effectiveSourceAddressId) {
+        preparation = await api.preparePaymentRunExecution(workspaceId!, paymentRunId!, {
+          sourceWorkspaceAddressId: effectiveSourceAddressId,
+        });
+        setPrepared(preparation);
+      }
+      const signature = await signAndSubmitPreparedPayment(preparation.executionPacket, selectedWalletId);
+      await api.attachPaymentRunSignature(workspaceId!, paymentRunId!, {
+        submittedSignature: signature,
+        submittedAt: new Date().toISOString(),
+      });
+      return signature;
+    },
+    onSuccess: async (signature) => {
+      setMessage(`Submitted ${shortenAddress(signature, 8, 8)}.`);
+      setManualSignature('');
+      setExecutionModalOpen(false);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys(workspaceId, paymentRunId).paymentRun }),
+        queryClient.invalidateQueries({ queryKey: queryKeys(workspaceId).paymentOrders }),
+      ]);
+    },
+    onError: (error) => setMessage(error instanceof Error ? error.message : 'Unable to sign and submit batch.'),
   });
   const proofMutation = useMutation({
     mutationFn: () => api.getPaymentRunProof(workspaceId!, paymentRunId!),
     onSuccess: (proof) => downloadJson(`payment-run-proof-${paymentRunId}.json`, proof),
-    onError: (error) => setMessage(error instanceof Error ? error.message : 'Could not export run proof.'),
+    onError: (error) => setMessage(error instanceof Error ? error.message : 'Unable to export run proof.'),
+  });
+  const orderProofMutation = useMutation({
+    mutationFn: (orderId: string) => api.getPaymentOrderProof(workspaceId!, orderId),
+    onSuccess: (proof, orderId) => downloadJson(`payment-proof-${orderId}.json`, proof),
+    onError: (error) => setMessage(error instanceof Error ? error.message : 'Unable to export payment proof.'),
+  });
+  const deleteRunMutation = useMutation({
+    mutationFn: () => api.deletePaymentRun(workspaceId!, paymentRunId!),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: queryKeys(workspaceId).paymentRuns });
+      navigate(`/workspaces/${workspaceId}/runs`);
+    },
+    onError: (error) => setMessage(error instanceof Error ? error.message : 'Unable to delete payment run.'),
+  });
+  const approvePendingMutation = useMutation({
+    mutationFn: async () => {
+      const orders = runQuery.data?.paymentOrders ?? [];
+      const drafts = orders.filter((order) => order.derivedState === 'draft');
+      const draftResults = await Promise.allSettled(
+        drafts.map((order) => api.submitPaymentOrder(workspaceId!, order.paymentOrderId)),
+      );
+      const routedDrafts = draftResults.filter((result) => result.status === 'fulfilled').length;
+      const draftFailures = drafts.length - routedDrafts;
+      const refreshedRun = await api.getPaymentRunDetail(workspaceId!, paymentRunId!);
+      const pending = (refreshedRun.paymentOrders ?? []).filter(
+        (order) => order.derivedState === 'pending_approval' && Boolean(order.transferRequestId),
+      );
+      if (!pending.length) return { routedDrafts, approved: 0, failed: draftFailures };
+      const results = await Promise.allSettled(
+        pending.map((order) =>
+          api.createApprovalDecision(workspaceId!, order.transferRequestId!, { action: 'approve' }),
+        ),
+      );
+      const approved = results.filter((result) => result.status === 'fulfilled').length;
+      return { routedDrafts, approved, failed: draftFailures + (pending.length - approved) };
+    },
+    onSuccess: async ({ routedDrafts, approved, failed }) => {
+      setMessage(
+        failed
+          ? `Advanced ${routedDrafts + approved} payment(s). ${failed} failed.`
+          : `Advanced ${routedDrafts + approved} payment(s) through approvals.`,
+      );
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys(workspaceId, paymentRunId).paymentRun }),
+        queryClient.invalidateQueries({ queryKey: queryKeys(workspaceId).paymentOrders }),
+      ]);
+    },
+    onError: (error) => setMessage(error instanceof Error ? error.message : 'Unable to approve pending payments.'),
   });
 
   if (!workspaceId || !paymentRunId || !workspace) {
@@ -786,6 +1111,30 @@ function PaymentRunDetailPage({ session }: { session: AuthenticatedSession }) {
   if (!run) {
     return <ScreenState title="Run not found" description="The payment run could not be loaded." />;
   }
+  const runOrders = run.paymentOrders ?? [];
+  const draftCount = runOrders.filter((order) => order.derivedState === 'draft').length;
+  const pendingApprovalCount = runOrders.filter((order) => order.derivedState === 'pending_approval').length;
+  const approvalsQueueCount = draftCount + pendingApprovalCount;
+  const executableOrders = runOrders.filter((order) => order.derivedState !== 'cancelled' && order.derivedState !== 'closed');
+  const sourceAddresses = addressesQuery.data?.items ?? [];
+  const effectiveSourceAddressId = selectedSourceAddressId || run.sourceWorkspaceAddressId || sourceAddresses[0]?.workspaceAddressId || '';
+  const selectedWallet = wallets.find((wallet) => wallet.id === selectedWalletId);
+  const selectedSourceAddress = sourceAddresses.find((address) => address.workspaceAddressId === effectiveSourceAddressId) ?? null;
+  const canExecuteBatch = executableOrders.length > 0;
+  const totalExecutableAmountRaw = executableOrders.reduce((sum, order) => sum + BigInt(order.amountRaw || '0'), 0n);
+  const allocationPreview = executableOrders
+    .map((order) => {
+      const amountRaw = Number(order.amountRaw || 0);
+      const ratio = totalExecutableAmountRaw > 0n ? amountRaw / Number(totalExecutableAmountRaw) : 0;
+      return {
+        paymentOrderId: order.paymentOrderId,
+        label: order.payee?.name ?? order.destination.label,
+        detail: order.externalReference ?? order.invoiceNumber ?? shortenAddress(order.destination.walletAddress),
+        amountLabel: `${formatRawUsdcCompact(order.amountRaw)} ${order.asset}`,
+        ratio,
+      };
+    })
+    .sort((a, b) => b.ratio - a.ratio);
 
   return (
     <PageFrame
@@ -794,53 +1143,177 @@ function PaymentRunDetailPage({ session }: { session: AuthenticatedSession }) {
       description={`${run.totals.orderCount} payment(s) / ${formatRawUsdcCompact(run.totals.totalAmountRaw)} USDC / ${displayRunStatus(run.derivedState)}`}
       action={
         <div className="action-cluster">
-          <button className="button button-secondary" onClick={() => prepareMutation.mutate()} disabled={prepareMutation.isPending} type="button">
-            {prepareMutation.isPending ? 'Preparing...' : 'Prepare batch'}
+          {approvalsQueueCount > 0 ? (
+            <button
+              className="button button-secondary"
+              onClick={() => approvePendingMutation.mutate()}
+              disabled={approvePendingMutation.isPending}
+              type="button"
+            >
+              {approvePendingMutation.isPending ? 'Advancing...' : `Advance approvals (${approvalsQueueCount})`}
+            </button>
+          ) : null}
+          <button className="button button-secondary" onClick={() => setExecutionModalOpen(true)} type="button">
+            Execute payments
           </button>
           <button className="button button-primary" onClick={() => proofMutation.mutate()} type="button">Export run proof</button>
+          <button
+            className="button button-secondary"
+            disabled={deleteRunMutation.isPending}
+            onClick={() => setDeleteModalOpen(true)}
+            type="button"
+          >
+            {deleteRunMutation.isPending ? 'Deleting...' : 'Delete run'}
+          </button>
         </div>
       }
     >
-      <WorkflowRail steps={buildRunWorkflow(run)} />
+      <RunProgressTracker steps={buildRunWorkflow(run)} />
       {message ? <div className="notice">{message}</div> : null}
-      <div className="split-panels split-panels-wide-left">
-        <section className="panel">
-          <SectionHeader title="Run payments" description="Rows reconcile independently even when execution is prepared as one batch packet." />
-          <PaymentTable workspaceId={workspaceId} paymentOrders={run.paymentOrders ?? []} />
-        </section>
-        <aside className="panel">
-          <SectionHeader title="Batch execution" description="Attach a wallet-submitted signature after signing the prepared packet." />
-          <InfoGrid items={[
-            ['Source', run.sourceWorkspaceAddress ? walletLabel(run.sourceWorkspaceAddress) : 'Not set'],
-            ['Ready', `${run.totals.readyCount}/${run.totals.orderCount}`],
-            ['Exceptions', String(run.totals.exceptionCount)],
-            ['Prepared instructions', prepared ? String(prepared.executionPacket.instructions.length) : 'Not prepared'],
-          ]} />
-          {prepared ? (
-            <div className="packet-box">
-              <InfoGrid items={[
-                ['Signer', shortenAddress(prepared.executionPacket.signerWallet)],
-                ['Transfers', String(prepared.executionPacket.transfers?.length ?? 0)],
-                ['Amount', `${formatRawUsdcCompact(prepared.executionPacket.amountRaw)} USDC`],
-                ['Instructions', String(prepared.executionPacket.instructions.length)],
-              ]} />
-            </div>
-          ) : null}
-          <div className="manual-signature manual-signature-stack">
+      <section className="panel" id="run-payments">
+        <SectionHeader title="Run payments" description="Rows reconcile independently even when execution is prepared as one batch packet." />
+        <RunPaymentsTable
+          workspaceId={workspaceId}
+          paymentOrders={runOrders}
+          onExportProof={(order) => orderProofMutation.mutate(order.paymentOrderId)}
+          exportPending={orderProofMutation.isPending}
+        />
+      </section>
+      <Modal
+        open={executionModalOpen}
+        onClose={() => setExecutionModalOpen(false)}
+        size="wide"
+        title="Execute payments"
+      >
+        {!sourceAddresses.length ? (
+          <EmptyState title="No source wallets available" description="Add a wallet in Address book before preparing this batch." />
+        ) : (
+          <div className="form-stack">
             <label className="field">
-              Submitted signature
-              <input value={manualSignature} onChange={(event) => setManualSignature(event.target.value)} placeholder="Paste batch transaction signature" />
+              Source wallet
+              <select
+                value={effectiveSourceAddressId}
+                onChange={(event) => setSelectedSourceAddressId(event.target.value)}
+              >
+                {sourceAddresses.map((address: WorkspaceAddress) => (
+                  <option key={address.workspaceAddressId} value={address.workspaceAddressId}>
+                    {walletLabel(address)}
+                  </option>
+                ))}
+              </select>
             </label>
+            <section className="panel">
+              <SectionHeader title="Browser wallet" description="Select the signer wallet in a dedicated picker." />
+              <div className="action-cluster">
+                <span className="section-copy">
+                  {selectedWallet
+                    ? `Selected: ${selectedWallet.name}`
+                    : 'Selected: Auto-detect wallet'}
+                </span>
+                <button className="button button-secondary" onClick={() => setWalletModalOpen(true)} type="button">
+                  Choose wallet
+                </button>
+              </div>
+            </section>
+            <section className="allocation-panel">
+              <SectionHeader title="Transfer preview" description="Who gets paid in this batch and how the total is distributed." />
+              <div className="allocation-summary">
+                <span><strong>{executableOrders.length}</strong> payments</span>
+                <span><strong>{formatRawUsdcCompact(totalExecutableAmountRaw.toString())} USDC</strong> total</span>
+                <span><strong>{selectedSourceAddress ? walletLabel(selectedSourceAddress) : 'No source selected'}</strong></span>
+              </div>
+              {!canExecuteBatch ? <div className="notice">No executable payments in this run. Cancelled or closed rows are excluded.</div> : null}
+              <div className="allocation-list">
+                {allocationPreview.map((item) => (
+                  <div className="allocation-row" key={item.paymentOrderId}>
+                    <div className="allocation-copy">
+                      <strong>{item.label}</strong>
+                      <small>{item.detail}</small>
+                    </div>
+                    <div className="allocation-bar-track">
+                      <span className="allocation-bar-fill" style={{ width: `${Math.max(item.ratio * 100, 4)}%` }} />
+                    </div>
+                    <div className="allocation-amount">{item.amountLabel}</div>
+                  </div>
+                ))}
+              </div>
+            </section>
+            {prepared ? (
+              <div className="packet-box">
+                <InfoGrid
+                  items={[
+                    ['Signer', safeShortAddress(prepared.executionPacket.signerWallet)],
+                    ['Transfers', String(prepared.executionPacket.transfers?.length ?? 0)],
+                    ['Amount', `${formatRawUsdcCompact(prepared.executionPacket.amountRaw)} ${prepared.executionPacket.token?.symbol ?? 'USDC'}`],
+                    ['Instructions', String(prepared.executionPacket.instructions.length)],
+                  ]}
+                />
+              </div>
+            ) : (
+              <p className="section-copy">Execute non-cancelled payments in this run using the selected source wallet.</p>
+            )}
+            <div className="action-cluster">
+              <button
+                className="button button-secondary"
+                disabled={prepareMutation.isPending || !effectiveSourceAddressId || !canExecuteBatch}
+                onClick={() => prepareMutation.mutate(effectiveSourceAddressId)}
+                type="button"
+              >
+                {prepareMutation.isPending ? 'Preparing...' : 'Prepare packet only'}
+              </button>
+              <button
+                className="button button-primary"
+                disabled={!effectiveSourceAddressId || signMutation.isPending || !canExecuteBatch}
+                onClick={() => signMutation.mutate()}
+                type="button"
+              >
+                {signMutation.isPending ? 'Executing...' : 'Execute payments'}
+              </button>
+            </div>
+          </div>
+        )}
+      </Modal>
+      <Modal
+        open={walletModalOpen}
+        onClose={() => setWalletModalOpen(false)}
+        title="Choose browser wallet"
+      >
+        <div className="form-stack">
+          <WalletPicker
+            wallets={wallets}
+            selectedWalletId={selectedWalletId}
+            onSelect={(walletId) => {
+              setSelectedWalletId(walletId);
+              setWalletModalOpen(false);
+            }}
+          />
+        </div>
+      </Modal>
+      <Modal
+        open={deleteModalOpen}
+        onClose={() => setDeleteModalOpen(false)}
+        title="Delete payment run"
+        footer={(
+          <>
+            <button className="button button-secondary" onClick={() => setDeleteModalOpen(false)} type="button">Cancel</button>
             <button
-              className="button button-secondary"
-              onClick={() => manualSignature.trim() ? attachMutation.mutate(manualSignature.trim()) : setMessage('Paste a signature first.')}
+              className="button button-primary"
+              disabled={deleteRunMutation.isPending}
+              onClick={() => {
+                deleteRunMutation.mutate();
+                setDeleteModalOpen(false);
+              }}
               type="button"
             >
-              Attach batch signature
+              {deleteRunMutation.isPending ? 'Deleting...' : 'Delete run'}
             </button>
-          </div>
-        </aside>
-      </div>
+          </>
+        )}
+      >
+        <p className="section-copy">
+          Delete run <strong>{run.runName}</strong>? This action is permanent and will remove run grouping from linked records.
+        </p>
+      </Modal>
     </PageFrame>
   );
 }
@@ -865,21 +1338,33 @@ function ApprovalsPage({ session }: { session: AuthenticatedSession }) {
       setMessage('Approval decision recorded.');
       await queryClient.invalidateQueries({ queryKey: queryKeys(workspaceId).paymentOrders });
     },
-    onError: (error) => setMessage(error instanceof Error ? error.message : 'Could not record approval decision.'),
+    onError: (error) => setMessage(error instanceof Error ? error.message : 'Unable to record approval decision.'),
   });
 
   if (!workspaceId || !workspace) return <ScreenState title="Workspace unavailable" description="Choose a workspace from the sidebar." />;
-  const pending = (ordersQuery.data?.items ?? []).filter((order) => order.derivedState === 'pending_approval');
+  const allOrders = ordersQuery.data?.items ?? [];
+  const pending = allOrders.filter((order) => order.derivedState === 'pending_approval');
+  const history = allOrders.filter((order) => {
+    const decisions = order.reconciliationDetail?.approvalDecisions ?? [];
+    return decisions.some((decision) => ['approve', 'reject', 'escalate'].includes(decision.action));
+  });
 
   return (
-    <PageFrame eyebrow="Approvals" title={`Approval queue [${pending.length}]`} description="Payments blocked by policy or destination trust until a human decision is recorded.">
+    <PageFrame eyebrow="Approvals" title={`Approval queue [${pending.length}]`} description="Live approval queue and full decision history for audit visibility.">
       {message ? <div className="notice">{message}</div> : null}
-      <ApprovalsTable
-        workspaceId={workspaceId}
-        paymentOrders={pending}
-        onApprove={(order) => approvalMutation.mutate({ order, action: 'approve' })}
-        onReject={(order) => approvalMutation.mutate({ order, action: 'reject' })}
-      />
+      <section className="panel">
+        <SectionHeader title={`Pending approvals [${pending.length}]`} description="Payments blocked by policy or destination trust until a human decision is recorded." />
+        <ApprovalsTable
+          workspaceId={workspaceId}
+          paymentOrders={pending}
+          onApprove={(order) => approvalMutation.mutate({ order, action: 'approve' })}
+          onReject={(order) => approvalMutation.mutate({ order, action: 'reject' })}
+        />
+      </section>
+      <section className="panel panel-spaced">
+        <SectionHeader title={`Approval history [${history.length}]`} description="Resolved approval decisions only." />
+        <ApprovalHistoryTable workspaceId={workspaceId} paymentOrders={history} />
+      </section>
     </PageFrame>
   );
 }
@@ -903,11 +1388,7 @@ function ApprovalsTable({
       <div className="data-table-row data-table-head data-table-row-approvals data-table-sticky-head">
         <span>Payee</span>
         <span>Amount</span>
-        <span>Source</span>
-        <span>Destination</span>
-        <span>Trust</span>
-        <span>Why approval</span>
-        <span>Requested by</span>
+        <span>Reason</span>
         <span>Age</span>
         <span>Decision</span>
       </div>
@@ -920,13 +1401,12 @@ function ApprovalsTable({
             <small>{shortenAddress(order.paymentOrderId, 8, 6)}</small>
           </span>
           <span>{formatRawUsdcCompact(order.amountRaw)} {order.asset}</span>
-          <span>{order.sourceWorkspaceAddress?.displayName ?? shortenAddress(order.sourceWorkspaceAddress?.address) ?? '—'}</span>
-          <span>{order.destination.label}</span>
           <span>
-            <StatusBadge tone={toneForGenericState(order.destination.trustState)}>{trustDisplay(order.destination.trustState)}</StatusBadge>
+            <small>
+              {approvalReasonLine(order)}{' '}
+              <StatusBadge tone={toneForGenericState(order.destination.trustState)}>{trustDisplay(order.destination.trustState)}</StatusBadge>
+            </small>
           </span>
-          <span><small>{approvalReasonLine(order)}</small></span>
-          <span>{order.createdByUser?.email ?? '—'}</span>
           <span>{formatRelativeTime(order.createdAt)}</span>
           <span className="table-actions">
             <button className="button button-secondary button-small" onClick={() => onApprove(order)} type="button">
@@ -938,6 +1418,61 @@ function ApprovalsTable({
           </span>
         </div>
       ))}
+    </div>
+  );
+}
+
+function ApprovalHistoryTable({
+  workspaceId,
+  paymentOrders,
+}: {
+  workspaceId: string;
+  paymentOrders: PaymentOrder[];
+}) {
+  if (!paymentOrders.length) {
+    return <EmptyState title="No approval history yet" description="Decisions will appear here once approvals are routed or recorded." />;
+  }
+  return (
+    <div className="data-table">
+      <div className="data-table-row data-table-head data-table-row-approval-history data-table-sticky-head">
+        <span>Payee</span>
+        <span>Amount</span>
+        <span>Approval decision</span>
+        <span>Actor</span>
+        <span>Time</span>
+        <span>Payment status</span>
+      </div>
+      {paymentOrders.map((order) => {
+        const decisions = (order.reconciliationDetail?.approvalDecisions ?? [])
+          .filter((decision) => ['approve', 'reject', 'escalate'].includes(decision.action));
+        const latest = decisions.slice().sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0];
+        if (!latest) return null;
+        const decisionLabel = latest.action === 'approve'
+          ? 'Approved'
+          : latest.action === 'reject'
+            ? 'Rejected'
+            : 'Escalated';
+        const decisionTone = latest.action === 'approve'
+          ? 'success'
+          : latest.action === 'reject'
+            ? 'danger'
+            : 'warning';
+        return (
+          <div className="data-table-row data-table-row-approval-history" key={order.paymentOrderId}>
+            <span>
+              <Link to={`/workspaces/${workspaceId}/payments/${order.paymentOrderId}#approval`}>
+                <strong>{order.payee?.name ?? order.destination.label}</strong>
+              </Link>
+              <small>{shortenAddress(order.paymentOrderId, 8, 6)}</small>
+            </span>
+            <span>{formatRawUsdcCompact(order.amountRaw)} {order.asset}</span>
+            <span><StatusBadge tone={decisionTone}>{decisionLabel}</StatusBadge></span>
+            <span>{latest?.actorUser?.email ?? latest?.actorType ?? 'System'}</span>
+            <span>{latest ? formatDateCompact(latest.createdAt) : 'N/A'}</span>
+            <span><StatusBadge tone={statusToneForPayment(order.derivedState)}>{displayPaymentStatus(order.derivedState)}</StatusBadge></span>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -986,7 +1521,7 @@ function ExecutionPage({ session }: { session: AuthenticatedSession }) {
                 workspaceId={workspaceId}
                 paymentOrders={rows}
                 actionHeader="Open"
-                emptyTitle="No rows"
+                emptyTitle="No payments"
                 emptyDescription="This group is empty."
                 renderAction={(order) => (
                   <Link className="button button-secondary button-small" to={`/workspaces/${workspaceId}/payments/${order.paymentOrderId}#execution`}>
@@ -1080,7 +1615,7 @@ function ProofsPage({ session }: { session: AuthenticatedSession }) {
       kind === 'order' ? api.getPaymentOrderProof(workspaceId!, id) : api.getPaymentRunProof(workspaceId!, id)
     ),
     onSuccess: (proof, variables) => downloadJson(`${variables.kind}-proof-${variables.id}.json`, proof),
-    onError: (error) => setMessage(error instanceof Error ? error.message : 'Could not export proof.'),
+    onError: (error) => setMessage(error instanceof Error ? error.message : 'Unable to export proof.'),
   });
   const proofPreviewMutation = useMutation({
     mutationFn: async ({ kind, id, title }: { kind: 'order' | 'run'; id: string; title: string }) => {
@@ -1089,7 +1624,7 @@ function ProofsPage({ session }: { session: AuthenticatedSession }) {
       return { title, data: JSON.parse(JSON.stringify(packet)) as Record<string, unknown> };
     },
     onSuccess: (result) => setPreview(result),
-    onError: (error) => setMessage(error instanceof Error ? error.message : 'Could not load proof preview.'),
+    onError: (error) => setMessage(error instanceof Error ? error.message : 'Unable to load proof preview.'),
   });
 
   if (!workspaceId || !workspace) return <ScreenState title="Workspace unavailable" description="Choose a workspace from the sidebar." />;
@@ -1195,7 +1730,7 @@ function AddressBookPage({ session }: { session: AuthenticatedSession }) {
       setMessage('Wallet saved.');
       await invalidateRegistry();
     },
-    onError: (error) => setMessage(error instanceof Error ? error.message : 'Could not save wallet.'),
+    onError: (error) => setMessage(error instanceof Error ? error.message : 'Unable to save wallet.'),
   });
   const createCounterpartyMutation = useMutation({
     mutationFn: async (formData: FormData) => {
@@ -1208,7 +1743,7 @@ function AddressBookPage({ session }: { session: AuthenticatedSession }) {
       setMessage('Counterparty saved.');
       await invalidateRegistry();
     },
-    onError: (error) => setMessage(error instanceof Error ? error.message : 'Could not save counterparty.'),
+    onError: (error) => setMessage(error instanceof Error ? error.message : 'Unable to save counterparty.'),
   });
   const createDestinationMutation = useMutation({
     mutationFn: async (formData: FormData) => {
@@ -1225,7 +1760,7 @@ function AddressBookPage({ session }: { session: AuthenticatedSession }) {
       setMessage('Destination saved.');
       await invalidateRegistry();
     },
-    onError: (error) => setMessage(error instanceof Error ? error.message : 'Could not save destination.'),
+    onError: (error) => setMessage(error instanceof Error ? error.message : 'Unable to save destination.'),
   });
   const createPayeeMutation = useMutation({
     mutationFn: async (formData: FormData) => {
@@ -1240,7 +1775,7 @@ function AddressBookPage({ session }: { session: AuthenticatedSession }) {
       setMessage('Payee saved.');
       await invalidateRegistry();
     },
-    onError: (error) => setMessage(error instanceof Error ? error.message : 'Could not save payee.'),
+    onError: (error) => setMessage(error instanceof Error ? error.message : 'Unable to save payee.'),
   });
 
   if (!workspaceId || !workspace) {
@@ -1252,6 +1787,11 @@ function AddressBookPage({ session }: { session: AuthenticatedSession }) {
   const destinations = destinationsQuery.data?.items ?? [];
   const payees = payeesQuery.data?.items ?? [];
   const [registryDrawer, setRegistryDrawer] = useState<{ title: string; body: ReactNode } | null>(null);
+  const [addWalletOpen, setAddWalletOpen] = useState(false);
+  const [addDestinationOpen, setAddDestinationOpen] = useState(false);
+  const [addCounterpartyOpen, setAddCounterpartyOpen] = useState(false);
+  const [addPayeeOpen, setAddPayeeOpen] = useState(false);
+  const hasRegistryData = Boolean(addresses.length || destinations.length || counterparties.length || payees.length);
 
   return (
     <PageFrame
@@ -1262,145 +1802,369 @@ function AddressBookPage({ session }: { session: AuthenticatedSession }) {
       <Drawer open={Boolean(registryDrawer)} title={registryDrawer?.title ?? ''} onClose={() => setRegistryDrawer(null)}>
         {registryDrawer?.body}
       </Drawer>
+      <Modal open={addWalletOpen} title="Add wallet" onClose={() => setAddWalletOpen(false)}>
+        <form
+          className="form-stack"
+          onSubmit={(event) => {
+            event.preventDefault();
+            createAddressMutation.mutate(new FormData(event.currentTarget), {
+              onSuccess: () => setAddWalletOpen(false),
+            });
+          }}
+        >
+          <label className="field">Name<input name="displayName" placeholder="Ops vault" /></label>
+          <label className="field">Solana address<input name="address" required placeholder="Wallet address" /></label>
+          <label className="field">Notes<input name="notes" placeholder="Optional context" /></label>
+          <button className="button button-primary" disabled={createAddressMutation.isPending} type="submit">
+            {createAddressMutation.isPending ? 'Saving...' : 'Save wallet'}
+          </button>
+        </form>
+      </Modal>
+      <Modal open={addDestinationOpen} title="Add destination" onClose={() => setAddDestinationOpen(false)}>
+        <form
+          className="form-stack"
+          onSubmit={(event) => {
+            event.preventDefault();
+            createDestinationMutation.mutate(new FormData(event.currentTarget), {
+              onSuccess: () => setAddDestinationOpen(false),
+            });
+          }}
+        >
+          <label className="field">
+            Linked wallet
+            <select name="linkedWorkspaceAddressId" required defaultValue="">
+              <option value="" disabled>Select wallet</option>
+              {addresses.map((address) => <option key={address.workspaceAddressId} value={address.workspaceAddressId}>{walletLabel(address)}</option>)}
+            </select>
+          </label>
+          <label className="field">Destination label<input name="label" required placeholder="Acme payout wallet" /></label>
+          <label className="field">
+            Counterparty (optional)
+            <select name="counterpartyId" defaultValue="">
+              <option value="">Unassigned</option>
+              {counterparties.map((counterparty) => <option key={counterparty.counterpartyId} value={counterparty.counterpartyId}>{counterparty.displayName}</option>)}
+            </select>
+          </label>
+          <label className="field">
+            Trust state
+            <select name="trustState" defaultValue="unreviewed">
+              <option value="unreviewed">Unreviewed</option>
+              <option value="trusted">Trusted</option>
+              <option value="restricted">Restricted</option>
+              <option value="blocked">Blocked</option>
+            </select>
+          </label>
+          <label className="field checkbox-field"><input name="isInternal" type="checkbox" /> Internal destination</label>
+          <button className="button button-primary" disabled={!addresses.length || createDestinationMutation.isPending} type="submit">
+            {createDestinationMutation.isPending ? 'Saving...' : 'Save destination'}
+          </button>
+        </form>
+      </Modal>
+      <Modal open={addCounterpartyOpen} title="Add counterparty" onClose={() => setAddCounterpartyOpen(false)}>
+        <form
+          className="form-stack"
+          onSubmit={(event) => {
+            event.preventDefault();
+            createCounterpartyMutation.mutate(new FormData(event.currentTarget), {
+              onSuccess: () => setAddCounterpartyOpen(false),
+            });
+          }}
+        >
+          <label className="field">Name<input name="displayName" required placeholder="Acme Corp" /></label>
+          <label className="field">Category<input name="category" placeholder="vendor, contractor, internal" /></label>
+          <button className="button button-primary" disabled={createCounterpartyMutation.isPending} type="submit">
+            {createCounterpartyMutation.isPending ? 'Saving...' : 'Save counterparty'}
+          </button>
+        </form>
+      </Modal>
+      <Modal open={addPayeeOpen} title="Add payee" onClose={() => setAddPayeeOpen(false)}>
+        <form
+          className="form-stack"
+          onSubmit={(event) => {
+            event.preventDefault();
+            createPayeeMutation.mutate(new FormData(event.currentTarget), {
+              onSuccess: () => setAddPayeeOpen(false),
+            });
+          }}
+        >
+          <label className="field">Payee name<input name="name" required placeholder="Fuyo LLC" /></label>
+          <label className="field">
+            Default destination (optional)
+            <select name="defaultDestinationId" defaultValue="">
+              <option value="">Optional</option>
+              {destinations.map((destination) => <option key={destination.destinationId} value={destination.destinationId}>{destination.label}</option>)}
+            </select>
+          </label>
+          <label className="field">Reference<input name="externalReference" placeholder="Vendor ID" /></label>
+          <label className="field">Notes<input name="notes" placeholder="Optional context" /></label>
+          <button className="button button-primary" disabled={createPayeeMutation.isPending} type="submit">
+            {createPayeeMutation.isPending ? 'Saving...' : 'Save payee'}
+          </button>
+        </form>
+      </Modal>
       {message ? <div className="notice">{message}</div> : null}
+      {hasRegistryData ? (
+        <>
+          <section className="panel">
+            <SectionHeader
+              title={`Wallets [${addresses.length}]`}
+              description="Saved source wallets used for payment execution and destination linkage."
+            />
+            <div className="action-cluster" style={{ marginBottom: 14 }}>
+              <button className="button button-primary" type="button" onClick={() => setAddWalletOpen(true)}>+ Add wallet</button>
+            </div>
+            <WalletsTable
+              addresses={addresses}
+              destinations={destinations}
+              onSelect={(address) =>
+                setRegistryDrawer({
+                  title: walletLabel(address) ?? shortenAddress(address.address),
+                  body: (
+                    <InfoGrid
+                      items={[
+                        ['Name', walletLabel(address) ?? 'N/A'],
+                        ['Address', <AddressLink key="a" value={address.address} />],
+                        ['Asset scope', address.assetScope],
+                        ['Status', address.isActive ? 'Active' : 'Inactive'],
+                        ['Notes', address.notes ?? 'N/A'],
+                      ]}
+                    />
+                  ),
+                })
+              }
+            />
+          </section>
+
+          <section className="panel panel-spaced">
+            <SectionHeader
+              title={`Destinations [${destinations.length}]`}
+              description="Operator-facing payout endpoints derived from wallets."
+            />
+            <div className="action-cluster" style={{ marginBottom: 14 }}>
+              <button className="button button-primary" type="button" onClick={() => setAddDestinationOpen(true)} disabled={!addresses.length}>
+                + Add destination
+              </button>
+            </div>
+            <DestinationsTable
+              destinations={destinations}
+              onSelect={(destination) =>
+                setRegistryDrawer({
+                  title: destination.label,
+                  body: (
+                    <InfoGrid
+                      items={[
+                        ['Label', destination.label],
+                        ['Wallet', <AddressLink key="w" value={destination.walletAddress} />],
+                        ['Trust', trustDisplay(destination.trustState)],
+                        ['Scope', destination.isInternal ? 'Internal' : 'External'],
+                        ['Counterparty', destination.counterparty?.displayName ?? 'N/A'],
+                        ['Status', destination.isActive ? 'Active' : 'Inactive'],
+                        ['Notes', destination.notes ?? 'N/A'],
+                      ]}
+                    />
+                  ),
+                })
+              }
+            />
+          </section>
+
+          <div className="split-panels panel-spaced">
+            <section className="panel">
+              <SectionHeader title={`Payees [${payees.length}]`} description="Optional recipient profiles mapped to destinations." />
+              <div className="action-cluster" style={{ marginBottom: 14 }}>
+                <button className="button button-primary" type="button" onClick={() => setAddPayeeOpen(true)}>+ Add payee</button>
+              </div>
+              <PayeesTable
+                payees={payees}
+                onSelect={(payee) =>
+                  setRegistryDrawer({
+                    title: payee.name,
+                    body: (
+                      <InfoGrid
+                        items={[
+                          ['Default destination', payee.defaultDestination?.label ?? 'N/A'],
+                          ['Reference', payee.externalReference ?? 'N/A'],
+                          ['Status', payee.status],
+                          ['Notes', payee.notes ?? 'N/A'],
+                        ]}
+                      />
+                    ),
+                  })
+                }
+              />
+            </section>
+            <section className="panel">
+              <SectionHeader title={`Counterparties [${counterparties.length}]`} description="Optional business ownership metadata." />
+              <div className="action-cluster" style={{ marginBottom: 14 }}>
+                <button className="button button-primary" type="button" onClick={() => setAddCounterpartyOpen(true)}>+ Add counterparty</button>
+              </div>
+              <CounterpartiesTable counterparties={counterparties} destinations={destinations} />
+            </section>
+          </div>
+        </>
+      ) : (
+      <>
       <section className="panel">
-        <SectionHeader title={`Destinations [${destinations.length}]`} description="Operator-facing payout endpoints. Click a row for details." />
-        <DestinationsTable
-          destinations={destinations}
-          onSelect={(destination) =>
-            setRegistryDrawer({
-              title: destination.label,
-              body: (
-                <InfoGrid
-                  items={[
-                    ['Label', destination.label],
-                    ['Wallet', <AddressLink key="w" value={destination.walletAddress} />],
-                    ['Trust', trustDisplay(destination.trustState)],
-                    ['Scope', destination.isInternal ? 'Internal' : 'External'],
-                    ['Counterparty', destination.counterparty?.displayName ?? '—'],
-                    ['Status', destination.isActive ? 'Active' : 'Inactive'],
-                    ['Notes', destination.notes ?? '—'],
-                  ]}
-                />
-              ),
-            })
-          }
+        <SectionHeader
+          title={`Step 1 · Wallets [${addresses.length}]`}
+          description="Start here. Add source wallets first, then convert them into destinations."
         />
+        <div className="split-panels">
+          <div>
+            <WalletsTable
+              addresses={addresses}
+              destinations={destinations}
+              onSelect={(address) =>
+                setRegistryDrawer({
+                  title: walletLabel(address) ?? shortenAddress(address.address),
+                  body: (
+                    <InfoGrid
+                      items={[
+                        ['Name', walletLabel(address) ?? 'N/A'],
+                        ['Address', <AddressLink key="a" value={address.address} />],
+                        ['Asset scope', address.assetScope],
+                        ['Status', address.isActive ? 'Active' : 'Inactive'],
+                        ['Notes', address.notes ?? 'N/A'],
+                      ]}
+                    />
+                  ),
+                })
+              }
+            />
+          </div>
+          <div>
+            <SectionHeader title="Add wallet" description="Wallets become selectable sources and destination links." />
+            <form
+              className="form-stack"
+              onSubmit={(event) => {
+                event.preventDefault();
+                createAddressMutation.mutate(new FormData(event.currentTarget));
+              }}
+            >
+              <label className="field">Name<input name="displayName" placeholder="Ops vault" /></label>
+              <label className="field">Solana address<input name="address" required placeholder="Wallet address" /></label>
+              <label className="field">Notes<input name="notes" placeholder="Optional context" /></label>
+              <button className="button button-primary" type="submit">Save wallet</button>
+            </form>
+          </div>
+        </div>
       </section>
-      <div className="quad-grid">
-        <section className="panel">
-          <SectionHeader title="Add wallet" />
-          <form
-            className="form-stack"
-            onSubmit={(event) => {
-              event.preventDefault();
-              createAddressMutation.mutate(new FormData(event.currentTarget));
-            }}
-          >
-            <label className="field">Name<input name="displayName" placeholder="Ops vault" /></label>
-            <label className="field">Solana address<input name="address" required placeholder="Wallet address" /></label>
-            <label className="field">Notes<input name="notes" placeholder="Optional context" /></label>
-            <button className="button button-primary" type="submit">Save wallet</button>
-          </form>
-        </section>
-        <section className="panel">
-          <SectionHeader title="Add counterparty" />
-          <form
-            className="form-stack"
-            onSubmit={(event) => {
-              event.preventDefault();
-              createCounterpartyMutation.mutate(new FormData(event.currentTarget));
-            }}
-          >
-            <label className="field">Name<input name="displayName" required placeholder="Acme Corp" /></label>
-            <label className="field">Category<input name="category" placeholder="vendor, contractor, internal" /></label>
-            <button className="button button-primary" type="submit">Save counterparty</button>
-          </form>
-        </section>
-        <section className="panel">
-          <SectionHeader title="Add destination" />
-          <form
-            className="form-stack"
-            onSubmit={(event) => {
-              event.preventDefault();
-              createDestinationMutation.mutate(new FormData(event.currentTarget));
-            }}
-          >
-            <label className="field">
-              Linked wallet
-              <select name="linkedWorkspaceAddressId" required defaultValue="">
-                <option value="" disabled>Select wallet</option>
-                {addresses.map((address) => <option key={address.workspaceAddressId} value={address.workspaceAddressId}>{walletLabel(address)}</option>)}
-              </select>
-            </label>
-            <label className="field">Destination label<input name="label" required placeholder="Acme payout wallet" /></label>
-            <label className="field">
-              Counterparty
-              <select name="counterpartyId" defaultValue="">
-                <option value="">Unassigned</option>
-                {counterparties.map((counterparty) => <option key={counterparty.counterpartyId} value={counterparty.counterpartyId}>{counterparty.displayName}</option>)}
-              </select>
-            </label>
-            <label className="field">
-              Trust state
-              <select name="trustState" defaultValue="unreviewed">
-                <option value="unreviewed">Unreviewed</option>
-                <option value="trusted">Trusted</option>
-                <option value="restricted">Restricted</option>
-                <option value="blocked">Blocked</option>
-              </select>
-            </label>
-            <label className="field checkbox-field"><input name="isInternal" type="checkbox" /> Internal destination</label>
-            <button className="button button-primary" disabled={!addresses.length} type="submit">Save destination</button>
-          </form>
-        </section>
-        <section className="panel">
-          <SectionHeader title="Add payee" />
-          <form
-            className="form-stack"
-            onSubmit={(event) => {
-              event.preventDefault();
-              createPayeeMutation.mutate(new FormData(event.currentTarget));
-            }}
-          >
-            <label className="field">Payee name<input name="name" required placeholder="Fuyo LLC" /></label>
-            <label className="field">
-              Default destination
-              <select name="defaultDestinationId" defaultValue="">
-                <option value="">Optional</option>
-                {destinations.map((destination) => <option key={destination.destinationId} value={destination.destinationId}>{destination.label}</option>)}
-              </select>
-            </label>
-            <label className="field">Reference<input name="externalReference" placeholder="Vendor ID" /></label>
-            <label className="field">Notes<input name="notes" placeholder="Optional context" /></label>
-            <button className="button button-primary" type="submit">Save payee</button>
-          </form>
-        </section>
-      </div>
-      <div className="split-panels">
-        <section className="panel">
-          <SectionHeader title={`Wallets [${addresses.length}]`} description="Click a row for details." />
-          <WalletsTable
-            addresses={addresses}
-            destinations={destinations}
-            onSelect={(address) =>
-              setRegistryDrawer({
-                title: walletLabel(address) ?? shortenAddress(address.address),
-                body: (
-                  <InfoGrid
-                    items={[
-                      ['Name', walletLabel(address) ?? '—'],
-                      ['Address', <AddressLink key="a" value={address.address} />],
-                      ['Asset scope', address.assetScope],
-                      ['Status', address.isActive ? 'Active' : 'Inactive'],
-                      ['Notes', address.notes ?? '—'],
-                    ]}
-                  />
-                ),
-              })
-            }
-          />
-        </section>
+
+      <section className="panel panel-spaced">
+        <SectionHeader
+          title={`Step 2 · Destinations [${destinations.length}]`}
+          description="Create payout destinations from existing wallets. Counterparty mapping can be added now or later."
+        />
+        <div className="split-panels split-panels-wide-left">
+          <div>
+            <DestinationsTable
+              destinations={destinations}
+              onSelect={(destination) =>
+                setRegistryDrawer({
+                  title: destination.label,
+                  body: (
+                    <InfoGrid
+                      items={[
+                        ['Label', destination.label],
+                        ['Wallet', <AddressLink key="w" value={destination.walletAddress} />],
+                        ['Trust', trustDisplay(destination.trustState)],
+                        ['Scope', destination.isInternal ? 'Internal' : 'External'],
+                        ['Counterparty', destination.counterparty?.displayName ?? 'N/A'],
+                        ['Status', destination.isActive ? 'Active' : 'Inactive'],
+                        ['Notes', destination.notes ?? 'N/A'],
+                      ]}
+                    />
+                  ),
+                })
+              }
+            />
+          </div>
+          <div>
+            <SectionHeader title="Add destination" description="Destinations are operator-facing payout endpoints." />
+            <form
+              className="form-stack"
+              onSubmit={(event) => {
+                event.preventDefault();
+                createDestinationMutation.mutate(new FormData(event.currentTarget));
+              }}
+            >
+              <label className="field">
+                Linked wallet
+                <select name="linkedWorkspaceAddressId" required defaultValue="">
+                  <option value="" disabled>Select wallet</option>
+                  {addresses.map((address) => <option key={address.workspaceAddressId} value={address.workspaceAddressId}>{walletLabel(address)}</option>)}
+                </select>
+              </label>
+              <label className="field">Destination label<input name="label" required placeholder="Acme payout wallet" /></label>
+              <label className="field">
+                Counterparty (optional)
+                <select name="counterpartyId" defaultValue="">
+                  <option value="">Unassigned</option>
+                  {counterparties.map((counterparty) => <option key={counterparty.counterpartyId} value={counterparty.counterpartyId}>{counterparty.displayName}</option>)}
+                </select>
+              </label>
+              <label className="field">
+                Trust state
+                <select name="trustState" defaultValue="unreviewed">
+                  <option value="unreviewed">Unreviewed</option>
+                  <option value="trusted">Trusted</option>
+                  <option value="restricted">Restricted</option>
+                  <option value="blocked">Blocked</option>
+                </select>
+              </label>
+              <label className="field checkbox-field"><input name="isInternal" type="checkbox" /> Internal destination</label>
+              <button className="button button-primary" disabled={!addresses.length} type="submit">Save destination</button>
+            </form>
+          </div>
+        </div>
+      </section>
+
+      <section className="panel panel-spaced">
+        <SectionHeader
+          title="Step 3 · Optional mappings"
+          description="Counterparties and payees are optional metadata layers mapped to destinations."
+        />
+        <div className="split-panels">
+          <section>
+            <SectionHeader title="Add counterparty" description="Business entity metadata for destination ownership." />
+            <form
+              className="form-stack"
+              onSubmit={(event) => {
+                event.preventDefault();
+                createCounterpartyMutation.mutate(new FormData(event.currentTarget));
+              }}
+            >
+              <label className="field">Name<input name="displayName" required placeholder="Acme Corp" /></label>
+              <label className="field">Category<input name="category" placeholder="vendor, contractor, internal" /></label>
+              <button className="button button-primary" type="submit">Save counterparty</button>
+            </form>
+          </section>
+          <section>
+            <SectionHeader title="Add payee" description="Named recipient profile with optional default destination." />
+            <form
+              className="form-stack"
+              onSubmit={(event) => {
+                event.preventDefault();
+                createPayeeMutation.mutate(new FormData(event.currentTarget));
+              }}
+            >
+              <label className="field">Payee name<input name="name" required placeholder="Fuyo LLC" /></label>
+              <label className="field">
+                Default destination (optional)
+                <select name="defaultDestinationId" defaultValue="">
+                  <option value="">Optional</option>
+                  {destinations.map((destination) => <option key={destination.destinationId} value={destination.destinationId}>{destination.label}</option>)}
+                </select>
+              </label>
+              <label className="field">Reference<input name="externalReference" placeholder="Vendor ID" /></label>
+              <label className="field">Notes<input name="notes" placeholder="Optional context" /></label>
+              <button className="button button-primary" type="submit">Save payee</button>
+            </form>
+          </section>
+        </div>
+      </section>
+
+      <div className="split-panels panel-spaced">
         <section className="panel">
           <SectionHeader title={`Payees [${payees.length}]`} description="Click a row for details." />
           <PayeesTable
@@ -1411,10 +2175,10 @@ function AddressBookPage({ session }: { session: AuthenticatedSession }) {
                 body: (
                   <InfoGrid
                     items={[
-                      ['Default destination', payee.defaultDestination?.label ?? '—'],
-                      ['Reference', payee.externalReference ?? '—'],
+                      ['Default destination', payee.defaultDestination?.label ?? 'N/A'],
+                      ['Reference', payee.externalReference ?? 'N/A'],
                       ['Status', payee.status],
-                      ['Notes', payee.notes ?? '—'],
+                      ['Notes', payee.notes ?? 'N/A'],
                     ]}
                   />
                 ),
@@ -1422,11 +2186,13 @@ function AddressBookPage({ session }: { session: AuthenticatedSession }) {
             }
           />
         </section>
+        <section className="panel">
+          <SectionHeader title={`Counterparties [${counterparties.length}]`} description="Destination ownership records." />
+          <CounterpartiesTable counterparties={counterparties} destinations={destinations} />
+        </section>
       </div>
-      <section className="panel">
-        <SectionHeader title={`Counterparties [${counterparties.length}]`} />
-        <CounterpartiesTable counterparties={counterparties} destinations={destinations} />
-      </section>
+      </>
+      )}
     </PageFrame>
   );
 }
@@ -1461,7 +2227,7 @@ function PolicyPage({ session }: { session: AuthenticatedSession }) {
       setEditOpen(false);
       await queryClient.invalidateQueries({ queryKey: queryKeys(workspaceId).approvalPolicy });
     },
-    onError: (error) => setMessage(error instanceof Error ? error.message : 'Could not update policy.'),
+    onError: (error) => setMessage(error instanceof Error ? error.message : 'Unable to update policy.'),
   });
 
   if (!workspaceId || !workspace) return <ScreenState title="Workspace unavailable" description="Choose a workspace from the sidebar." />;
@@ -1591,7 +2357,7 @@ function ExceptionsPage({ session }: { session: AuthenticatedSession }) {
       setMessage('Exception updated.');
       await queryClient.invalidateQueries({ queryKey: queryKeys(workspaceId).exceptions });
     },
-    onError: (error) => setMessage(error instanceof Error ? error.message : 'Could not update exception.'),
+    onError: (error) => setMessage(error instanceof Error ? error.message : 'Unable to update exception.'),
   });
 
   if (!workspaceId || !workspace) return <ScreenState title="Workspace unavailable" description="Choose a workspace from the sidebar." />;
@@ -1644,7 +2410,7 @@ function ExceptionDetailPage({ session }: { session: AuthenticatedSession }) {
       await queryClient.invalidateQueries({ queryKey: ['workspace-exception', workspaceId, exceptionId] as const });
       await queryClient.invalidateQueries({ queryKey: queryKeys(workspaceId).exceptions });
     },
-    onError: (error) => setMessage(error instanceof Error ? error.message : 'Could not update exception.'),
+    onError: (error) => setMessage(error instanceof Error ? error.message : 'Unable to update exception.'),
   });
 
   const noteMutation = useMutation({
@@ -1654,7 +2420,7 @@ function ExceptionDetailPage({ session }: { session: AuthenticatedSession }) {
       setMessage('Note added.');
       await queryClient.invalidateQueries({ queryKey: ['workspace-exception', workspaceId, exceptionId] as const });
     },
-    onError: (error) => setMessage(error instanceof Error ? error.message : 'Could not add note.'),
+    onError: (error) => setMessage(error instanceof Error ? error.message : 'Unable to add note.'),
   });
 
   const proofMutation = useMutation({
@@ -1663,7 +2429,7 @@ function ExceptionDetailPage({ session }: { session: AuthenticatedSession }) {
       return api.getPaymentOrderProof(workspaceId!, linkedOrder.paymentOrderId);
     },
     onSuccess: (proof) => downloadJson(`payment-proof-${linkedOrder?.paymentOrderId}.json`, proof),
-    onError: (error) => setMessage(error instanceof Error ? error.message : 'Could not export proof.'),
+    onError: (error) => setMessage(error instanceof Error ? error.message : 'Unable to export proof.'),
   });
 
   if (!workspaceId || !exceptionId || !workspace) {
@@ -1712,12 +2478,12 @@ function ExceptionDetailPage({ session }: { session: AuthenticatedSession }) {
               ['Status', ex.status],
               ['Type', ex.exceptionType],
               ['Owner', ex.assignedToUser?.email ?? 'Unassigned'],
-              ['Observed time', ex.observedEventTime ? formatTimestamp(ex.observedEventTime) : '—'],
-              ['Signature', ex.signature ? <AddressLink key="sig" value={ex.signature} kind="transaction" /> : '—'],
-              ['Transfer request', ex.transferRequestId ? shortenAddress(ex.transferRequestId, 8, 6) : '—'],
+              ['Observed time', ex.observedEventTime ? formatDateCompact(ex.observedEventTime) : 'N/A'],
+              ['Signature', ex.signature ? <AddressLink key="sig" value={ex.signature} kind="transaction" /> : 'N/A'],
+              ['Transfer request', ex.transferRequestId ? shortenAddress(ex.transferRequestId, 8, 6) : 'N/A'],
               [
                 'Amount',
-                linkedOrder ? `${formatRawUsdcCompact(linkedOrder.amountRaw)} ${linkedOrder.asset}` : '—',
+                linkedOrder ? `${formatRawUsdcCompact(linkedOrder.amountRaw)} ${linkedOrder.asset}` : 'N/A',
               ],
             ]}
           />
@@ -1771,7 +2537,7 @@ function ExceptionDetailPage({ session }: { session: AuthenticatedSession }) {
             }))}
           />
         ) : (
-          <p className="section-copy">No notes yet.</p>
+          <p className="section-copy">No notes recorded.</p>
         )}
       </section>
     </PageFrame>
@@ -1818,12 +2584,18 @@ function OpsPage({ session }: { session: AuthenticatedSession }) {
 function PaymentDetailPage({ session }: { session: AuthenticatedSession }) {
   const { workspaceId, paymentOrderId } = useParams<{ workspaceId: string; paymentOrderId: string }>();
   const location = useLocation();
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [preparedPacket, setPreparedPacket] = useState<PaymentExecutionPacket | null>(null);
   const [manualSignature, setManualSignature] = useState('');
+  const [expandedTimelineStages, setExpandedTimelineStages] = useState<{ approval: boolean; settlement: boolean }>({
+    approval: false,
+    settlement: false,
+  });
   const [selectedWalletId, setSelectedWalletId] = useState<string | undefined>();
   const [wallets, setWallets] = useState<BrowserWalletOption[]>(() => discoverSolanaWallets());
   const [actionMessage, setActionMessage] = useState<string | null>(null);
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
 
   useEffect(() => subscribeSolanaWallets(setWallets), []);
 
@@ -1857,6 +2629,32 @@ function PaymentDetailPage({ session }: { session: AuthenticatedSession }) {
     },
     onError: (error) => setActionMessage(error instanceof Error ? error.message : 'Failed to attach signature.'),
   });
+  const submitMutation = useMutation({
+    mutationFn: () => api.submitPaymentOrder(workspaceId!, paymentOrderId!),
+    onSuccess: async () => {
+      setActionMessage('Payment submitted for approval.');
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys(workspaceId, paymentOrderId).paymentOrder }),
+        queryClient.invalidateQueries({ queryKey: queryKeys(workspaceId).paymentOrders }),
+      ]);
+    },
+    onError: (error) => setActionMessage(error instanceof Error ? error.message : 'Failed to submit payment.'),
+  });
+  const approveMutation = useMutation({
+    mutationFn: () => {
+      const transferRequestId = paymentOrderQuery.data?.transferRequestId;
+      if (!transferRequestId) throw new Error('Approval request is not available yet for this payment.');
+      return api.createApprovalDecision(workspaceId!, transferRequestId, { action: 'approve' });
+    },
+    onSuccess: async () => {
+      setActionMessage('Payment approved and moved to execution.');
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys(workspaceId, paymentOrderId).paymentOrder }),
+        queryClient.invalidateQueries({ queryKey: queryKeys(workspaceId).paymentOrders }),
+      ]);
+    },
+    onError: (error) => setActionMessage(error instanceof Error ? error.message : 'Failed to approve payment.'),
+  });
 
   const signMutation = useMutation({
     mutationFn: async () => {
@@ -1885,7 +2683,25 @@ function PaymentDetailPage({ session }: { session: AuthenticatedSession }) {
     },
     onError: (error) => setActionMessage(error instanceof Error ? error.message : 'Failed to export proof.'),
   });
+  const deletePaymentMutation = useMutation({
+    mutationFn: () => api.cancelPaymentOrder(workspaceId!, paymentOrderId!),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys(workspaceId).paymentOrders }),
+        queryClient.invalidateQueries({ queryKey: queryKeys(workspaceId).paymentRuns }),
+      ]);
+      navigate(`/workspaces/${workspaceId}/payments`);
+    },
+    onError: (error) => setActionMessage(error instanceof Error ? error.message : 'Failed to delete payment.'),
+  });
 
+  useLayoutEffect(() => {
+    const id = location.hash.replace(/^#/, '');
+    if (!id) return;
+    requestAnimationFrame(() => {
+      document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  }, [location.hash, paymentOrderId, paymentOrderQuery.data?.paymentOrderId]);
   if (!workspaceId || !paymentOrderId || !workspace) {
     return <ScreenState title="Payment unavailable" description="Choose a payment from the queue." />;
   }
@@ -1898,170 +2714,211 @@ function PaymentDetailPage({ session }: { session: AuthenticatedSession }) {
   if (!order) {
     return <ScreenState title="Payment not found" description="The payment may have been deleted or moved." />;
   }
+  if (!order.destination) {
+    return <ScreenState title="Payment unavailable" description="Destination details are missing for this payment record." />;
+  }
 
   const summary = summarizePayment(order);
   const packet = preparedPacket ?? getPreparedPacket(order);
   const latestExecution = order.reconciliationDetail?.latestExecution ?? null;
   const match = order.reconciliationDetail?.match ?? null;
-  const timeline = [
-    ...order.events.map((event) => ({
-      type: event.eventType,
-      createdAt: event.createdAt,
-      description: event.afterState ? `${event.beforeState ?? 'created'} -> ${event.afterState}` : 'payment event',
-    })),
-    ...(order.reconciliationDetail?.timeline ?? []).map(timelineLabel),
-  ].sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
-
-  useLayoutEffect(() => {
-    const id = location.hash.replace(/^#/, '');
-    if (!id) return;
-    requestAnimationFrame(() => {
-      document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    });
-  }, [location.hash, paymentOrderId, order.paymentOrderId]);
-
+  const approvalDecisions = (Array.isArray(order.reconciliationDetail?.approvalDecisions)
+    ? order.reconciliationDetail.approvalDecisions.filter(Boolean)
+    : []);
+  const exceptions = (Array.isArray(order.reconciliationDetail?.exceptions)
+    ? order.reconciliationDetail.exceptions.filter(Boolean)
+    : []);
   const proofReady = order.derivedState === 'settled' || order.derivedState === 'closed';
+  const heroTime = latestExecution?.submittedAt ?? order.createdAt;
+  const heroTimeLabel = latestExecution?.submittedSignature ? 'Submitted' : 'Requested';
+  const latestDecision = approvalDecisions.slice().sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0] ?? null;
+  const stageAction = (() => {
+    if (order.derivedState === 'draft') {
+      return (
+        <button className="button button-secondary" disabled={submitMutation.isPending} onClick={() => submitMutation.mutate()} type="button">
+          {submitMutation.isPending ? 'Submitting...' : 'Submit for approval'}
+        </button>
+      );
+    }
+    if (order.derivedState === 'pending_approval') {
+      return (
+        <button className="button button-secondary" disabled={approveMutation.isPending || !order.transferRequestId} onClick={() => approveMutation.mutate()} type="button">
+          {approveMutation.isPending ? 'Approving...' : 'Approve payment'}
+        </button>
+      );
+    }
+    if (order.derivedState === 'approved' || order.derivedState === 'ready_for_execution' || order.derivedState === 'execution_recorded') {
+      return (
+        <button className="button button-secondary" onClick={() => document.getElementById('stage-execution')?.scrollIntoView({ behavior: 'smooth', block: 'start' })} type="button">
+          Continue to execution
+        </button>
+      );
+    }
+    return null;
+  })();
 
-  return (
-    <PageFrame
+  try {
+    return (
+      <PageFrame
       eyebrow="Payment"
       title={summary.title}
       description={summary.description}
       action={
         <div className="action-cluster">
+          {stageAction}
           <button className="button button-secondary" onClick={() => proofMutation.mutate()} type="button">
             Export proof
           </button>
           <button className="button button-secondary" onClick={() => void api.downloadPaymentOrderAuditExport(workspaceId, paymentOrderId)} type="button">
             Audit CSV
           </button>
+          <button
+            className="button button-secondary"
+            disabled={deletePaymentMutation.isPending}
+            onClick={() => setDeleteModalOpen(true)}
+            type="button"
+          >
+            {deletePaymentMutation.isPending ? 'Deleting...' : 'Delete payment'}
+          </button>
         </div>
       }
     >
-      <PaymentHero order={order} />
-      <WorkflowRail steps={buildWorkflow(order)} />
+      <RunProgressTracker steps={buildWorkflow(order)} />
+      <section className="panel panel-spaced">
+        <SectionHeader title="Payment snapshot" />
+        <InfoGrid
+          items={[
+            ['Amount', `${formatRawUsdcCompact(order.amountRaw)} ${order.asset}`],
+            ['From', order.sourceWorkspaceAddress?.address ? shortenAddress(order.sourceWorkspaceAddress.address) : 'Source not set'],
+            ['To', order.destination?.walletAddress ? shortenAddress(order.destination.walletAddress) : 'Destination unavailable'],
+            ['Signature', latestExecution?.submittedSignature ? shortenAddress(latestExecution.submittedSignature) : 'Not submitted'],
+            ['Time label', heroTimeLabel],
+            ['Time', formatRelativeTime(heroTime)],
+          ]}
+        />
+      </section>
       {actionMessage ? <div className="notice">{actionMessage}</div> : null}
-      <div className="detail-grid">
-        <div className="detail-main">
-          <InfoSection title="Request" sectionId="request" state={displayPaymentStatus(order.derivedState)} toneKey={order.derivedState}>
-            <InfoGrid
-              items={[
-                ['Payee', order.payee?.name ?? order.counterparty?.displayName ?? 'Unassigned'],
-                ['Reference', order.externalReference ?? order.invoiceNumber ?? 'None'],
-                ['Memo', order.memo ?? 'None'],
-                ['Due date', order.dueAt ? formatTimestamp(order.dueAt) : 'Not set'],
-                ['Requested by', order.createdByUser?.email ?? 'System'],
-              ]}
-            />
-          </InfoSection>
-          <InfoSection title="Approval" sectionId="approval" state={getApprovalLabel(order)} toneKey={order.derivedState}>
-            <p className="section-copy">{getApprovalSummary(order)}</p>
-            {order.reconciliationDetail?.approvalDecisions.length ? (
-              <TimelineList
-                items={order.reconciliationDetail.approvalDecisions.map((decision) => ({
-                  title: decision.action.replaceAll('_', ' '),
-                  body: decision.comment ?? decision.payloadJson?.message?.toString() ?? 'Policy decision recorded.',
-                  time: decision.createdAt,
-                }))}
-              />
-            ) : null}
-          </InfoSection>
-          <InfoSection title="Execution" sectionId="execution" state={getExecutionLabel(order)} toneKey={order.derivedState}>
-            <ExecutionPanel
-              latestSignature={latestExecution?.submittedSignature ?? null}
-              packet={packet}
-              wallets={wallets}
-              selectedWalletId={selectedWalletId}
-              isPreparing={prepareMutation.isPending}
-              isSigning={signMutation.isPending}
-              manualSignature={manualSignature}
-              onManualSignatureChange={setManualSignature}
-              onPrepare={() => prepareMutation.mutate()}
-              onSign={() => signMutation.mutate()}
-              onSelectWallet={setSelectedWalletId}
-              onAttachSignature={() => {
-                if (!manualSignature.trim()) {
-                  setActionMessage('Paste a submitted signature first.');
-                  return;
-                }
-                attachSignatureMutation.mutate(manualSignature.trim());
-              }}
-            />
-          </InfoSection>
-          <InfoSection title="Settlement" sectionId="settlement" state={getSettlementLabel(order)} toneKey={order.derivedState}>
-            <InfoGrid
-              items={[
-                ['Match status', match?.matchStatus?.replaceAll('_', ' ') ?? 'Not matched yet'],
-                ['Matched amount', match ? `${formatRawUsdcCompact(match.matchedAmountRaw)} ${order.asset}` : 'None'],
-                ['Observed signature', match?.signature ?? latestExecution?.submittedSignature ?? 'None'],
-                ['Chain to match', match?.chainToMatchMs === null || match?.chainToMatchMs === undefined ? 'Not available' : `${match.chainToMatchMs} ms`],
-              ]}
-            />
-            {match?.explanation ? <p className="section-copy">{match.explanation}</p> : null}
-          </InfoSection>
-          {order.reconciliationDetail?.exceptions.length ? (
-            <InfoSection title="Exceptions" sectionId="exceptions" state={String(order.reconciliationDetail.exceptions.length)} toneKey="exception">
-              <TimelineList
-                items={order.reconciliationDetail.exceptions.map((exception) => ({
-                  title: `${exception.severity} / ${exception.status}`,
-                  body: exception.explanation,
-                  time: exception.createdAt,
-                }))}
-              />
-            </InfoSection>
-          ) : null}
-          <InfoSection title="Proof" sectionId="proof" state={proofReady ? 'Ready' : 'Pending'} toneKey={proofReady ? 'settled' : 'pending_approval'}>
-            <p className="section-copy">
-              {proofReady
-                ? 'Download the verification packet that ties intent, approval, execution, and settlement together.'
-                : 'Proof becomes available once settlement completes (or for exception review with partial packets).'}
-            </p>
-            <button className="button button-primary" onClick={() => proofMutation.mutate()} type="button">
-              Export proof JSON
-            </button>
-          </InfoSection>
-          <Collapsible title="Timeline" description={`${timeline.length} event(s)`} defaultOpen>
-            <TimelineList items={timeline.map((item) => ({ title: item.type, body: item.description, time: item.createdAt }))} />
-          </Collapsible>
-          <Collapsible title="Notes" description={`${order.reconciliationDetail?.notes.length ?? 0} note(s)`} defaultOpen={false}>
-            {order.reconciliationDetail?.notes.length ? (
-              <TimelineList
-                items={order.reconciliationDetail.notes.map((note) => ({
-                  title: note.authorUser?.email ?? 'Operator note',
-                  body: note.body,
-                  time: note.createdAt,
-                }))}
-              />
-            ) : (
-              <p className="section-copy">No notes yet.</p>
-            )}
-          </Collapsible>
+      <section className="panel panel-spaced">
+        <SectionHeader title="Lifecycle details" description="One-line stage summaries with optional deep detail." />
+        <div className="vertical-timeline">
+          {(() => {
+            const stageState = paymentTimelineStates(order.derivedState);
+            return (
+              <>
+          <article className={`vertical-timeline-item vertical-timeline-item-${stageState.request}`}>
+            <span className="vertical-timeline-marker" />
+            <div className="vertical-timeline-content">
+              <strong>Request</strong>
+              <p>Created by {order.createdByUser?.email ?? 'System'} at {formatDateCompact(order.createdAt)}.</p>
+            </div>
+          </article>
+          <article className={`vertical-timeline-item vertical-timeline-item-${stageState.approval}`}>
+            <span className="vertical-timeline-marker" />
+            <div className="vertical-timeline-content">
+              <div className="vertical-timeline-title-row">
+                <strong>Approval</strong>
+                {approvalDecisions.length ? (
+                  <button
+                    className="timeline-inline-toggle"
+                    onClick={() => setExpandedTimelineStages((s) => ({ ...s, approval: !s.approval }))}
+                    type="button"
+                    aria-label={expandedTimelineStages.approval ? 'Collapse approval details' : 'Expand approval details'}
+                  >
+                    {expandedTimelineStages.approval ? '▾' : '▸'}
+                  </button>
+                ) : null}
+              </div>
+              <p>{latestDecision ? `${latestDecision.action.replaceAll('_', ' ')} by ${latestDecision.actorUser?.email ?? latestDecision.actorType}` : 'No approval decision recorded yet.'}</p>
+              {approvalDecisions.length && expandedTimelineStages.approval ? (
+                <CompactStageEvents
+                  items={approvalDecisions.map((decision) => ({
+                    title: decision.action.replaceAll('_', ' '),
+                    body: decision.comment ?? decision.payloadJson?.message?.toString() ?? 'Policy decision recorded.',
+                    time: decision.createdAt,
+                  }))}
+                />
+              ) : null}
+            </div>
+          </article>
+          <article className={`vertical-timeline-item vertical-timeline-item-${stageState.execution}`} id="stage-execution">
+            <span className="vertical-timeline-marker" />
+            <div className="vertical-timeline-content">
+              <strong>Execution</strong>
+              <p>{latestExecution?.submittedSignature ? `Submitted on-chain with ${shortenAddress(latestExecution.submittedSignature)}.` : 'Not submitted on-chain yet.'}</p>
+            </div>
+          </article>
+          <article className={`vertical-timeline-item vertical-timeline-item-${stageState.settlement}`}>
+            <span className="vertical-timeline-marker" />
+            <div className="vertical-timeline-content">
+              <div className="vertical-timeline-title-row">
+                <strong>Settlement</strong>
+                {exceptions.length ? (
+                  <button
+                    className="timeline-inline-toggle"
+                    onClick={() => setExpandedTimelineStages((s) => ({ ...s, settlement: !s.settlement }))}
+                    type="button"
+                    aria-label={expandedTimelineStages.settlement ? 'Collapse settlement details' : 'Expand settlement details'}
+                  >
+                    {expandedTimelineStages.settlement ? '▾' : '▸'}
+                  </button>
+                ) : null}
+              </div>
+              <p>{match ? `${match.matchStatus.replaceAll('_', ' ')} at ${formatDateCompact(match.matchedAt ?? order.updatedAt)}.` : 'Waiting for chain match and reconciliation.'}</p>
+              {match?.explanation ? <p>{match.explanation}</p> : null}
+              {exceptions.length && expandedTimelineStages.settlement ? (
+                <CompactStageEvents
+                  items={exceptions.map((exception) => ({
+                    title: `${exception.severity} / ${exception.status}`,
+                    body: exception.explanation,
+                    time: exception.createdAt,
+                  }))}
+                />
+              ) : null}
+            </div>
+          </article>
+          <article className={`vertical-timeline-item vertical-timeline-item-${stageState.proof}`}>
+            <span className="vertical-timeline-marker" />
+            <div className="vertical-timeline-content">
+              <strong>Proof</strong>
+              <p>{proofReady ? 'Proof is ready for export.' : 'Proof becomes complete after settlement.'}</p>
+            </div>
+          </article>
+              </>
+            );
+          })()}
         </div>
-        <aside className="detail-side">
-          <SidePanel title="Payment proof">
-            <p>Export the packet that connects intent, approval, execution, settlement, reconciliation, and exceptions.</p>
-            <button className="button button-primary button-full" onClick={() => proofMutation.mutate()} type="button">
-              Export proof JSON
+      </section>
+      <Modal
+        open={deleteModalOpen}
+        onClose={() => setDeleteModalOpen(false)}
+        title="Delete payment"
+        footer={(
+          <>
+            <button className="button button-secondary" onClick={() => setDeleteModalOpen(false)} type="button">Cancel</button>
+            <button
+              className="button button-primary"
+              disabled={deletePaymentMutation.isPending}
+              onClick={() => {
+                deletePaymentMutation.mutate();
+                setDeleteModalOpen(false);
+              }}
+              type="button"
+            >
+              {deletePaymentMutation.isPending ? 'Deleting...' : 'Delete payment'}
             </button>
-          </SidePanel>
-          <SidePanel title="Balance">
-            <StatusBadge tone={toneForGenericState(order.balanceWarning.status)}>{order.balanceWarning.status}</StatusBadge>
-            <p>{order.balanceWarning.message}</p>
-          </SidePanel>
-          <SidePanel title="Links">
-            {latestExecution?.submittedSignature ? (
-              <a className="link-button" href={orbTransactionUrl(latestExecution.submittedSignature)} rel="noreferrer" target="_blank">
-                Open submitted transaction
-              </a>
-            ) : null}
-            <a className="link-button" href={solanaAccountUrl(order.destination.walletAddress)} rel="noreferrer" target="_blank">
-              Open destination wallet
-            </a>
-          </SidePanel>
-        </aside>
-      </div>
-    </PageFrame>
-  );
+          </>
+        )}
+      >
+        <p className="section-copy">
+          Delete payment <strong>{summary.title}</strong>? This action cancels the payment and removes it from active workflows.
+        </p>
+      </Modal>
+      </PageFrame>
+    );
+  } catch (error) {
+    console.error('Payment detail render failed', error, order);
+    return <ScreenState title="Payment unavailable" description="This payment record has malformed data. Please retry or refresh." />;
+  }
 }
 
 function PaymentTable({
@@ -2076,7 +2933,7 @@ function PaymentTable({
   }
 
   return (
-    <div className="data-table">
+    <DataTableShell>
       <div className="data-table-row data-table-head data-table-row-payments-ext data-table-sticky-head">
         <span>Payee</span>
         <span>Amount</span>
@@ -2096,13 +2953,106 @@ function PaymentTable({
           <span>{formatRawUsdcCompact(order.amountRaw)} {order.asset}</span>
           <span>{order.sourceWorkspaceAddress?.displayName ?? shortenAddress(order.sourceWorkspaceAddress?.address)}</span>
           <span>{order.destination.label}</span>
-          <span>{order.externalReference ?? order.invoiceNumber ?? order.memo ?? 'None'}</span>
-          <span>{order.dueAt ? formatTimestamp(order.dueAt) : '—'}</span>
+          <span>{order.externalReference ?? order.invoiceNumber ?? order.memo ?? 'N/A'}</span>
+          <span className="cell-due-compact">{order.dueAt ? formatDateCompact(order.dueAt) : 'N/A'}</span>
           <span>{nextPaymentAction(order)}</span>
           <span><StatusBadge tone={statusToneForPayment(order.derivedState)}>{displayPaymentStatus(order.derivedState)}</StatusBadge></span>
         </Link>
       ))}
-    </div>
+    </DataTableShell>
+  );
+}
+
+function UnifiedPaymentsTable({
+  rows,
+}: {
+  rows: Array<{
+    kind: 'payment' | 'run';
+    id: string;
+    name: string;
+    amountLabel: string;
+    sourceLabel: string;
+    refLabel: string;
+    stateLabel: string;
+    tone: 'success' | 'warning' | 'danger' | 'neutral';
+    createdAt: string;
+    to: string;
+  }>;
+}) {
+  return (
+    <DataTableShell>
+      <div className="data-table-row data-table-head data-table-row-unified-ext data-table-sticky-head">
+        <span>Type</span>
+        <span>Name</span>
+        <span>Amount</span>
+        <span>Source</span>
+        <span>Reference / rows</span>
+        <span>Status</span>
+        <span>Created</span>
+      </div>
+      {rows.map((row) => (
+        <Link className="data-table-row data-table-link data-table-row-unified-ext" key={`${row.kind}-${row.id}`} to={row.to}>
+          <span><StatusBadge tone="neutral">{row.kind === 'run' ? 'batch' : 'individual'}</StatusBadge></span>
+          <span><strong>{row.name}</strong></span>
+          <span>{row.amountLabel}</span>
+          <span>{row.sourceLabel}</span>
+          <span>{row.refLabel}</span>
+          <span><StatusBadge tone={row.tone}>{row.stateLabel}</StatusBadge></span>
+          <span className="cell-due-compact">{formatDateCompact(row.createdAt)}</span>
+        </Link>
+      ))}
+    </DataTableShell>
+  );
+}
+
+function RunPaymentsTable({
+  workspaceId,
+  paymentOrders,
+  onExportProof,
+  exportPending,
+}: {
+  workspaceId: string;
+  paymentOrders: PaymentOrder[];
+  onExportProof: (order: PaymentOrder) => void;
+  exportPending?: boolean;
+}) {
+  if (!paymentOrders.length) {
+    return <EmptyState title="No payments here" description="There are no payments for this run yet." />;
+  }
+  return (
+    <DataTableShell>
+      <div className="data-table-row data-table-head data-table-row-run-payments-ext data-table-sticky-head">
+        <span>Payee</span>
+        <span>Amount</span>
+        <span>Source</span>
+        <span>Destination</span>
+        <span>Reference</span>
+        <span>Due</span>
+        <span>Status</span>
+        <span>Export proof</span>
+      </div>
+      {paymentOrders.map((order) => (
+        <div className="data-table-row data-table-row-run-payments-ext" key={order.paymentOrderId}>
+          <span>
+            <Link to={`/workspaces/${workspaceId}/payments/${order.paymentOrderId}`}>
+              <strong>{order.payee?.name ?? order.destination.label}</strong>
+            </Link>
+            <small>{shortenAddress(order.paymentOrderId, 8, 6)}</small>
+          </span>
+          <span>{formatRawUsdcCompact(order.amountRaw)} {order.asset}</span>
+          <span>{order.sourceWorkspaceAddress?.displayName ?? shortenAddress(order.sourceWorkspaceAddress?.address)}</span>
+          <span>{order.destination.label}</span>
+          <span>{order.externalReference ?? order.invoiceNumber ?? order.memo ?? 'N/A'}</span>
+          <span className="cell-due-compact">{order.dueAt ? formatDateCompact(order.dueAt) : 'N/A'}</span>
+          <span><StatusBadge tone={statusToneForPayment(order.derivedState)}>{displayPaymentStatus(order.derivedState)}</StatusBadge></span>
+          <span>
+            <button className="button button-secondary button-small" disabled={exportPending} onClick={() => onExportProof(order)} type="button">
+              Export
+            </button>
+          </span>
+        </div>
+      ))}
+    </DataTableShell>
   );
 }
 
@@ -2125,7 +3075,7 @@ function ActionPaymentTable({
     return <EmptyState title={emptyTitle} description={emptyDescription} />;
   }
   return (
-    <div className="data-table">
+    <DataTableShell>
       <div className="data-table-row data-table-head data-table-row-actions">
         <span>Payee</span><span>Amount</span><span>Destination</span><span>Reference</span><span>Status</span><span>{actionHeader}</span>
       </div>
@@ -2137,12 +3087,12 @@ function ActionPaymentTable({
           </Link>
           <span>{formatRawUsdcCompact(order.amountRaw)} {order.asset}</span>
           <span>{order.destination.label}</span>
-          <span>{order.externalReference ?? order.invoiceNumber ?? order.memo ?? 'None'}</span>
+          <span>{order.externalReference ?? order.invoiceNumber ?? order.memo ?? 'N/A'}</span>
           <span><StatusBadge tone={statusToneForPayment(order.derivedState)}>{displayPaymentStatus(order.derivedState)}</StatusBadge></span>
           <span>{renderAction(order)}</span>
         </div>
       ))}
-    </div>
+    </DataTableShell>
   );
 }
 
@@ -2159,9 +3109,9 @@ function PaymentRequestsTable({
     return <EmptyState title="No payment requests yet" description="Create a manual request or import a CSV batch." />;
   }
   return (
-    <div className="data-table">
+    <DataTableShell>
       <div className="data-table-row data-table-head data-table-row-requests">
-        <span>Payee</span><span>Destination</span><span>Amount</span><span>Reference</span><span>State</span><span>Created</span>
+        <span>Payee</span><span>Destination</span><span>Amount</span><span>Reference</span><span>State</span><span>Progress</span><span>Created</span>
       </div>
       {requests.map((request) => {
         const order = ordersByRequest.get(request.paymentRequestId);
@@ -2170,7 +3120,7 @@ function PaymentRequestsTable({
             <span><strong>{request.payee?.name ?? request.reason}</strong><small>{shortenAddress(request.paymentRequestId, 8, 6)}</small></span>
             <span>{request.destination.label}</span>
             <span>{formatRawUsdcCompact(request.amountRaw)} {request.asset}</span>
-            <span>{request.externalReference ?? 'None'}</span>
+            <span>{request.externalReference ?? 'N/A'}</span>
             <span>
               <StatusBadge
                 tone={order?.derivedState ? statusToneForPayment(order.derivedState) : toneForGenericState(request.state)}
@@ -2178,7 +3128,10 @@ function PaymentRequestsTable({
                 {order?.derivedState ? displayPaymentStatus(order.derivedState) : displayPaymentRequestState(request.state)}
               </StatusBadge>
             </span>
-            <span>{formatTimestamp(request.createdAt)}</span>
+            <span>
+              <InlineProgressTracker state={order?.derivedState ?? request.state} />
+            </span>
+            <span className="cell-due-compact">{formatDateCompact(request.createdAt)}</span>
           </>
         );
         if (order) {
@@ -2190,7 +3143,7 @@ function PaymentRequestsTable({
         }
         return <div className="data-table-row data-table-row-requests" key={request.paymentRequestId}>{content}</div>;
       })}
-    </div>
+    </DataTableShell>
   );
 }
 
@@ -2199,7 +3152,7 @@ function PaymentRunsTable({ workspaceId, runs }: { workspaceId: string; runs: Pa
     return <EmptyState title="No payment runs yet" description="Import a CSV batch to create a run." />;
   }
   return (
-    <div className="data-table">
+    <DataTableShell>
       <div className="data-table-row data-table-head data-table-row-runs-ext data-table-sticky-head">
         <span>Run</span>
         <span>Items</span>
@@ -2213,8 +3166,7 @@ function PaymentRunsTable({ workspaceId, runs }: { workspaceId: string; runs: Pa
       {runs.map((run) => (
         <Link className="data-table-row data-table-link data-table-row-runs-ext" key={run.paymentRunId} to={`/workspaces/${workspaceId}/runs/${run.paymentRunId}`}>
           <span>
-            <strong>{run.runName}</strong>
-            <small>{runProgressLine(run)}</small>
+            <strong className="run-table-name">{run.runName}</strong>
           </span>
           <span>{run.totals.orderCount}</span>
           <span>{formatRawUsdcCompact(run.totals.totalAmountRaw)} USDC</span>
@@ -2224,10 +3176,10 @@ function PaymentRunsTable({ workspaceId, runs }: { workspaceId: string; runs: Pa
           <span>{run.totals.exceptionCount}</span>
           <span>{run.totals.pendingApprovalCount}</span>
           <span><StatusBadge tone={statusToneForPayment(run.derivedState)}>{displayRunStatus(run.derivedState)}</StatusBadge></span>
-          <span>{formatTimestamp(run.createdAt)}</span>
+          <span className="cell-due-compact">{formatDateCompact(run.createdAt)}</span>
         </Link>
       ))}
-    </div>
+    </DataTableShell>
   );
 }
 
@@ -2246,7 +3198,7 @@ function PaymentRunProofTable({
 }) {
   if (!runs.length) return <EmptyState title="No payment runs yet" description="Import a CSV batch to create run-level proof." />;
   return (
-    <div className="data-table">
+    <DataTableShell>
       <div className="data-table-row data-table-head data-table-row-runs">
         <span>Run</span><span>Items</span><span>Total</span><span>Ready</span><span>State</span><span>Proof</span>
       </div>
@@ -2267,7 +3219,7 @@ function PaymentRunProofTable({
           </span>
         </div>
       ))}
-    </div>
+    </DataTableShell>
   );
 }
 
@@ -2280,7 +3232,7 @@ function DestinationsTable({
 }) {
   if (!destinations.length) return <EmptyState title="No destinations yet" description="Create wallets first, then turn them into destinations." />;
   return (
-    <div className="data-table">
+    <DataTableShell>
       <div className="data-table-row data-table-head data-table-row-destinations">
         <span>Destination</span><span>Wallet</span><span>Owner</span><span>Trust</span><span>Scope</span><span>Status</span>
       </div>
@@ -2306,7 +3258,7 @@ function DestinationsTable({
           <span>{destination.isActive ? 'active' : 'inactive'}</span>
         </div>
       ))}
-    </div>
+    </DataTableShell>
   );
 }
 
@@ -2321,7 +3273,7 @@ function WalletsTable({
 }) {
   if (!addresses.length) return <EmptyState title="No wallets saved" description="Save a wallet to watch, source, or destination-match USDC payments." />;
   return (
-    <div className="data-table">
+    <DataTableShell>
       <div className="data-table-row data-table-head data-table-row-wallets"><span>Name</span><span>Address</span><span>Destination</span><span>Status</span></div>
       {addresses.map((address) => {
         const destination = destinations.find((item) => item.linkedWorkspaceAddressId === address.workspaceAddressId);
@@ -2339,21 +3291,21 @@ function WalletsTable({
             role={onSelect ? 'button' : undefined}
             tabIndex={onSelect ? 0 : undefined}
           >
-            <span><strong>{walletLabel(address)}</strong><small>{address.assetScope}</small></span>
+            <span><strong>{walletLabel(address)}</strong></span>
             <span onClick={(e) => e.stopPropagation()}><AddressLink value={address.address} /></span>
             <span>{destination?.label ?? 'Unlinked'}</span>
             <span>{address.isActive ? 'active' : 'inactive'}</span>
           </div>
         );
       })}
-    </div>
+    </DataTableShell>
   );
 }
 
 function PayeesTable({ payees, onSelect }: { payees: Payee[]; onSelect?: (payee: Payee) => void }) {
   if (!payees.length) return <EmptyState title="No payees yet" description="Payees are lightweight names mapped to default destinations." />;
   return (
-    <div className="data-table">
+    <DataTableShell>
       <div className="data-table-row data-table-head data-table-row-payees"><span>Name</span><span>Default destination</span><span>Reference</span><span>Status</span></div>
       {payees.map((payee) => (
         <div
@@ -2370,19 +3322,19 @@ function PayeesTable({ payees, onSelect }: { payees: Payee[]; onSelect?: (payee:
           tabIndex={onSelect ? 0 : undefined}
         >
           <span><strong>{payee.name}</strong><small>{shortenAddress(payee.payeeId, 8, 6)}</small></span>
-          <span>{payee.defaultDestination?.label ?? 'None'}</span>
-          <span>{payee.externalReference ?? 'None'}</span>
+          <span>{payee.defaultDestination?.label ?? 'N/A'}</span>
+          <span>{payee.externalReference ?? 'N/A'}</span>
           <span>{payee.status}</span>
         </div>
       ))}
-    </div>
+    </DataTableShell>
   );
 }
 
 function CounterpartiesTable({ counterparties, destinations }: { counterparties: Counterparty[]; destinations: Destination[] }) {
   if (!counterparties.length) return <EmptyState title="No counterparties yet" description="Counterparties are optional business owners behind destinations." />;
   return (
-    <div className="data-table">
+    <DataTableShell>
       <div className="data-table-row data-table-head data-table-row-payees"><span>Name</span><span>Destinations</span><span>Category</span><span>Status</span></div>
       {counterparties.map((counterparty) => (
         <div className="data-table-row data-table-row-payees" key={counterparty.counterpartyId}>
@@ -2392,7 +3344,7 @@ function CounterpartiesTable({ counterparties, destinations }: { counterparties:
           <span>{counterparty.status}</span>
         </div>
       ))}
-    </div>
+    </DataTableShell>
   );
 }
 
@@ -2409,7 +3361,7 @@ function ExceptionsTable({
 }) {
   if (!exceptions.length) return <EmptyState title="No exceptions" description="Partial settlements, unmatched events, and review-needed payments will appear here." />;
   return (
-    <div className="data-table">
+    <DataTableShell>
       <div className="data-table-row data-table-head data-table-row-exceptions-v2 data-table-sticky-head">
         <span>Severity</span>
         <span>Payment / context</span>
@@ -2422,7 +3374,7 @@ function ExceptionsTable({
       </div>
       {exceptions.map((exception) => {
         const linked = exception.transferRequestId ? paymentByTransferId.get(exception.transferRequestId) : undefined;
-        const payeeLabel = linked?.payee?.name ?? linked?.destination.label ?? '—';
+        const payeeLabel = linked?.payee?.name ?? linked?.destination.label ?? 'N/A';
         return (
           <div className="data-table-row data-table-row-exceptions-v2" key={exception.exceptionId}>
             <span>
@@ -2434,10 +3386,10 @@ function ExceptionsTable({
               </Link>
               <small>{humanizeExceptionReason(exception.reasonCode)}</small>
             </span>
-            <span>{linked ? `${formatRawUsdcCompact(linked.amountRaw)} ${linked.asset}` : '—'}</span>
+            <span>{linked ? `${formatRawUsdcCompact(linked.amountRaw)} ${linked.asset}` : 'N/A'}</span>
             <span>{exception.exceptionType}</span>
-            <span>{exception.signature ? <AddressLink value={exception.signature} kind="transaction" /> : '—'}</span>
-            <span>{exception.assignedToUser?.email ?? '—'}</span>
+            <span>{exception.signature ? <AddressLink value={exception.signature} kind="transaction" /> : 'N/A'}</span>
+            <span>{exception.assignedToUser?.email ?? 'N/A'}</span>
             <span>{exception.status}</span>
             <span className="table-actions">
               <Link className="button button-secondary button-small" to={`/workspaces/${workspaceId}/exceptions/${exception.exceptionId}`}>
@@ -2453,7 +3405,7 @@ function ExceptionsTable({
           </div>
         );
       })}
-    </div>
+    </DataTableShell>
   );
 }
 
@@ -2464,8 +3416,8 @@ function OpsHealthPanel({ health }: { health: OpsHealth }) {
       <InfoGrid items={[
         ['Postgres', health.postgres],
         ['Worker', health.workerStatus],
-        ['Latest slot', health.latestSlot?.toLocaleString() ?? 'None'],
-        ['Latest event', health.latestEventTime ? formatTimestamp(health.latestEventTime) : 'None'],
+        ['Latest slot', health.latestSlot?.toLocaleString() ?? 'N/A'],
+        ['Latest event', health.latestEventTime ? formatDateCompact(health.latestEventTime) : 'N/A'],
         ['Worker freshness', health.workerFreshnessMs === null ? 'Unknown' : `${health.workerFreshnessMs} ms`],
         ['Open exceptions', String(health.openExceptionCount)],
         ['Observed transactions', String(health.observedTransactionCount)],
@@ -2480,6 +3432,8 @@ function PaymentHero({ order }: { order: PaymentOrder }) {
   const latestSignature = order.reconciliationDetail?.latestExecution?.submittedSignature
     ?? order.reconciliationDetail?.match?.signature
     ?? null;
+  const heroTime = order.reconciliationDetail?.latestExecution?.submittedAt ?? order.createdAt;
+  const heroTimeLabel = latestSignature ? 'Submitted' : 'Requested';
 
   return (
     <section className="payment-hero">
@@ -2495,10 +3449,11 @@ function PaymentHero({ order }: { order: PaymentOrder }) {
           {order.sourceWorkspaceAddress?.address ? <AddressLink value={order.sourceWorkspaceAddress.address} /> : <span>Source not set</span>}
         </HeroCell>
         <HeroCell label="To">
-          <AddressLink value={order.destination.walletAddress} />
+          {order.destination?.walletAddress ? <AddressLink value={order.destination.walletAddress} /> : <span>Destination unavailable</span>}
         </HeroCell>
         <HeroCell label="Time">
-          <time title={formatTimestamp(order.updatedAt)}>{formatRelativeTime(order.updatedAt)}</time>
+          <span>{heroTimeLabel}</span>
+          <time title={formatTimestamp(heroTime)}>{formatRelativeTime(heroTime)}</time>
         </HeroCell>
       </div>
     </section>
@@ -2532,6 +3487,7 @@ function ExecutionPanel({
   onSelectWallet: (value: string | undefined) => void;
   onAttachSignature: () => void;
 }) {
+  const needsPrepare = !packet;
   return (
     <div className="execution-stack">
       {latestSignature ? (
@@ -2543,11 +3499,11 @@ function ExecutionPanel({
         <div className="packet-box">
           <InfoGrid
             items={[
-              ['From', `${shortenAddress(packet.source.walletAddress)} // ${shortenAddress(packet.source.tokenAccountAddress)}`],
-              ['To', packet.destination ? `${packet.destination.label} // ${shortenAddress(packet.destination.walletAddress)}` : `${packet.transfers?.length ?? 0} transfers`],
-              ['Amount', `${formatRawUsdcCompact(packet.amountRaw)} ${packet.token.symbol}`],
+              ['From', `${safeShortAddress(packet.source?.walletAddress)} // ${safeShortAddress(packet.source?.tokenAccountAddress)}`],
+              ['To', packet.destination ? `${packet.destination.label} // ${safeShortAddress(packet.destination.walletAddress)}` : `${packet.transfers?.length ?? 0} transfers`],
+              ['Amount', `${formatRawUsdcCompact(packet.amountRaw)} ${packet.token?.symbol ?? 'USDC'}`],
               ['Instructions', `${packet.instructions.length} Solana instruction(s)`],
-              ['Required signer', shortenAddress(packet.signerWallet)],
+              ['Required signer', safeShortAddress(packet.signerWallet)],
             ]}
           />
         </div>
@@ -2555,20 +3511,13 @@ function ExecutionPanel({
         <p className="section-copy">Prepare the exact non-custodial transaction packet before signing.</p>
       )}
       <div className="action-cluster">
-        <button className="button button-secondary" disabled={isPreparing} onClick={onPrepare} type="button">
+        <button className={`button ${needsPrepare ? 'button-primary' : 'button-secondary'}`} disabled={isPreparing} onClick={onPrepare} type="button">
           {isPreparing ? 'Preparing...' : 'Prepare payment packet'}
         </button>
       </div>
       <label className="field">
         Browser wallet
-        <select value={selectedWalletId ?? ''} onChange={(event) => onSelectWallet(event.target.value || undefined)}>
-          <option value="">Auto-detect wallet</option>
-          {wallets.map((wallet) => (
-            <option key={wallet.id} value={wallet.id}>
-              {wallet.name}{wallet.address ? ` // ${shortenAddress(wallet.address)}` : ''}
-            </option>
-          ))}
-        </select>
+        <WalletPicker wallets={wallets} selectedWalletId={selectedWalletId} onSelect={onSelectWallet} />
       </label>
       <button className="button button-primary" disabled={!packet || isSigning} onClick={onSign} type="button">
         {isSigning ? 'Signing...' : 'Sign and submit with source wallet'}
@@ -2582,6 +3531,138 @@ function ExecutionPanel({
           Attach evidence
         </button>
       </div>
+    </div>
+  );
+}
+
+function RunExecutionPanel({
+  run,
+  packet,
+  wallets,
+  selectedWalletId,
+  isPreparing,
+  isSigning,
+  manualSignature,
+  onManualSignatureChange,
+  onPrepare,
+  onSign,
+  onSelectWallet,
+  onAttachSignature,
+}: {
+  run: PaymentRun;
+  packet: PaymentExecutionPacket | null;
+  wallets: BrowserWalletOption[];
+  selectedWalletId: string | undefined;
+  isPreparing: boolean;
+  isSigning: boolean;
+  manualSignature: string;
+  onManualSignatureChange: (value: string) => void;
+  onPrepare: () => void;
+  onSign: () => void;
+  onSelectWallet: (value: string | undefined) => void;
+  onAttachSignature: () => void;
+}) {
+  return (
+    <div className="execution-stack">
+      <InfoGrid items={[
+        ['Source', run.sourceWorkspaceAddress ? walletLabel(run.sourceWorkspaceAddress) : 'Not set'],
+        ['Ready', `${run.totals.readyCount}/${run.totals.orderCount}`],
+        ['Exceptions', String(run.totals.exceptionCount)],
+        ['Prepared instructions', packet ? String(packet.instructions.length) : 'Not prepared'],
+      ]} />
+      {packet ? (
+        <div className="packet-box">
+          <InfoGrid
+            items={[
+              ['Signer', safeShortAddress(packet.signerWallet)],
+              ['Transfers', String(packet.transfers?.length ?? 0)],
+              ['Amount', `${formatRawUsdcCompact(packet.amountRaw)} ${packet.token?.symbol ?? 'USDC'}`],
+              ['Instructions', String(packet.instructions.length)],
+            ]}
+          />
+        </div>
+      ) : null}
+      <div className="action-cluster">
+        <button className="button button-secondary" disabled={isPreparing} onClick={onPrepare} type="button">
+          {isPreparing ? 'Preparing...' : 'Prepare batch packet'}
+        </button>
+      </div>
+      <label className="field">
+        Browser wallet
+        <select value={selectedWalletId ?? ''} onChange={(event) => onSelectWallet(event.target.value || undefined)}>
+          <option value="">Auto-detect wallet</option>
+          {wallets.map((wallet) => (
+            <option key={wallet.id} value={wallet.id} disabled={!wallet.ready}>
+              {wallet.name}{wallet.address ? ` // ${shortenAddress(wallet.address)}` : ''}{wallet.ready ? '' : ' (unavailable)'}
+            </option>
+          ))}
+        </select>
+      </label>
+      <button className="button button-primary" disabled={!packet || isSigning} onClick={onSign} type="button">
+        {isSigning ? 'Signing...' : 'Sign and submit run'}
+      </button>
+      <div className="manual-signature">
+        <label className="field">
+          Manual submitted signature
+          <input value={manualSignature} onChange={(event) => onManualSignatureChange(event.target.value)} placeholder="Paste transaction signature" />
+        </label>
+        <button className="button button-secondary" onClick={onAttachSignature} type="button">
+          Attach evidence
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function WalletPicker({
+  wallets,
+  selectedWalletId,
+  onSelect,
+}: {
+  wallets: BrowserWalletOption[];
+  selectedWalletId?: string;
+  onSelect: (walletId?: string) => void;
+}) {
+  return (
+    <div className="wallet-picker">
+      <button
+        className={`wallet-picker-row${!selectedWalletId ? ' wallet-picker-row-active' : ''}`}
+        onClick={() => onSelect(undefined)}
+        type="button"
+      >
+        <span className="wallet-picker-main">
+          <span className="wallet-picker-icon" aria-hidden>◇</span>
+          <span className="wallet-picker-copy">
+            <strong>Auto-detect wallet</strong>
+            <small>Use first available browser wallet</small>
+          </span>
+        </span>
+        <span className="wallet-picker-badge">AUTO</span>
+      </button>
+      {wallets.map((wallet) => (
+        <button
+          key={wallet.id}
+          className={`wallet-picker-row${selectedWalletId === wallet.id ? ' wallet-picker-row-active' : ''}`}
+          disabled={!wallet.ready}
+          onClick={() => onSelect(wallet.id)}
+          type="button"
+        >
+          <span className="wallet-picker-main">
+            {wallet.icon ? (
+              <img className="wallet-picker-image" src={wallet.icon} alt="" />
+            ) : (
+              <span className="wallet-picker-icon" aria-hidden>◆</span>
+            )}
+            <span className="wallet-picker-copy">
+              <strong>{wallet.name}</strong>
+              <small>{wallet.address ? shortenAddress(wallet.address) : 'No account exposed yet'}</small>
+            </span>
+          </span>
+          <span className={`wallet-picker-badge ${wallet.ready ? 'wallet-picker-badge-ready' : 'wallet-picker-badge-disabled'}`}>
+            {wallet.ready ? 'INSTALLED' : 'UNAVAILABLE'}
+          </span>
+        </button>
+      ))}
     </div>
   );
 }
@@ -2631,6 +3712,51 @@ function WorkflowRail({
   );
 }
 
+function RunProgressTracker({
+  steps,
+}: {
+  steps: Array<{ label: string; subtext: string; state: 'pending' | 'current' | 'complete' | 'blocked' }>;
+}) {
+  return (
+    <section className="run-progress" aria-label="Payment run progress">
+      {steps.map((step, index) => (
+        <div className="run-progress-step-wrap" key={step.label}>
+          <div className={`run-progress-step run-progress-step-${step.state}`}>
+            <div className="run-progress-row">
+              <span className={`run-progress-dot run-progress-dot-${step.state}`} aria-hidden />
+              {index < steps.length - 1 ? <span className={`run-progress-line run-progress-line-${step.state}`} aria-hidden /> : null}
+            </div>
+            <div className="run-progress-copy">
+              <strong>{step.label}</strong>
+              <small>{step.subtext}</small>
+            </div>
+          </div>
+        </div>
+      ))}
+    </section>
+  );
+}
+
+function InlineProgressTracker({ state }: { state: string }) {
+  const stages = ['draft', 'pending_approval', 'ready_for_execution', 'execution_recorded', 'settled'];
+  const currentIndex = Math.max(
+    stages.indexOf(state === 'approved' ? 'ready_for_execution' : (state === 'closed' ? 'settled' : state)),
+    0,
+  );
+  return (
+    <span className="inline-progress" aria-label={`Progress: ${state}`}>
+      {stages.map((_, idx) => (
+        <span
+          key={idx}
+          className={`inline-progress-dot${
+            idx < currentIndex ? ' inline-progress-dot-complete' : idx === currentIndex ? ' inline-progress-dot-current' : ''
+          }`}
+        />
+      ))}
+    </span>
+  );
+}
+
 function InfoSection({
   title,
   state,
@@ -2676,7 +3802,7 @@ function InfoGrid({ items }: { items: Array<[string, React.ReactNode]> }) {
 
 function TimelineList({ items }: { items: Array<{ title: string; body: React.ReactNode; time: string }> }) {
   if (!items.length) {
-    return <p className="section-copy">No events yet.</p>;
+    return <p className="section-copy">No events recorded.</p>;
   }
 
   return (
@@ -2694,6 +3820,20 @@ function TimelineList({ items }: { items: Array<{ title: string; body: React.Rea
   );
 }
 
+function CompactStageEvents({ items }: { items: Array<{ title: string; body: React.ReactNode; time: string }> }) {
+  return (
+    <div className="compact-stage-events">
+      {items.map((item, index) => (
+        <div key={`${item.title}-${item.time}-${index}`} className="compact-stage-event">
+          <strong>{item.title}</strong>
+          <time title={formatTimestamp(item.time)}>{formatRelativeTime(item.time)}</time>
+          <p>{item.body}</p>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function SidePanel({ title, children }: { title: string; children: ReactNode }) {
   return (
     <section className="side-panel">
@@ -2704,30 +3844,15 @@ function SidePanel({ title, children }: { title: string; children: ReactNode }) 
 }
 
 function SectionHeader({ title, description }: { title: string; description?: string }) {
-  return (
-    <header className="section-header">
-      <h2>{title}</h2>
-      {description ? <p>{description}</p> : null}
-    </header>
-  );
+  return <PanelHeader title={title} description={description} />;
 }
 
 function Metric({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="metric">
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </div>
-  );
+  return <MetricTile label={label} value={value} />;
 }
 
 function EmptyState({ title, description }: { title: string; description: string }) {
-  return (
-    <div className="empty-state">
-      <strong>{title}</strong>
-      <p>{description}</p>
-    </div>
-  );
+  return <EmptyPanel title={title} description={description} />;
 }
 
 function SimpleList({
@@ -2770,15 +3895,19 @@ function HeroCell({ label, children }: { label: string; children: ReactNode }) {
 }
 
 function AddressLink({ value, kind = 'account' }: { value: string; kind?: 'account' | 'transaction' }) {
-  const href = kind === 'transaction' ? orbTransactionUrl(value) : solanaAccountUrl(value);
+  const href = kind === 'transaction' ? orbTransactionUrl(value) : orbAccountUrl(value);
   return (
     <span className="address-link">
-      <button onClick={() => void navigator.clipboard?.writeText(value)} title={value} type="button">
+      <a href={href} rel="noreferrer" target="_blank" title={value}>
         {shortenAddress(value, 6, 6)}
-      </button>
+      </a>
       <a href={href} rel="noreferrer" target="_blank" aria-label="Open in explorer">↗</a>
     </span>
   );
+}
+
+function orbAccountUrl(address: string) {
+  return `https://orbmarkets.io/address/${address}?tab=summary`;
 }
 
 function StatusBadge({ tone, state, children }: { tone?: 'success' | 'warning' | 'danger' | 'neutral'; state?: string; children: ReactNode }) {
@@ -2832,24 +3961,40 @@ function buildRunWorkflow(run: PaymentRun) {
   const state = run.derivedState;
   const blocked = state === 'exception' || state === 'partially_settled' || state === 'cancelled';
   const settled = state === 'settled' || state === 'closed';
-  const ready = run.totals.readyCount > 0;
+  const approvedDone = run.totals.readyCount > 0 || settled || state === 'execution_recorded' || state === 'exception' || state === 'partially_settled';
   const submittedDone = ['execution_recorded', 'partially_settled', 'settled', 'closed', 'exception'].includes(state);
+  const reviewedCurrent = !approvedDone && run.totals.pendingApprovalCount > 0;
+  const submittedCurrent = approvedDone && !submittedDone && !blocked;
+  const settledCurrent = !blocked && !settled && submittedDone;
+  const reviewedState = reviewedCurrent ? ('current' as const) : ('complete' as const);
+  const approvedState = approvedDone ? ('complete' as const) : ('pending' as const);
+  const submittedState = blocked ? ('blocked' as const) : submittedDone ? ('complete' as const) : submittedCurrent ? ('current' as const) : ('pending' as const);
+  const settledState = blocked ? ('blocked' as const) : settled ? ('complete' as const) : settledCurrent ? ('current' as const) : ('pending' as const);
+  const provenState = settled ? ('complete' as const) : ('pending' as const);
+  const tenseLabel = (complete: boolean, past: string, present: string) => (complete ? past : present);
   return [
     { label: 'Imported', subtext: `${run.totals.orderCount} rows`, state: 'complete' as const },
-    { label: 'Reviewed', subtext: run.totals.pendingApprovalCount ? `${run.totals.pendingApprovalCount} need approval` : 'Reviewed', state: run.totals.pendingApprovalCount ? 'current' as const : 'complete' as const },
-    { label: 'Approved', subtext: ready || settled ? 'Ready rows exist' : 'Waiting', state: ready || settled ? 'complete' as const : 'pending' as const },
-    { label: 'Prepared', subtext: ready ? 'Ready to prepare' : 'Pending', state: ready ? 'current' as const : 'pending' as const },
     {
-      label: 'Submitted',
-      subtext: blocked ? 'Needs review' : submittedDone ? 'On chain' : 'Pending',
-      state: blocked ? ('blocked' as const) : submittedDone ? ('complete' as const) : ('pending' as const),
+      label: tenseLabel(reviewedState === 'complete', 'Reviewed', 'Review'),
+      subtext: run.totals.pendingApprovalCount ? `${run.totals.pendingApprovalCount} need approval` : 'Reviewed',
+      state: reviewedState,
     },
     {
-      label: 'Settled',
-      subtext: `${run.totals.settledCount}/${run.totals.orderCount} matched`,
-      state: blocked ? ('blocked' as const) : settled ? ('complete' as const) : submittedDone ? ('current' as const) : ('pending' as const),
+      label: tenseLabel(approvedState === 'complete', 'Approved', 'Approve'),
+      subtext: approvedDone ? 'Ready rows exist' : 'Waiting',
+      state: approvedState,
     },
-    { label: 'Proven', subtext: settled ? 'Proof ready' : 'Pending', state: settled ? 'complete' as const : 'pending' as const },
+    {
+      label: tenseLabel(submittedState === 'complete', 'Submitted', 'Submit'),
+      subtext: blocked ? 'Needs review' : submittedDone ? 'On chain' : approvedDone ? 'Ready to sign and submit' : 'Pending',
+      state: submittedState,
+    },
+    {
+      label: tenseLabel(settledState === 'complete', 'Settled', 'Settle'),
+      subtext: `${run.totals.settledCount}/${Math.max(run.totals.actionableCount, 1)} matched`,
+      state: settledState,
+    },
+    { label: tenseLabel(provenState === 'complete', 'Proven', 'Prove'), subtext: settled ? 'Proof ready' : 'Pending', state: provenState },
   ];
 }
 
@@ -2858,6 +4003,28 @@ function stepState(stepIndex: number, currentIndex: number, blocked: boolean) {
   if (stepIndex < currentIndex) return 'complete' as const;
   if (stepIndex === currentIndex) return 'current' as const;
   return 'pending' as const;
+}
+
+function paymentTimelineStates(state: PaymentOrderState): Record<'request' | 'approval' | 'execution' | 'settlement' | 'proof', 'complete' | 'current' | 'pending' | 'blocked'> {
+  const blocked = state === 'exception' || state === 'partially_settled' || state === 'cancelled';
+  const indexMap: Record<string, number> = {
+    draft: 0,
+    pending_approval: 1,
+    approved: 2,
+    ready_for_execution: 2,
+    execution_recorded: 3,
+    settled: 4,
+    closed: 4,
+  };
+  const current = Math.max(indexMap[state] ?? 0, 0);
+  const resolve = (idx: number) => stepState(idx, current, blocked);
+  return {
+    request: resolve(0),
+    approval: resolve(1),
+    execution: resolve(2),
+    settlement: resolve(3),
+    proof: state === 'settled' || state === 'closed' ? 'complete' : blocked ? 'blocked' : 'pending',
+  };
 }
 
 function getApprovalLabel(order: PaymentOrder) {
@@ -2924,9 +4091,23 @@ function yesNo(value: boolean) {
   return value ? 'yes' : 'no';
 }
 
+function formatDateCompact(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'N/A';
+  return new Intl.DateTimeFormat(undefined, {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+  }).format(date);
+}
+
 function walletLabel(address: Pick<WorkspaceAddress, 'displayName' | 'address'> | null | undefined) {
   if (!address) return null;
   return address.displayName ?? shortenAddress(address.address);
+}
+
+function safeShortAddress(value: string | null | undefined) {
+  return value ? shortenAddress(value) : 'N/A';
 }
 
 function getPreparedPacket(order: PaymentOrder | undefined): PaymentExecutionPacket | null {
@@ -2963,6 +4144,13 @@ function timelineLabel(item: ReconciliationTimelineItem) {
     case 'exception':
       return { type: item.reasonCode.replaceAll('_', ' '), description: item.explanation, createdAt: item.createdAt };
   }
+
+  const fallback = item as unknown as { timelineType?: string; createdAt: string };
+  return {
+    type: String(fallback.timelineType ?? 'timeline_event').replaceAll('_', ' '),
+    description: 'Timeline event recorded.',
+    createdAt: fallback.createdAt,
+  };
 }
 
 function downloadJson(fileName: string, payload: unknown) {

@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import {
   attachPaymentRunSignature,
+  deletePaymentRun,
   getPaymentRunDetail,
   importPaymentRunFromCsv,
   listPaymentRuns,
@@ -70,6 +71,16 @@ paymentRunsRouter.get('/workspaces/:workspaceId/payment-runs/:paymentRunId', asy
     const { workspaceId, paymentRunId } = paymentRunParamsSchema.parse(req.params);
     await assertWorkspaceAccess(workspaceId, req.auth!.userId);
     res.json(await getPaymentRunDetail(workspaceId, paymentRunId));
+  } catch (error) {
+    next(error);
+  }
+});
+
+paymentRunsRouter.delete('/workspaces/:workspaceId/payment-runs/:paymentRunId', async (req, res, next) => {
+  try {
+    const { workspaceId, paymentRunId } = paymentRunParamsSchema.parse(req.params);
+    await assertWorkspaceAdmin(workspaceId, req.auth!.userId);
+    res.json(await deletePaymentRun(workspaceId, paymentRunId));
   } catch (error) {
     next(error);
   }

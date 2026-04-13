@@ -7,12 +7,14 @@ export function Modal({
   open,
   onClose,
   footer,
+  size = 'default',
 }: {
   title: string;
   children: ReactNode;
   open: boolean;
   onClose: () => void;
   footer?: ReactNode;
+  size?: 'default' | 'wide';
 }) {
   const titleId = useId();
 
@@ -30,7 +32,7 @@ export function Modal({
   return (
     <div className="modal-root" role="presentation">
       <button type="button" className="modal-backdrop" aria-label="Close dialog" onClick={onClose} />
-      <div className="modal-dialog" role="dialog" aria-modal="true" aria-labelledby={titleId}>
+      <div className={`modal-dialog${size === 'wide' ? ' modal-dialog-wide' : ''}`} role="dialog" aria-modal="true" aria-labelledby={titleId}>
         <header className="modal-header">
           <h2 id={titleId}>{title}</h2>
           <button type="button" className="modal-close" onClick={onClose} aria-label="Close">
@@ -137,4 +139,71 @@ export function Drawer({
       </aside>
     </div>
   );
+}
+
+export function InstitutionalPanel({
+  children,
+  className,
+}: {
+  children: ReactNode;
+  className?: string;
+}) {
+  return <section className={className ? `panel ${className}` : 'panel'}>{children}</section>;
+}
+
+export function PanelHeader({
+  title,
+  description,
+  actions,
+}: {
+  title: string;
+  description?: string;
+  actions?: ReactNode;
+}) {
+  return (
+    <header className="section-header section-header-institutional">
+      <div>
+        <h2>{title}</h2>
+        {description ? <p>{description}</p> : null}
+      </div>
+      {actions ? <div className="section-header-actions">{actions}</div> : null}
+    </header>
+  );
+}
+
+export function MetricTile({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="metric metric-institutional">
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
+export function EmptyPanel({
+  title,
+  description,
+  action,
+}: {
+  title: string;
+  description: string;
+  action?: ReactNode;
+}) {
+  return (
+    <div className="empty-state empty-state-institutional">
+      <strong>{title}</strong>
+      <p>{description}</p>
+      {action ? <div className="empty-state-actions">{action}</div> : null}
+    </div>
+  );
+}
+
+export function DataTableShell({
+  children,
+  className,
+}: {
+  children: ReactNode;
+  className?: string;
+}) {
+  return <div className={className ? `data-table ${className}` : 'data-table'}>{children}</div>;
 }

@@ -581,9 +581,7 @@ async function enforceDuplicatePaymentRequest(args: {
         equals: args.externalReference,
         mode: 'insensitive',
       },
-      state: {
-        not: 'cancelled',
-      },
+      state: 'submitted',
     },
   });
 

@@ -492,6 +492,7 @@ export type PaymentRun = {
   createdByUser: User | null;
   totals: {
     orderCount: number;
+    actionableCount: number;
     totalAmountRaw: string;
     settledCount: number;
     exceptionCount: number;

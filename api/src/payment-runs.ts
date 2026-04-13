@@ -87,6 +87,20 @@ export async function getPaymentRunDetail(workspaceId: string, paymentRunId: str
   };
 }
 
+export async function deletePaymentRun(workspaceId: string, paymentRunId: string) {
+  const existing = await prisma.paymentRun.findFirst({
+    where: { workspaceId, paymentRunId },
+    select: { paymentRunId: true },
+  });
+  if (!existing) {
+    throw new Error('Payment run not found');
+  }
+  await prisma.paymentRun.delete({
+    where: { paymentRunId },
+  });
+  return { deleted: true, paymentRunId };
+}
+
 export async function importPaymentRunFromCsv(args: {
   workspaceId: string;
   actorUserId: string;
@@ -118,6 +132,18 @@ export async function importPaymentRunFromCsv(args: {
     sourceWorkspaceAddressId: args.sourceWorkspaceAddressId,
     paymentRunId: run.paymentRunId,
   });
+
+  if (importResult.imported === 0) {
+    await prisma.paymentRun.delete({
+      where: { paymentRunId: run.paymentRunId },
+    });
+    const failedRows = importResult.items
+      .filter((item) => item.status === 'failed')
+      .slice(0, 3)
+      .map((item) => `row ${item.rowNumber}: ${item.error ?? 'Import failed'}`);
+    const detail = failedRows.length ? ` ${failedRows.join(' | ')}` : '';
+    throw new Error(`CSV import had no valid rows, so no payment run was created.${detail}`);
+  }
 
   await refreshPersistedRunState(args.workspaceId, run.paymentRunId);
 
@@ -200,6 +226,10 @@ export async function preparePaymentRunExecution(args: {
   }
 
   const orders = await loadRunOrdersForExecution(args.workspaceId, args.paymentRunId);
+  const rejected = orders.filter((order) => {
+    const request = getPrimaryTransferRequest(order);
+    return request?.status === 'rejected';
+  });
   const blocked = orders.filter((order) => {
     const request = getPrimaryTransferRequest(order);
     return !request || ['pending_approval', 'escalated'].includes(request.status);
@@ -210,8 +240,23 @@ export async function preparePaymentRunExecution(args: {
     throw new Error(`${blocked.length} payment run row(s) need approval before batch execution can be prepared`);
   }
 
+  const executableOrders = orders.filter((order) => {
+    const request = getPrimaryTransferRequest(order);
+    return Boolean(request) && ['approved', 'ready_for_execution'].includes(request.status);
+  });
+
+  if (!executableOrders.length) {
+    await refreshPersistedRunState(args.workspaceId, args.paymentRunId);
+    throw new Error(
+      rejected.length
+        ? 'No executable rows in this run. Rejected rows are excluded from batch execution.'
+        : 'No executable rows in this run.',
+    );
+  }
+
   const invalid = orders.find((order) => {
     const request = getPrimaryTransferRequest(order);
+    if (request?.status === 'rejected') return false;
     return !request || !['approved', 'ready_for_execution'].includes(request.status);
   });
 
@@ -220,13 +265,13 @@ export async function preparePaymentRunExecution(args: {
     throw new Error(`Payment order ${invalid.paymentOrderId} cannot be prepared while it is ${status}`);
   }
 
-  if (orders.some((order) => order.asset.toLowerCase() !== 'usdc')) {
+  if (executableOrders.some((order) => order.asset.toLowerCase() !== 'usdc')) {
     throw new Error('Batch execution currently supports USDC payment runs only');
   }
 
-  const transferDrafts = orders.map((order) => buildBatchTransferDraft(order, source));
+  const transferDrafts = executableOrders.map((order) => buildBatchTransferDraft(order, source));
   const reusableRecordsByTransferRequestId = new Map(
-    orders
+    executableOrders
       .map((order) => {
         const request = getPrimaryTransferRequest(order);
         const record = request ? getReusableRunPreparedExecution(request, args.paymentRunId) : null;
@@ -332,11 +377,18 @@ export async function attachPaymentRunSignature(args: {
   if (!orders.length) {
     throw new Error('Payment run has no payment orders');
   }
+  const executableOrders = orders.filter((order) => {
+    const request = getPrimaryTransferRequest(order);
+    return Boolean(request) && ['approved', 'ready_for_execution', 'submitted_onchain'].includes(request.status);
+  });
+  if (!executableOrders.length) {
+    throw new Error('No executable rows in this run. Rejected rows are excluded from batch execution.');
+  }
 
   const now = args.submittedAt ?? new Date();
   const updatedRecords = await prisma.$transaction(async (tx) => {
     const records = [];
-    for (const order of orders) {
+    for (const order of executableOrders) {
       const request = getPrimaryTransferRequest(order);
       if (!request) {
         throw new Error(`Payment order ${order.paymentOrderId} has no submitted transfer request`);
@@ -451,14 +503,16 @@ async function serializePaymentRunSummary(run: PaymentRunWithRelations) {
 }
 
 function summarizeRunOrders(orders: Array<{ amountRaw: string; derivedState: string }>) {
+  const actionableOrders = orders.filter((order) => !['cancelled'].includes(order.derivedState));
   const totalAmountRaw = orders.reduce((sum, order) => sum + BigInt(order.amountRaw), 0n).toString();
   return {
     orderCount: orders.length,
+    actionableCount: actionableOrders.length,
     totalAmountRaw,
-    settledCount: orders.filter((order) => ['settled', 'closed'].includes(order.derivedState)).length,
+    settledCount: actionableOrders.filter((order) => ['settled', 'closed'].includes(order.derivedState)).length,
     exceptionCount: orders.filter((order) => order.derivedState === 'exception').length,
-    pendingApprovalCount: orders.filter((order) => order.derivedState === 'pending_approval').length,
-    readyCount: orders.filter((order) => ['approved', 'ready_for_execution', 'execution_recorded'].includes(order.derivedState)).length,
+    pendingApprovalCount: actionableOrders.filter((order) => order.derivedState === 'pending_approval').length,
+    readyCount: actionableOrders.filter((order) => ['approved', 'ready_for_execution', 'execution_recorded'].includes(order.derivedState)).length,
   };
 }
 
@@ -469,25 +523,29 @@ function derivePaymentRunState(storedState: string, orders: Array<{ derivedState
   if (!orders.length) {
     return storedState;
   }
-  if (orders.some((order) => order.derivedState === 'exception')) {
+  const actionableOrders = orders.filter((order) => order.derivedState !== 'cancelled');
+  if (!actionableOrders.length) {
+    return storedState;
+  }
+  if (actionableOrders.some((order) => order.derivedState === 'exception')) {
     return 'exception';
   }
-  if (orders.every((order) => ['settled', 'closed'].includes(order.derivedState))) {
+  if (actionableOrders.every((order) => ['settled', 'closed'].includes(order.derivedState))) {
     return 'settled';
   }
-  if (orders.some((order) => order.derivedState === 'partially_settled')) {
+  if (actionableOrders.some((order) => order.derivedState === 'partially_settled')) {
     return 'partially_settled';
   }
   if (storedState === 'submitted_onchain') {
     return 'submitted_onchain';
   }
-  if (orders.some((order) => order.derivedState === 'execution_recorded')) {
+  if (actionableOrders.some((order) => order.derivedState === 'execution_recorded')) {
     return 'execution_recorded';
   }
-  if (orders.some((order) => order.derivedState === 'pending_approval')) {
+  if (actionableOrders.some((order) => order.derivedState === 'pending_approval')) {
     return 'pending_approval';
   }
-  if (orders.every((order) => ['approved', 'ready_for_execution'].includes(order.derivedState))) {
+  if (actionableOrders.every((order) => ['approved', 'ready_for_execution'].includes(order.derivedState))) {
     return 'ready_for_execution';
   }
   return storedState;

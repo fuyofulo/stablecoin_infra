@@ -184,8 +184,6 @@ function workspaceNavItems(workspaceId: string) {
   return {
     operations: [
       { to: base, end: true as const, label: 'Command Center', icon: icons.command },
-      { to: `${base}/requests`, end: false as const, label: 'Payment requests', icon: icons.requests },
-      { to: `${base}/runs`, end: false as const, label: 'Payment runs', icon: icons.runs },
       { to: `${base}/payments`, end: false as const, label: 'Payments', icon: icons.payments },
       { to: `${base}/approvals`, end: false as const, label: 'Approvals', icon: icons.approvals },
       { to: `${base}/execution`, end: false as const, label: 'Execution', icon: icons.execution },

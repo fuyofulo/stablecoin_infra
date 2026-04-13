@@ -18,7 +18,7 @@ import bs58 from 'bs58';
 import { Buffer } from 'buffer';
 import type { PaymentExecutionPacket } from '../types';
 
-const DEFAULT_SOLANA_RPC_URL = 'https://api.mainnet-beta.solana.com';
+const DEFAULT_SOLANA_RPC_URL = 'https://solana-mainnet.g.alchemy.com/v2/PIc1wmnH_QhOEwH3vtddMUwcYluAEHMU';
 const SOLANA_MAINNET_CHAIN = 'solana:mainnet';
 
 type SolanaWalletProvider = {

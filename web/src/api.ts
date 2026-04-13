@@ -551,6 +551,11 @@ export const api = {
   getPaymentRunDetail(workspaceId: string, paymentRunId: string) {
     return request<PaymentRun>(`/workspaces/${workspaceId}/payment-runs/${paymentRunId}`);
   },
+  deletePaymentRun(workspaceId: string, paymentRunId: string) {
+    return request<Record<string, unknown>>(`/workspaces/${workspaceId}/payment-runs/${paymentRunId}`, {
+      method: 'DELETE',
+    });
+  },
   importPaymentRunCsv(
     workspaceId: string,
     input: {

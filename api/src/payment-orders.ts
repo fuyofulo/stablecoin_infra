@@ -467,7 +467,11 @@ export async function cancelPaymentOrder(args: {
     },
   });
 
-  if (['settled', 'closed', 'cancelled'].includes(current.state)) {
+  if (current.state === 'cancelled') {
+    return getPaymentOrderDetail(args.workspaceId, args.paymentOrderId);
+  }
+
+  if (['settled', 'closed'].includes(current.state)) {
     throw new Error(`Payment order ${current.state} cannot be cancelled`);
   }
 
