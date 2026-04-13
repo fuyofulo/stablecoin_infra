@@ -18,7 +18,9 @@ import type {
   PaymentRequest,
   PaymentRun,
   PaymentRunExecutionPreparation,
+  ReconciliationRow,
   ReconciliationTimelineItem,
+  ObservedTransfer,
   WorkspaceAddress,
   Workspace,
 } from './api';
@@ -512,7 +514,7 @@ function PaymentsPage({ session }: { session: AuthenticatedSession }) {
       kind: 'payment' as const,
       id: order.paymentOrderId,
       name: order.payee?.name ?? order.destination.label,
-      amountLabel: `${formatRawUsdcCompact(order.amountRaw)} ${order.asset}`,
+      amountLabel: `${formatRawUsdcCompact(order.amountRaw)} ${assetSymbol(order.asset)}`,
       sourceLabel: order.sourceWorkspaceAddress?.displayName ?? shortenAddress(order.sourceWorkspaceAddress?.address),
       refLabel: order.externalReference ?? order.invoiceNumber ?? order.memo ?? 'N/A',
       stateLabel: displayPaymentStatus(order.derivedState),
@@ -1220,7 +1222,14 @@ function PaymentRunDetailPage({ session }: { session: AuthenticatedSession }) {
   const draftCount = runOrders.filter((order) => order.derivedState === 'draft').length;
   const pendingApprovalCount = runOrders.filter((order) => order.derivedState === 'pending_approval').length;
   const approvalsQueueCount = draftCount + pendingApprovalCount;
-  const executableOrders = runOrders.filter((order) => order.derivedState !== 'cancelled' && order.derivedState !== 'closed');
+  const executableOrders = runOrders.filter((order) => {
+    if (['cancelled', 'closed', 'settled', 'partially_settled', 'exception'].includes(order.derivedState)) return false;
+    const latestExecution = order.reconciliationDetail?.latestExecution;
+    if (!latestExecution) return ['approved', 'ready_for_execution', 'execution_recorded'].includes(order.derivedState);
+    if (latestExecution.submittedSignature) return false;
+    if (['submitted_onchain', 'observed', 'settled'].includes(latestExecution.state)) return false;
+    return ['approved', 'ready_for_execution', 'execution_recorded'].includes(order.derivedState);
+  });
   const sourceAddresses = addressesQuery.data?.items ?? [];
   const effectiveSourceAddressId = selectedSourceAddressId || run.sourceWorkspaceAddressId || sourceAddresses[0]?.workspaceAddressId || '';
   const selectedWallet = wallets.find((wallet) => wallet.id === selectedWalletId);
@@ -1235,7 +1244,7 @@ function PaymentRunDetailPage({ session }: { session: AuthenticatedSession }) {
         paymentOrderId: order.paymentOrderId,
         label: order.payee?.name ?? order.destination.label,
         detail: order.externalReference ?? order.invoiceNumber ?? shortenAddress(order.destination.walletAddress),
-        amountLabel: `${formatRawUsdcCompact(order.amountRaw)} ${order.asset}`,
+        amountLabel: `${formatRawUsdcCompact(order.amountRaw)} ${assetSymbol(order.asset)}`,
         ratio,
       };
     })
@@ -1649,7 +1658,7 @@ function ApprovalsTable({
             </Link>
             <small>{shortenAddress(order.paymentOrderId, 8, 6)}</small>
           </span>
-          <span>{formatRawUsdcCompact(order.amountRaw)} {order.asset}</span>
+          <span>{formatRawUsdcCompact(order.amountRaw)} {assetSymbol(order.asset)}</span>
           <span>
             <small>
               {approvalReasonLine(order)}{' '}
@@ -1714,7 +1723,7 @@ function ApprovalHistoryTable({
               </Link>
               <small>{shortenAddress(order.paymentOrderId, 8, 6)}</small>
             </span>
-            <span>{formatRawUsdcCompact(order.amountRaw)} {order.asset}</span>
+            <span>{formatRawUsdcCompact(order.amountRaw)} {assetSymbol(order.asset)}</span>
             <span><StatusBadge tone={decisionTone}>{decisionLabel}</StatusBadge></span>
             <span>{latest?.actorUser?.email ?? latest?.actorType ?? 'System'}</span>
             <span>{latest ? formatDateCompact(latest.createdAt) : 'N/A'}</span>
@@ -1748,6 +1757,9 @@ function ExecutionPage({ session }: { session: AuthenticatedSession }) {
     }
     return m;
   }, [inQueue]);
+  const readyToSignCount = inQueue.filter((order) => order.derivedState === 'ready_for_execution').length;
+  const submittedCount = inQueue.filter((order) => order.derivedState === 'execution_recorded').length;
+  const reviewCount = inQueue.filter((order) => order.derivedState === 'exception' || order.derivedState === 'partially_settled').length;
 
   if (!workspaceId || !workspace) return <ScreenState title="Workspace unavailable" description="Choose a workspace from the sidebar." />;
 
@@ -1755,8 +1767,14 @@ function ExecutionPage({ session }: { session: AuthenticatedSession }) {
     <PageFrame
       eyebrow="Execution"
       title={`Execution queue [${inQueue.length}]`}
-      description="Grouped by what happens next: source wallet, prepare packet, sign, wait for settlement, or review an exception."
+      description="Operational queue by immediate next action so treasury can push payments through signing and settlement quickly."
     >
+      <div className="metric-strip metric-strip-four">
+        <Metric label="In queue" value={String(inQueue.length)} />
+        <Metric label="Ready to sign" value={String(readyToSignCount)} />
+        <Metric label="Submitted" value={String(submittedCount)} />
+        <Metric label="Needs review" value={String(reviewCount)} />
+      </div>
       {inQueue.length === 0 ? (
         <EmptyState title="Nothing waiting for execution" description="Approved, submitted, or review-needed payments will appear in the groups below." />
       ) : (
@@ -1772,9 +1790,11 @@ function ExecutionPage({ session }: { session: AuthenticatedSession }) {
                 actionHeader="Open"
                 emptyTitle="No payments"
                 emptyDescription="This group is empty."
+                reasonHeader="Why now"
+                renderReason={(order) => executionReasonLine(order)}
                 renderAction={(order) => (
                   <Link className="button button-secondary button-small" to={`/workspaces/${workspaceId}/payments/${order.paymentOrderId}#execution`}>
-                    {getExecutionLabel(order)}
+                    {executionActionLabel(order)}
                   </Link>
                 )}
               />
@@ -1803,42 +1823,99 @@ function SettlementPage({ session }: { session: AuthenticatedSession }) {
     refetchInterval: 5_000,
   });
   if (!workspaceId || !workspace) return <ScreenState title="Workspace unavailable" description="Choose a workspace from the sidebar." />;
+  const reconciliationRows = reconciliationQuery.data?.items ?? [];
+  const observedTransfers = transfersQuery.data?.items ?? [];
+  const matchedCount = reconciliationRows.filter((row) => row.requestDisplayState === 'matched').length;
+  const exceptionCount = reconciliationRows.filter((row) => row.requestDisplayState === 'exception').length;
+  const pendingCount = reconciliationRows.filter((row) => row.requestDisplayState === 'pending').length;
   return (
     <PageFrame eyebrow="Settlement" title="Settlement and reconciliation" description="Payment-centric chain truth first; use the debug tab for raw observed USDC movement.">
+      <div className="metric-strip metric-strip-four">
+        <Metric label="Rows tracked" value={String(reconciliationRows.length)} />
+        <Metric label="Matched" value={String(matchedCount)} />
+        <Metric label="Pending" value={String(pendingCount)} />
+        <Metric label="Exceptions" value={String(exceptionCount)} />
+      </div>
       <Tabs
         active={settlementTab}
         onChange={(id) => setSettlementTab(id as 'reconciliation' | 'raw')}
         tabs={[
-          { id: 'reconciliation', label: `Reconciliation (${reconciliationQuery.data?.items.length ?? 0})` },
-          { id: 'raw', label: `Observed movement (${transfersQuery.data?.items.length ?? 0})` },
+          { id: 'reconciliation', label: `Reconciliation (${reconciliationRows.length})` },
+          { id: 'raw', label: `Observed movement (${observedTransfers.length})` },
         ]}
       />
       {settlementTab === 'reconciliation' ? (
         <section className="panel">
           <SectionHeader title="Payment reconciliation" description="What the matcher attached to each transfer request." />
-          <SimpleList
-            items={(reconciliationQuery.data?.items ?? []).map((row) => ({
-              id: row.transferRequestId,
-              title: `${walletLabel(row.sourceWorkspaceAddress) ?? 'Source not set'} -> ${row.destination?.label ?? walletLabel(row.destinationWorkspaceAddress) ?? 'destination'}`,
-              meta: `${formatRawUsdcCompact(row.amountRaw)} ${row.asset} / ${displayReconciliationState(row.requestDisplayState)} / ${row.match?.signature ? shortenAddress(row.match.signature, 8, 6) : 'no signature yet'}`,
-            }))}
-            empty="No reconciliation rows yet."
-          />
+          <SettlementReconciliationTable workspaceId={workspaceId} rows={reconciliationRows} />
         </section>
       ) : (
         <section className="panel">
           <SectionHeader title="Observed USDC movement" description="Raw chain events for debugging settlement and matcher behavior." />
-          <SimpleList
-            items={(transfersQuery.data?.items ?? []).map((transfer) => ({
-              id: transfer.transferId,
-              title: `${transfer.sourceWallet ? shortenAddress(transfer.sourceWallet, 6, 6) : 'unknown source'} -> ${transfer.destinationWallet ? shortenAddress(transfer.destinationWallet, 6, 6) : 'unknown destination'}`,
-              meta: `${formatRawUsdcCompact(transfer.amountRaw)} ${transfer.asset} / ${shortenAddress(transfer.signature, 8, 6)} / ${formatRelativeTime(transfer.eventTime)}`,
-            }))}
-            empty="No observed transfers yet."
-          />
+          <ObservedTransfersTable rows={observedTransfers} />
         </section>
       )}
     </PageFrame>
+  );
+}
+
+function SettlementReconciliationTable({
+  workspaceId,
+  rows,
+}: {
+  workspaceId: string;
+  rows: ReconciliationRow[];
+}) {
+  if (!rows.length) return <EmptyState title="No reconciliation rows yet" description="Rows will appear after payment requests are submitted." />;
+  return (
+    <DataTableShell>
+      <div className="data-table-row data-table-head data-table-row-settlement-recon data-table-sticky-head">
+        <span>Payment</span><span>Amount</span><span>Display state</span><span>Match status</span><span>Signature</span><span>Updated</span>
+      </div>
+      {rows.map((row) => (
+        <div className="data-table-row data-table-row-settlement-recon" key={row.transferRequestId}>
+          <span>
+            {row.paymentOrderId ? (
+              <Link to={`/workspaces/${workspaceId}/payments/${row.paymentOrderId}`}>
+                <strong>{row.destination?.label ?? walletLabel(row.destinationWorkspaceAddress) ?? 'Destination'}</strong>
+              </Link>
+            ) : (
+              <strong>{row.destination?.label ?? walletLabel(row.destinationWorkspaceAddress) ?? 'Destination'}</strong>
+            )}
+            <small>{shortenAddress(row.transferRequestId, 8, 6)}</small>
+          </span>
+          <span>{formatRawUsdcCompact(row.amountRaw)} {assetSymbol(row.asset)}</span>
+          <span><StatusBadge tone={toneForGenericState(row.requestDisplayState)}>{displayReconciliationState(row.requestDisplayState)}</StatusBadge></span>
+          <span>{row.match ? row.match.matchStatus.replaceAll('_', ' ') : 'Not matched'}</span>
+          <span>{row.match?.signature ? <AddressLink value={row.match.signature} kind="transaction" /> : 'N/A'}</span>
+          <span className="cell-due-compact">{formatDateCompact(row.match?.updatedAt ?? row.requestedAt)}</span>
+        </div>
+      ))}
+    </DataTableShell>
+  );
+}
+
+function ObservedTransfersTable({ rows }: { rows: ObservedTransfer[] }) {
+  if (!rows.length) return <EmptyState title="No observed transfers yet" description="Chain-observed USDC movement will appear here." />;
+  return (
+    <DataTableShell>
+      <div className="data-table-row data-table-head data-table-row-observed-transfers data-table-sticky-head">
+        <span>Source</span><span>Destination</span><span>Amount</span><span>Signature</span><span>Slot</span><span>Observed</span><span>Lag</span>
+      </div>
+      {rows.map((row) => (
+        <div className="data-table-row data-table-row-observed-transfers" key={row.transferId}>
+          <span>
+            {row.sourceWallet ? <AddressLink value={row.sourceWallet} /> : <strong>unknown</strong>}
+          </span>
+          <span>{row.destinationWallet ? <AddressLink value={row.destinationWallet} /> : 'unknown'}</span>
+          <span>{formatRawUsdcCompact(row.amountRaw)} {assetSymbol(row.asset)}</span>
+          <span><AddressLink value={row.signature} kind="transaction" /></span>
+          <span>{row.slot.toLocaleString()}</span>
+          <span className="cell-due-compact">{formatDateCompact(row.eventTime)}</span>
+          <span>{row.chainToWriteMs.toLocaleString()} ms</span>
+        </div>
+      ))}
+    </DataTableShell>
   );
 }
 
@@ -2732,7 +2809,7 @@ function ExceptionDetailPage({ session }: { session: AuthenticatedSession }) {
               ['Transfer request', ex.transferRequestId ? shortenAddress(ex.transferRequestId, 8, 6) : 'N/A'],
               [
                 'Amount',
-                linkedOrder ? `${formatRawUsdcCompact(linkedOrder.amountRaw)} ${linkedOrder.asset}` : 'N/A',
+                linkedOrder ? `${formatRawUsdcCompact(linkedOrder.amountRaw)} ${assetSymbol(linkedOrder.asset)}` : 'N/A',
               ],
             ]}
           />
@@ -2821,7 +2898,7 @@ function OpsPage({ session }: { session: AuthenticatedSession }) {
           items={(reconciliationQuery.data?.items ?? []).slice(0, 12).map((row) => ({
             id: row.transferRequestId,
             title: `${walletLabel(row.sourceWorkspaceAddress) ?? 'Source not set'} -> ${row.destination?.label ?? walletLabel(row.destinationWorkspaceAddress) ?? 'destination'}`,
-            meta: `${formatRawUsdcCompact(row.amountRaw)} ${row.asset} / ${displayReconciliationState(row.requestDisplayState)}`,
+            meta: `${formatRawUsdcCompact(row.amountRaw)} ${assetSymbol(row.asset)} / ${displayReconciliationState(row.requestDisplayState)}`,
           }))}
           empty="No reconciliation rows yet."
         />
@@ -2841,9 +2918,12 @@ function PaymentDetailPage({ session }: { session: AuthenticatedSession }) {
     approval: false,
     settlement: false,
   });
+  const [selectedSourceAddressId, setSelectedSourceAddressId] = useState('');
   const [selectedWalletId, setSelectedWalletId] = useState<string | undefined>();
   const [wallets, setWallets] = useState<BrowserWalletOption[]>(() => discoverSolanaWallets());
   const [actionMessage, setActionMessage] = useState<string | null>(null);
+  const [executionModalOpen, setExecutionModalOpen] = useState(false);
+  const [walletModalOpen, setWalletModalOpen] = useState(false);
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
 
   useEffect(() => subscribeSolanaWallets(setWallets), []);
@@ -2855,9 +2935,16 @@ function PaymentDetailPage({ session }: { session: AuthenticatedSession }) {
     enabled: Boolean(workspaceId && paymentOrderId),
     refetchInterval: 4_000,
   });
+  const addressesQuery = useQuery({
+    queryKey: queryKeys(workspaceId).addresses,
+    queryFn: () => api.listAddresses(workspaceId!),
+    enabled: Boolean(workspaceId),
+  });
 
   const prepareMutation = useMutation({
-    mutationFn: () => api.preparePaymentOrderExecution(workspaceId!, paymentOrderId!),
+    mutationFn: (sourceWorkspaceAddressId: string) => api.preparePaymentOrderExecution(workspaceId!, paymentOrderId!, {
+      sourceWorkspaceAddressId,
+    }),
     onSuccess: async (result) => {
       setPreparedPacket(result.executionPacket);
       setActionMessage('Payment packet prepared.');
@@ -2907,9 +2994,18 @@ function PaymentDetailPage({ session }: { session: AuthenticatedSession }) {
 
   const signMutation = useMutation({
     mutationFn: async () => {
-      const packet = preparedPacket ?? getPreparedPacket(paymentOrderQuery.data);
+      const sourceWorkspaceAddressId = selectedSourceAddressId
+        || paymentOrderQuery.data?.sourceWorkspaceAddressId
+        || addressesQuery.data?.items?.[0]?.workspaceAddressId
+        || '';
+      if (!sourceWorkspaceAddressId) throw new Error('Select a source wallet before execution.');
+      let packet = preparedPacket ?? getPreparedPacket(paymentOrderQuery.data);
       if (!packet) {
-        throw new Error('Prepare the payment packet before signing.');
+        const prepared = await api.preparePaymentOrderExecution(workspaceId!, paymentOrderId!, {
+          sourceWorkspaceAddressId,
+        });
+        packet = prepared.executionPacket;
+        setPreparedPacket(packet);
       }
       const signature = await signAndSubmitPreparedPayment(packet, selectedWalletId);
       await api.attachPaymentOrderSignature(workspaceId!, paymentOrderId!, {
@@ -2920,6 +3016,7 @@ function PaymentDetailPage({ session }: { session: AuthenticatedSession }) {
     },
     onSuccess: async (signature) => {
       setActionMessage(`Submitted ${shortenAddress(signature, 8, 8)}.`);
+      setExecutionModalOpen(false);
       await queryClient.invalidateQueries({ queryKey: queryKeys(workspaceId, paymentOrderId).paymentOrder });
     },
     onError: (error) => setActionMessage(error instanceof Error ? error.message : 'Failed to sign and submit payment.'),
@@ -2978,6 +3075,10 @@ function PaymentDetailPage({ session }: { session: AuthenticatedSession }) {
     ? order.reconciliationDetail.exceptions.filter(Boolean)
     : []);
   const proofReady = order.derivedState === 'settled' || order.derivedState === 'closed';
+  const selectedWallet = wallets.find((wallet) => wallet.id === selectedWalletId);
+  const sourceAddresses = addressesQuery.data?.items ?? [];
+  const effectiveSourceAddressId = selectedSourceAddressId || order.sourceWorkspaceAddressId || sourceAddresses[0]?.workspaceAddressId || '';
+  const selectedSourceAddress = sourceAddresses.find((address) => address.workspaceAddressId === effectiveSourceAddressId) ?? null;
   const heroTime = latestExecution?.submittedAt ?? order.createdAt;
   const heroTimeLabel = latestExecution?.submittedSignature ? 'Submitted' : 'Requested';
   const latestDecision = approvalDecisions.slice().sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0] ?? null;
@@ -2998,8 +3099,8 @@ function PaymentDetailPage({ session }: { session: AuthenticatedSession }) {
     }
     if (order.derivedState === 'approved' || order.derivedState === 'ready_for_execution' || order.derivedState === 'execution_recorded') {
       return (
-        <button className="button button-secondary" onClick={() => document.getElementById('stage-execution')?.scrollIntoView({ behavior: 'smooth', block: 'start' })} type="button">
-          Continue to execution
+        <button className="button button-secondary" onClick={() => setExecutionModalOpen(true)} type="button">
+          Execute payment
         </button>
       );
     }
@@ -3037,9 +3138,9 @@ function PaymentDetailPage({ session }: { session: AuthenticatedSession }) {
         <SectionHeader title="Payment snapshot" />
         <InfoGrid
           items={[
-            ['Amount', `${formatRawUsdcCompact(order.amountRaw)} ${order.asset}`],
-            ['From', order.sourceWorkspaceAddress?.address ? shortenAddress(order.sourceWorkspaceAddress.address) : 'Source not set'],
-            ['To', order.destination?.walletAddress ? shortenAddress(order.destination.walletAddress) : 'Destination unavailable'],
+            ['Amount', `${formatRawUsdcCompact(order.amountRaw)} ${assetSymbol(order.asset)}`],
+            ['From', order.sourceWorkspaceAddress?.address ? <AddressLink key="from" value={order.sourceWorkspaceAddress.address} /> : 'Source not set'],
+            ['To', order.destination?.walletAddress ? <AddressLink key="to" value={order.destination.walletAddress} /> : 'Destination unavailable'],
             ['Signature', latestExecution?.submittedSignature ? shortenAddress(latestExecution.submittedSignature) : 'Not submitted'],
             ['Time label', heroTimeLabel],
             ['Time', formatRelativeTime(heroTime)],
@@ -3138,6 +3239,97 @@ function PaymentDetailPage({ session }: { session: AuthenticatedSession }) {
         </div>
       </section>
       <Modal
+        open={executionModalOpen}
+        onClose={() => setExecutionModalOpen(false)}
+        title="Execute payment"
+      >
+        <div className="form-stack">
+          <label className="field">
+            Source wallet
+            <select
+              value={effectiveSourceAddressId}
+              onChange={(event) => setSelectedSourceAddressId(event.target.value)}
+            >
+              <option value="">Select source wallet</option>
+              {sourceAddresses.filter((address) => address.isActive).map((address) => (
+                <option key={address.workspaceAddressId} value={address.workspaceAddressId}>
+                  {walletLabel(address)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <section className="allocation-panel">
+            <SectionHeader title="Transfer preview" description="Review this payment before preparing and signing." />
+            <div className="allocation-summary">
+              <span><strong>{formatRawUsdcCompact(order.amountRaw)} {assetSymbol(order.asset)}</strong></span>
+              <span><strong>{order.payee?.name ?? order.destination.label}</strong></span>
+              <span><strong>{selectedSourceAddress ? walletLabel(selectedSourceAddress) : 'No source wallet set'}</strong></span>
+            </div>
+          </section>
+          <section className="panel">
+            <SectionHeader title="Browser wallet" description="Select the signer wallet in a dedicated picker." />
+            <div className="action-cluster">
+              <span className="section-copy">
+                {selectedWallet
+                  ? `Selected: ${selectedWallet.name}`
+                  : 'Selected: Auto-detect wallet'}
+              </span>
+              <button className="button button-secondary" onClick={() => setWalletModalOpen(true)} type="button">
+                Choose wallet
+              </button>
+            </div>
+          </section>
+          {packet ? (
+            <div className="packet-box">
+              <InfoGrid
+                items={[
+                  ['Signer', safeShortAddress(packet.signerWallet)],
+                  ['Amount', `${formatRawUsdcCompact(packet.amountRaw)} ${packet.token?.symbol ?? 'USDC'}`],
+                  ['Instructions', String(packet.instructions.length)],
+                ]}
+              />
+            </div>
+          ) : (
+            <p className="section-copy">Prepare this payment packet and submit with your selected wallet.</p>
+          )}
+          <div className="action-cluster">
+            <button
+              className="button button-secondary"
+              disabled={prepareMutation.isPending || !effectiveSourceAddressId}
+              onClick={() => prepareMutation.mutate(effectiveSourceAddressId)}
+              type="button"
+            >
+              {prepareMutation.isPending ? 'Preparing...' : 'Prepare packet only'}
+            </button>
+            <button
+              className="button button-primary"
+              disabled={signMutation.isPending || !effectiveSourceAddressId}
+              onClick={() => signMutation.mutate()}
+              type="button"
+            >
+              {signMutation.isPending ? 'Executing...' : 'Execute payment'}
+            </button>
+          </div>
+          {!effectiveSourceAddressId ? <div className="notice">Select a source wallet before execution.</div> : null}
+        </div>
+      </Modal>
+      <Modal
+        open={walletModalOpen}
+        onClose={() => setWalletModalOpen(false)}
+        title="Choose browser wallet"
+      >
+        <div className="form-stack">
+          <WalletPicker
+            wallets={wallets}
+            selectedWalletId={selectedWalletId}
+            onSelect={(walletId) => {
+              setSelectedWalletId(walletId);
+              setWalletModalOpen(false);
+            }}
+          />
+        </div>
+      </Modal>
+      <Modal
         open={deleteModalOpen}
         onClose={() => setDeleteModalOpen(false)}
         title="Delete payment"
@@ -3199,8 +3391,11 @@ function PaymentTable({
             <strong>{order.payee?.name ?? order.destination.label}</strong>
             <small>{shortenAddress(order.paymentOrderId, 8, 6)}</small>
           </span>
-          <span>{formatRawUsdcCompact(order.amountRaw)} {order.asset}</span>
-          <span>{order.sourceWorkspaceAddress?.displayName ?? shortenAddress(order.sourceWorkspaceAddress?.address)}</span>
+          <span>{formatRawUsdcCompact(order.amountRaw)} {assetSymbol(order.asset)}</span>
+          <span>
+            {order.sourceWorkspaceAddress?.displayName
+              ?? (order.sourceWorkspaceAddress?.address ? <AddressLink value={order.sourceWorkspaceAddress.address} /> : 'N/A')}
+          </span>
           <span>{order.destination.label}</span>
           <span>{order.externalReference ?? order.invoiceNumber ?? order.memo ?? 'N/A'}</span>
           <span className="cell-due-compact">{order.dueAt ? formatDateCompact(order.dueAt) : 'N/A'}</span>
@@ -3288,8 +3483,11 @@ function RunPaymentsTable({
             </Link>
             <small>{shortenAddress(order.paymentOrderId, 8, 6)}</small>
           </span>
-          <span>{formatRawUsdcCompact(order.amountRaw)} {order.asset}</span>
-          <span>{order.sourceWorkspaceAddress?.displayName ?? shortenAddress(order.sourceWorkspaceAddress?.address)}</span>
+          <span>{formatRawUsdcCompact(order.amountRaw)} {assetSymbol(order.asset)}</span>
+          <span>
+            {order.sourceWorkspaceAddress?.displayName
+              ?? (order.sourceWorkspaceAddress?.address ? <AddressLink value={order.sourceWorkspaceAddress.address} /> : 'N/A')}
+          </span>
           <span>{order.destination.label}</span>
           <span>{order.externalReference ?? order.invoiceNumber ?? order.memo ?? 'N/A'}</span>
           <span className="cell-due-compact">{order.dueAt ? formatDateCompact(order.dueAt) : 'N/A'}</span>
@@ -3311,6 +3509,8 @@ function ActionPaymentTable({
   actionHeader,
   emptyTitle,
   emptyDescription,
+  reasonHeader,
+  renderReason,
   renderAction,
 }: {
   workspaceId: string;
@@ -3318,6 +3518,8 @@ function ActionPaymentTable({
   actionHeader: string;
   emptyTitle: string;
   emptyDescription: string;
+  reasonHeader?: string;
+  renderReason?: (order: PaymentOrder) => string;
   renderAction: (order: PaymentOrder) => ReactNode;
 }) {
   if (!paymentOrders.length) {
@@ -3325,18 +3527,19 @@ function ActionPaymentTable({
   }
   return (
     <DataTableShell>
-      <div className="data-table-row data-table-head data-table-row-actions">
-        <span>Payee</span><span>Amount</span><span>Destination</span><span>Reference</span><span>Status</span><span>{actionHeader}</span>
+      <div className={`data-table-row data-table-head ${reasonHeader ? 'data-table-row-actions-reason' : 'data-table-row-actions'}`}>
+        <span>Payee</span><span>Amount</span><span>Destination</span><span>Reference</span>{reasonHeader ? <span>{reasonHeader}</span> : null}<span>Status</span><span>{actionHeader}</span>
       </div>
       {paymentOrders.map((order) => (
-        <div className="data-table-row data-table-row-actions" key={order.paymentOrderId}>
+        <div className={`data-table-row ${reasonHeader ? 'data-table-row-actions-reason' : 'data-table-row-actions'}`} key={order.paymentOrderId}>
           <Link to={`/workspaces/${workspaceId}/payments/${order.paymentOrderId}`}>
             <strong>{order.payee?.name ?? order.destination.label}</strong>
             <small>{shortenAddress(order.paymentOrderId, 8, 6)}</small>
           </Link>
-          <span>{formatRawUsdcCompact(order.amountRaw)} {order.asset}</span>
+          <span>{formatRawUsdcCompact(order.amountRaw)} {assetSymbol(order.asset)}</span>
           <span>{order.destination.label}</span>
           <span>{order.externalReference ?? order.invoiceNumber ?? order.memo ?? 'N/A'}</span>
+          {reasonHeader ? <span><small>{renderReason?.(order) ?? '—'}</small></span> : null}
           <span><StatusBadge tone={statusToneForPayment(order.derivedState)}>{displayPaymentStatus(order.derivedState)}</StatusBadge></span>
           <span>{renderAction(order)}</span>
         </div>
@@ -3368,7 +3571,7 @@ function PaymentRequestsTable({
           <>
             <span><strong>{request.payee?.name ?? request.reason}</strong><small>{shortenAddress(request.paymentRequestId, 8, 6)}</small></span>
             <span>{request.destination.label}</span>
-            <span>{formatRawUsdcCompact(request.amountRaw)} {request.asset}</span>
+            <span>{formatRawUsdcCompact(request.amountRaw)} {assetSymbol(request.asset)}</span>
             <span>{request.externalReference ?? 'N/A'}</span>
             <span>
               <StatusBadge
@@ -3635,7 +3838,7 @@ function ExceptionsTable({
               </Link>
               <small>{humanizeExceptionReason(exception.reasonCode)}</small>
             </span>
-            <span>{linked ? `${formatRawUsdcCompact(linked.amountRaw)} ${linked.asset}` : 'N/A'}</span>
+            <span>{linked ? `${formatRawUsdcCompact(linked.amountRaw)} ${assetSymbol(linked.asset)}` : 'N/A'}</span>
             <span>{exception.exceptionType}</span>
             <span>{exception.signature ? <AddressLink value={exception.signature} kind="transaction" /> : 'N/A'}</span>
             <span>{exception.assignedToUser?.email ?? 'N/A'}</span>
@@ -3688,7 +3891,7 @@ function PaymentHero({ order }: { order: PaymentOrder }) {
     <section className="payment-hero">
       <div className="payment-hero-amount">
         <span>Amount</span>
-        <strong>{formatRawUsdcCompact(order.amountRaw)} {order.asset}</strong>
+        <strong>{formatRawUsdcCompact(order.amountRaw)} {assetSymbol(order.asset)}</strong>
       </div>
       <div className="payment-hero-grid">
         <HeroCell label="Signature">
@@ -3748,8 +3951,23 @@ function ExecutionPanel({
         <div className="packet-box">
           <InfoGrid
             items={[
-              ['From', `${safeShortAddress(packet.source?.walletAddress)} // ${safeShortAddress(packet.source?.tokenAccountAddress)}`],
-              ['To', packet.destination ? `${packet.destination.label} // ${safeShortAddress(packet.destination.walletAddress)}` : `${packet.transfers?.length ?? 0} transfers`],
+              [
+                'From',
+                packet.source?.walletAddress ? (
+                  <>
+                    <AddressLink key="packet-from-wallet" value={packet.source.walletAddress} />{' '}
+                    // {safeShortAddress(packet.source?.tokenAccountAddress)}
+                  </>
+                ) : 'N/A',
+              ],
+              [
+                'To',
+                packet.destination?.walletAddress ? (
+                  <>
+                    {packet.destination.label} // <AddressLink key="packet-to-wallet" value={packet.destination.walletAddress} />
+                  </>
+                ) : `${packet.transfers?.length ?? 0} transfers`,
+              ],
               ['Amount', `${formatRawUsdcCompact(packet.amountRaw)} ${packet.token?.symbol ?? 'USDC'}`],
               ['Instructions', `${packet.instructions.length} Solana instruction(s)`],
               ['Required signer', safeShortAddress(packet.signerWallet)],
@@ -4189,7 +4407,7 @@ function summarizePayment(order: PaymentOrder) {
   const reference = order.externalReference ?? order.invoiceNumber ?? order.memo ?? 'No reference';
   return {
     title,
-    description: `${formatRawUsdcCompact(order.amountRaw)} ${order.asset} / ${reference}`,
+    description: `${formatRawUsdcCompact(order.amountRaw)} ${assetSymbol(order.asset)} / ${reference}`,
   };
 }
 
@@ -4197,7 +4415,7 @@ function buildWorkflow(order: PaymentOrder) {
   if (order.derivedState === 'cancelled') {
     return [
       { label: 'Imported', subtext: '1 row', state: 'complete' as const },
-      { label: 'Reviewed', subtext: 'Reviewed', state: 'complete' as const },
+      { label: 'Reviewed', subtext: 'Not started', state: 'pending' as const },
       { label: 'Approval', subtext: 'Rejected', state: 'blocked' as const },
       { label: 'Submit', subtext: 'Not started', state: 'pending' as const },
       { label: 'Settle', subtext: 'Waiting', state: 'pending' as const },
@@ -4349,6 +4567,24 @@ function getExecutionLabel(order: PaymentOrder) {
   return 'Not started';
 }
 
+function executionActionLabel(order: PaymentOrder) {
+  if (order.derivedState === 'ready_for_execution') return 'Open signer';
+  if (order.derivedState === 'execution_recorded') return 'Track settlement';
+  if (order.derivedState === 'exception' || order.derivedState === 'partially_settled') return 'Resolve issue';
+  return 'Open payment';
+}
+
+function executionReasonLine(order: PaymentOrder) {
+  if (!order.sourceWorkspaceAddressId && order.derivedState === 'ready_for_execution') {
+    return 'Source wallet missing before signing.';
+  }
+  if (order.derivedState === 'ready_for_execution') return 'Approved and waiting for signature.';
+  if (order.derivedState === 'execution_recorded') return 'Signed and waiting for chain match.';
+  if (order.derivedState === 'exception') return 'Exception needs operator review.';
+  if (order.derivedState === 'partially_settled') return 'Partial match detected, verify settlement.';
+  return 'Waiting for execution step.';
+}
+
 function getSettlementLabel(order: PaymentOrder) {
   if (order.derivedState === 'settled' || order.derivedState === 'closed') return 'Matched';
   if (order.derivedState === 'partially_settled') return 'Partial';
@@ -4383,6 +4619,10 @@ function usdcToRaw(value: string) {
 
 function yesNo(value: boolean) {
   return value ? 'yes' : 'no';
+}
+
+function assetSymbol(asset: string | null | undefined) {
+  return (asset ?? '').toUpperCase();
 }
 
 function formatDateCompact(value: string) {

@@ -561,6 +561,10 @@ a {
   grid-template-columns: 1.2fr 0.8fr 1fr 1fr 0.9fr 0.9fr;
 }
 
+.data-table-row-actions-reason {
+  grid-template-columns: 1.1fr 0.7fr 0.9fr 0.8fr 1.3fr 0.8fr 0.8fr;
+}
+
 .data-table-row-destinations {
   grid-template-columns: 1.2fr 1.2fr 1fr 0.8fr 0.7fr 0.7fr;
 }
@@ -1270,7 +1274,16 @@ a {
 }
 
 .vertical-timeline-item-blocked:not(:last-child)::after {
-  background: rgba(177, 74, 71, 0.35);
+  background: var(--border);
+}
+
+.vertical-timeline-item-pending .vertical-timeline-marker {
+  border-color: var(--border-strong);
+  background: #fff;
+}
+
+.vertical-timeline-item-pending:not(:last-child)::after {
+  background: var(--border);
 }
 
 .compact-stage-events {
@@ -1787,6 +1800,14 @@ a {
 
 .data-table-row-unified-ext {
   grid-template-columns: 0.7fr 1.2fr 0.8fr 0.9fr 0.95fr 0.85fr 0.85fr;
+}
+
+.data-table-row-settlement-recon {
+  grid-template-columns: 1.15fr 0.7fr 0.8fr 0.9fr 1fr 0.7fr;
+}
+
+.data-table-row-observed-transfers {
+  grid-template-columns: 1fr 1fr 0.75fr 1fr 0.6fr 0.7fr 0.6fr;
 }
 
 .data-table-row-approval-history {

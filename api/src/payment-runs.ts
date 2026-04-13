@@ -226,6 +226,7 @@ export async function preparePaymentRunExecution(args: {
   }
 
   const orders = await loadRunOrdersForExecution(args.workspaceId, args.paymentRunId);
+  const alreadySubmitted = orders.filter((order) => hasSubmittedExecution(order));
   const rejected = orders.filter((order) => {
     const request = getPrimaryTransferRequest(order);
     return request?.status === 'rejected';
@@ -241,6 +242,7 @@ export async function preparePaymentRunExecution(args: {
   }
 
   const executableOrders = orders.filter((order) => {
+    if (hasSubmittedExecution(order)) return false;
     const request = getPrimaryTransferRequest(order);
     return Boolean(request) && ['approved', 'ready_for_execution'].includes(request.status);
   });
@@ -250,11 +252,14 @@ export async function preparePaymentRunExecution(args: {
     throw new Error(
       rejected.length
         ? 'No executable rows in this run. Rejected rows are excluded from batch execution.'
-        : 'No executable rows in this run.',
+        : alreadySubmitted.length
+          ? 'No executable rows in this run. Existing submitted/settled rows are excluded.'
+          : 'No executable rows in this run.',
     );
   }
 
   const invalid = orders.find((order) => {
+    if (hasSubmittedExecution(order)) return false;
     const request = getPrimaryTransferRequest(order);
     if (request?.status === 'rejected') return false;
     return !request || !['approved', 'ready_for_execution'].includes(request.status);
@@ -378,6 +383,7 @@ export async function attachPaymentRunSignature(args: {
     throw new Error('Payment run has no payment orders');
   }
   const executableOrders = orders.filter((order) => {
+    if (hasSubmittedExecution(order)) return false;
     const request = getPrimaryTransferRequest(order);
     return Boolean(request) && ['approved', 'ready_for_execution', 'submitted_onchain'].includes(request.status);
   });
@@ -707,6 +713,16 @@ function getReusableRunPreparedExecution(
   }
 
   return latest;
+}
+
+function hasSubmittedExecution(order: RunOrderForExecution) {
+  const request = getPrimaryTransferRequest(order);
+  if (!request) return false;
+  const latest = request.executionRecords[0] ?? null;
+  if (!latest) return false;
+  return Boolean(latest.submittedSignature)
+    || ['submitted_onchain', 'observed', 'settled'].includes(latest.state)
+    || request.status === 'submitted_onchain';
 }
 
 function serializeWorkspaceAddress(address: WorkspaceAddress) {
