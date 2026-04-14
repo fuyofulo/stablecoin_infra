@@ -10,7 +10,6 @@ import type {
   Counterparty,
   Destination,
   ExceptionItem,
-  OpsHealth,
   Payee,
   PaymentExecutionPacket,
   PaymentOrder,
@@ -79,7 +78,6 @@ function queryKeys(workspaceId?: string, paymentOrderId?: string) {
     paymentOrder: ['payment-order', workspaceId, paymentOrderId] as const,
     approvalPolicy: ['approval-policy', workspaceId] as const,
     exceptions: ['exceptions', workspaceId] as const,
-    opsHealth: ['ops-health', workspaceId] as const,
   };
 }
 
@@ -182,7 +180,6 @@ function AppShell({ session }: { session: AuthenticatedSession }) {
           <Route path="/workspaces/:workspaceId/policy" element={<PolicyPage session={session} />} />
           <Route path="/workspaces/:workspaceId/exceptions" element={<ExceptionsPage session={session} />} />
           <Route path="/workspaces/:workspaceId/exceptions/:exceptionId" element={<ExceptionDetailPage session={session} />} />
-          <Route path="/workspaces/:workspaceId/ops" element={<OpsPage session={session} />} />
         </Routes>
       </main>
     </div>
@@ -382,12 +379,6 @@ function CommandCenterPage({ session }: { session: AuthenticatedSession }) {
     enabled: Boolean(workspaceId),
     refetchInterval: 5_000,
   });
-  const opsHealthQuery = useQuery({
-    queryKey: queryKeys(workspaceId).opsHealth,
-    queryFn: () => api.getOpsHealth(workspaceId!),
-    enabled: Boolean(workspaceId),
-    refetchInterval: 10_000,
-  });
 
   if (!workspaceId || !workspace) {
     return <ScreenState title="Workspace unavailable" description="Choose a workspace from the sidebar or create one in setup." />;
@@ -398,8 +389,17 @@ function CommandCenterPage({ session }: { session: AuthenticatedSession }) {
   const exceptions = exceptionsQuery.data?.items ?? [];
   const needsApproval = orders.filter((order) => order.derivedState === 'pending_approval');
   const ready = orders.filter((order) => order.derivedState === 'ready_for_execution');
-  const unsettled = orders.filter((order) => ['execution_recorded', 'approved'].includes(order.derivedState));
+  const unsettled = orders.filter((order) => ['execution_recorded', 'approved', 'partially_settled'].includes(order.derivedState));
   const completed = orders.filter((order) => ['settled', 'closed'].includes(order.derivedState));
+  const openExceptions = exceptions.filter((item) => item.status !== 'dismissed');
+  const agingCritical = orders.filter((order) => {
+    if (['settled', 'closed', 'cancelled'].includes(order.derivedState)) return false;
+    return ageHours(order.createdAt) >= 24;
+  }).length;
+  const priorityRows = [...orders]
+    .filter((order) => ['pending_approval', 'approved', 'ready_for_execution', 'execution_recorded', 'partially_settled', 'exception'].includes(order.derivedState))
+    .sort((a, b) => commandPriorityScore(b) - commandPriorityScore(a))
+    .slice(0, 10);
 
   return (
     <PageFrame
@@ -414,22 +414,46 @@ function CommandCenterPage({ session }: { session: AuthenticatedSession }) {
       }
     >
       <div className="metric-strip metric-strip-four">
-        <Metric label="Needs approval" value={String(needsApproval.length)} />
-        <Metric label="Ready to sign" value={String(ready.length)} />
-        <Metric label="Waiting settlement" value={String(unsettled.length)} />
-        <Metric label="Open exceptions" value={String(exceptions.filter((item) => item.status !== 'dismissed').length)} />
+        <Metric label="Approval queue" value={String(needsApproval.length)} />
+        <Metric label="Ready to execute" value={String(ready.length)} />
+        <Metric label="Settlement watch" value={String(unsettled.length)} />
+        <Metric label="Open exceptions" value={String(openExceptions.length)} />
       </div>
-      {opsHealthQuery.data && opsHealthQuery.data.workerStatus !== 'healthy' ? (
-        <div className="notice">Worker health is {opsHealthQuery.data.workerStatus}. Check Ops Health before relying on live settlement.</div>
-      ) : null}
       <div className="split-panels">
         <section className="panel">
-          <SectionHeader title="Action queue" description="Payments where the next operator action is visible." />
-          <PaymentTable workspaceId={workspaceId} paymentOrders={[...needsApproval, ...ready, ...unsettled].slice(0, 8)} />
+          <SectionHeader title="Today's focus" description="Priority-ranked work based on state risk, amount, and age." />
+          <ActionPaymentTable
+            workspaceId={workspaceId}
+            paymentOrders={priorityRows}
+            actionHeader="Do now"
+            emptyTitle="No priority work"
+            emptyDescription="High-priority items will appear here as workflow state changes."
+            reasonHeader="Why now"
+            renderReason={(order) => commandPriorityReason(order)}
+            renderAction={(order) => (
+              <Link className="button button-secondary button-small" to={`/workspaces/${workspaceId}/payments/${order.paymentOrderId}`}>
+                {executionActionLabel(order)}
+              </Link>
+            )}
+          />
         </section>
         <section className="panel">
-          <SectionHeader title="Proof-ready payments" description="Completed payments that can be exported." />
-          <PaymentTable workspaceId={workspaceId} paymentOrders={completed.slice(0, 6)} />
+          <SectionHeader title="Operational load" description="Current queue distribution across active workflows." />
+          <InfoGrid
+            items={[
+              ['Approvals pending', String(needsApproval.length)],
+              ['Execution ready', String(ready.length)],
+              ['Settlement in-flight', String(unsettled.length)],
+              ['Aging over 24h', String(agingCritical)],
+              ['Proof-ready', String(completed.length)],
+              ['Open exceptions', String(openExceptions.length)],
+            ]}
+          />
+          <div className="action-cluster" style={{ marginTop: 12 }}>
+            <Link className="button button-secondary" to={`/workspaces/${workspaceId}/approvals`}>Open approvals</Link>
+            <Link className="button button-secondary" to={`/workspaces/${workspaceId}/execution`}>Open execution</Link>
+            <Link className="button button-secondary" to={`/workspaces/${workspaceId}/exceptions`}>Open exceptions</Link>
+          </div>
         </section>
       </div>
       <section className="panel panel-spaced">
@@ -2017,6 +2041,7 @@ function ProofsPage({ session }: { session: AuthenticatedSession }) {
   const { workspaceId } = useParams<{ workspaceId: string }>();
   const [message, setMessage] = useState<string | null>(null);
   const [preview, setPreview] = useState<{ title: string; data: Record<string, unknown> } | null>(null);
+  const [proofTab, setProofTab] = useState<'needs_review' | 'ready' | 'exported'>('needs_review');
   const workspace = findWorkspace(session, workspaceId);
   const ordersQuery = useQuery({
     queryKey: queryKeys(workspaceId).paymentOrders,
@@ -2048,56 +2073,145 @@ function ProofsPage({ session }: { session: AuthenticatedSession }) {
   });
 
   if (!workspaceId || !workspace) return <ScreenState title="Workspace unavailable" description="Choose a workspace from the sidebar." />;
-  const proofReadyOrders = (ordersQuery.data?.items ?? []).filter((order) => ['settled', 'closed', 'partially_settled', 'exception'].includes(order.derivedState));
+  const allOrders = ordersQuery.data?.items ?? [];
+  const proofNeedsReview = allOrders.filter((order) => ['partially_settled', 'exception', 'execution_recorded'].includes(order.derivedState));
+  const proofReadyOrders = allOrders.filter((order) => ['settled', 'closed'].includes(order.derivedState));
+  const exportedLikeOrders = allOrders.filter((order) => order.derivedState === 'closed');
   const runs = runsQuery.data?.items ?? [];
+  const runNeedsReview = runs.filter((run) => ['exception', 'partially_settled'].includes(run.derivedState));
+  const runReady = runs.filter((run) => ['settled', 'closed'].includes(run.derivedState));
+  const runExported = runs.filter((run) => run.derivedState === 'closed');
   return (
     <PageFrame eyebrow="Proofs" title="Proof packets" description="Preview structured proof in the app, or export JSON for finance review and audit handoff.">
       {message ? <div className="notice">{message}</div> : null}
       <Modal open={Boolean(preview)} title={preview?.title ?? 'Proof'} onClose={() => setPreview(null)}>
         {preview ? <ProofJsonView data={preview.data} /> : null}
       </Modal>
+      <div className="metric-strip metric-strip-four">
+        <Metric label="Needs review" value={String(proofNeedsReview.length + runNeedsReview.length)} />
+        <Metric label="Ready to export" value={String(proofReadyOrders.length + runReady.length)} />
+        <Metric label="Exported / closed" value={String(exportedLikeOrders.length + runExported.length)} />
+        <Metric label="Total proof records" value={String(allOrders.length + runs.length)} />
+      </div>
+      <Tabs
+        active={proofTab}
+        onChange={(id) => setProofTab(id as 'needs_review' | 'ready' | 'exported')}
+        tabs={[
+          { id: 'needs_review', label: `Needs review (${proofNeedsReview.length + runNeedsReview.length})` },
+          { id: 'ready', label: `Ready to export (${proofReadyOrders.length + runReady.length})` },
+          { id: 'exported', label: `Exported (${exportedLikeOrders.length + runExported.length})` },
+        ]}
+      />
       <section className="panel">
-        <SectionHeader title={`Payment proofs [${proofReadyOrders.length}]`} />
-        <ActionPaymentTable
-          workspaceId={workspaceId}
-          paymentOrders={proofReadyOrders}
-          actionHeader="Proof"
-          emptyTitle="No proof-ready payments"
-          emptyDescription="Settled or exception payments will appear here."
-          renderAction={(order) => (
-            <span className="table-actions">
-              <button
-                className="button button-secondary button-small"
-                disabled={proofPreviewMutation.isPending}
-                onClick={() =>
-                  proofPreviewMutation.mutate({
-                    kind: 'order',
-                    id: order.paymentOrderId,
-                    title: `Payment proof · ${order.payee?.name ?? order.destination.label}`,
-                  })
+        {proofTab === 'needs_review' ? (
+          <>
+            <SectionHeader title={`Payments needing review [${proofNeedsReview.length}]`} description="Resolve settlement or exception context before final proof export." />
+            <ActionPaymentTable
+              workspaceId={workspaceId}
+              paymentOrders={proofNeedsReview}
+              actionHeader="Action"
+              emptyTitle="No payments need proof review"
+              emptyDescription="Items with exception or partial settlement will appear here."
+              reasonHeader="Readiness"
+              renderReason={(order) => proofReadinessLine(order)}
+              renderAction={(order) => (
+                <Link className="button button-secondary button-small" to={`/workspaces/${workspaceId}/payments/${order.paymentOrderId}`}>
+                  Open payment
+                </Link>
+              )}
+            />
+            <section className="panel panel-spaced">
+              <SectionHeader title={`Runs needing review [${runNeedsReview.length}]`} />
+              <PaymentRunProofTable
+                workspaceId={workspaceId}
+                runs={runNeedsReview}
+                onExport={(run) => proofMutation.mutate({ kind: 'run', id: run.paymentRunId })}
+                onPreview={(run) =>
+                  proofPreviewMutation.mutate({ kind: 'run', id: run.paymentRunId, title: `Run proof · ${run.runName}` })
                 }
-                type="button"
-              >
-                Preview
-              </button>
-              <button className="button button-secondary button-small" onClick={() => proofMutation.mutate({ kind: 'order', id: order.paymentOrderId })} type="button">
-                Export
-              </button>
-            </span>
-          )}
-        />
-      </section>
-      <section className="panel panel-spaced">
-        <SectionHeader title={`Run proofs [${runs.length}]`} />
-        <PaymentRunProofTable
-          workspaceId={workspaceId}
-          runs={runs}
-          onExport={(run) => proofMutation.mutate({ kind: 'run', id: run.paymentRunId })}
-          onPreview={(run) =>
-            proofPreviewMutation.mutate({ kind: 'run', id: run.paymentRunId, title: `Run proof · ${run.runName}` })
-          }
-          previewPending={proofPreviewMutation.isPending}
-        />
+                previewPending={proofPreviewMutation.isPending}
+              />
+            </section>
+          </>
+        ) : null}
+        {proofTab === 'ready' ? (
+          <>
+            <SectionHeader title={`Payment proofs ready [${proofReadyOrders.length}]`} description="Preview or export completed proofs for audit handoff." />
+            <ActionPaymentTable
+              workspaceId={workspaceId}
+              paymentOrders={proofReadyOrders}
+              actionHeader="Proof"
+              emptyTitle="No proof-ready payments"
+              emptyDescription="Settled or closed payments will appear here."
+              reasonHeader="Readiness"
+              renderReason={(order) => proofReadinessLine(order)}
+              renderAction={(order) => (
+                <span className="table-actions">
+                  <button
+                    className="button button-secondary button-small"
+                    disabled={proofPreviewMutation.isPending}
+                    onClick={() =>
+                      proofPreviewMutation.mutate({
+                        kind: 'order',
+                        id: order.paymentOrderId,
+                        title: `Payment proof · ${order.payee?.name ?? order.destination.label}`,
+                      })
+                    }
+                    type="button"
+                  >
+                    Preview
+                  </button>
+                  <button className="button button-secondary button-small" onClick={() => proofMutation.mutate({ kind: 'order', id: order.paymentOrderId })} type="button">
+                    Export
+                  </button>
+                </span>
+              )}
+            />
+            <section className="panel panel-spaced">
+              <SectionHeader title={`Run proofs ready [${runReady.length}]`} />
+              <PaymentRunProofTable
+                workspaceId={workspaceId}
+                runs={runReady}
+                onExport={(run) => proofMutation.mutate({ kind: 'run', id: run.paymentRunId })}
+                onPreview={(run) =>
+                  proofPreviewMutation.mutate({ kind: 'run', id: run.paymentRunId, title: `Run proof · ${run.runName}` })
+                }
+                previewPending={proofPreviewMutation.isPending}
+              />
+            </section>
+          </>
+        ) : null}
+        {proofTab === 'exported' ? (
+          <>
+            <SectionHeader title={`Exported payment proofs [${exportedLikeOrders.length}]`} description="Records in closed state for completed evidence trails." />
+            <ActionPaymentTable
+              workspaceId={workspaceId}
+              paymentOrders={exportedLikeOrders}
+              actionHeader="Open"
+              emptyTitle="No exported payment proofs"
+              emptyDescription="Closed payment records appear here."
+              reasonHeader="Readiness"
+              renderReason={(order) => proofReadinessLine(order)}
+              renderAction={(order) => (
+                <Link className="button button-secondary button-small" to={`/workspaces/${workspaceId}/payments/${order.paymentOrderId}`}>
+                  Open payment
+                </Link>
+              )}
+            />
+            <section className="panel panel-spaced">
+              <SectionHeader title={`Exported run proofs [${runExported.length}]`} />
+              <PaymentRunProofTable
+                workspaceId={workspaceId}
+                runs={runExported}
+                onExport={(run) => proofMutation.mutate({ kind: 'run', id: run.paymentRunId })}
+                onPreview={(run) =>
+                  proofPreviewMutation.mutate({ kind: 'run', id: run.paymentRunId, title: `Run proof · ${run.runName}` })
+                }
+                previewPending={proofPreviewMutation.isPending}
+              />
+            </section>
+          </>
+        ) : null}
       </section>
     </PageFrame>
   );
@@ -2628,6 +2742,18 @@ function PolicyPage({ session }: { session: AuthenticatedSession }) {
     queryFn: () => api.getApprovalPolicy(workspaceId!),
     enabled: Boolean(workspaceId),
   });
+  const ordersQuery = useQuery({
+    queryKey: queryKeys(workspaceId).paymentOrders,
+    queryFn: () => api.listPaymentOrders(workspaceId!),
+    enabled: Boolean(workspaceId),
+    refetchInterval: 5_000,
+  });
+  const destinationsQuery = useQuery({
+    queryKey: queryKeys(workspaceId).destinations,
+    queryFn: () => api.listDestinations(workspaceId!),
+    enabled: Boolean(workspaceId),
+    refetchInterval: 10_000,
+  });
   const updateMutation = useMutation({
     mutationFn: async (formData: FormData) => {
       return api.updateApprovalPolicy(workspaceId!, {
@@ -2653,12 +2779,23 @@ function PolicyPage({ session }: { session: AuthenticatedSession }) {
   if (!workspaceId || !workspace) return <ScreenState title="Workspace unavailable" description="Choose a workspace from the sidebar." />;
   const policy = policyQuery.data;
   if (!policy) return <ScreenState title="Loading policy" description="Fetching approval rules." />;
+  const orders = ordersQuery.data?.items ?? [];
+  const destinations = destinationsQuery.data?.items ?? [];
+  const pendingApprovals = orders.filter((order) => order.derivedState === 'pending_approval').length;
+  const trustedDestinationCoverage = destinations.length
+    ? Math.round((destinations.filter((destination) => destination.trustState === 'trusted').length / destinations.length) * 100)
+    : 0;
+  const externalApprovalLoad = orders.filter((order) => order.destination && !order.destination.isInternal && order.derivedState === 'pending_approval').length;
+  const thresholdTriggered = orders.filter((order) => {
+    const raw = BigInt(order.amountRaw);
+    return raw >= BigInt(policy.ruleJson.externalApprovalThresholdRaw) || raw >= BigInt(policy.ruleJson.internalApprovalThresholdRaw);
+  }).length;
 
   return (
     <PageFrame
       eyebrow="Policy"
       title="Approval policy"
-      description="Review the active strategy at a glance. Open the editor when you need to change thresholds or routing rules."
+      description="Configure approval routing, trust gates, and thresholds that shape payment flow."
       action={
         <button className="button button-primary" type="button" onClick={() => setEditOpen(true)}>
           Edit policy
@@ -2666,8 +2803,14 @@ function PolicyPage({ session }: { session: AuthenticatedSession }) {
       }
     >
       {message ? <div className="notice">{message}</div> : null}
+      <div className="metric-strip metric-strip-four">
+        <Metric label="Pending approvals" value={String(pendingApprovals)} />
+        <Metric label="Threshold-triggered" value={String(thresholdTriggered)} />
+        <Metric label="Trusted destinations" value={`${trustedDestinationCoverage}%`} />
+        <Metric label="External approval load" value={String(externalApprovalLoad)} />
+      </div>
       <section className="panel">
-        <SectionHeader title="Active strategy" description="What operators experience in the approval queue today." />
+        <SectionHeader title="Active strategy" description="Policy posture and live impact on current payment flow." />
         <div className="policy-summary-grid">
           <dl className="policy-summary-card">
             <dt>Policy name</dt>
@@ -2697,6 +2840,10 @@ function PolicyPage({ session }: { session: AuthenticatedSession }) {
             <dt>Internal threshold</dt>
             <dd>{formatRawUsdcCompact(policy.ruleJson.internalApprovalThresholdRaw)} USDC</dd>
           </dl>
+          <dl className="policy-summary-card">
+            <dt>Updated</dt>
+            <dd>{formatDateCompact(policy.updatedAt)}</dd>
+          </dl>
         </div>
       </section>
       <Modal open={editOpen} title="Edit approval policy" onClose={() => setEditOpen(false)}>
@@ -2708,30 +2855,45 @@ function PolicyPage({ session }: { session: AuthenticatedSession }) {
             updateMutation.mutate(new FormData(event.currentTarget));
           }}
         >
-          <label className="field">
-            Policy name
-            <input name="policyName" defaultValue={policy.policyName} />
-          </label>
-          <label className="field checkbox-field">
-            <input name="isActive" defaultChecked={policy.isActive} type="checkbox" /> Active
-          </label>
-          <label className="field checkbox-field">
-            <input name="requireTrustedDestination" defaultChecked={policy.ruleJson.requireTrustedDestination} type="checkbox" /> Require trusted destination
-          </label>
-          <label className="field checkbox-field">
-            <input name="requireApprovalForExternal" defaultChecked={policy.ruleJson.requireApprovalForExternal} type="checkbox" /> Require approval for external payments
-          </label>
-          <label className="field checkbox-field">
-            <input name="requireApprovalForInternal" defaultChecked={policy.ruleJson.requireApprovalForInternal} type="checkbox" /> Require approval for internal payments
-          </label>
-          <label className="field">
-            External approval threshold
-            <input name="externalThreshold" defaultValue={formatRawUsdcCompact(policy.ruleJson.externalApprovalThresholdRaw)} />
-          </label>
-          <label className="field">
-            Internal approval threshold
-            <input name="internalThreshold" defaultValue={formatRawUsdcCompact(policy.ruleJson.internalApprovalThresholdRaw)} />
-          </label>
+          <section className="panel policy-group-panel">
+            <SectionHeader title="Policy identity" description="Name and activation for this workspace policy." />
+            <label className="field">
+              Policy name
+              <input name="policyName" defaultValue={policy.policyName} />
+            </label>
+            <label className="field checkbox-field">
+              <input name="isActive" defaultChecked={policy.isActive} type="checkbox" /> Active policy for new payment checks
+            </label>
+          </section>
+          <section className="panel policy-group-panel">
+            <SectionHeader title="Trust gates" description="Destination trust controls before execution." />
+            <label className="field checkbox-field">
+              <input name="requireTrustedDestination" defaultChecked={policy.ruleJson.requireTrustedDestination} type="checkbox" /> Require trusted destination before execution
+            </label>
+          </section>
+          <section className="panel policy-group-panel">
+            <SectionHeader title="Approval routing" description="Whether internal and external requests must go through approval." />
+            <label className="field checkbox-field">
+              <input name="requireApprovalForExternal" defaultChecked={policy.ruleJson.requireApprovalForExternal} type="checkbox" /> Require approval for external payments
+            </label>
+            <label className="field checkbox-field">
+              <input name="requireApprovalForInternal" defaultChecked={policy.ruleJson.requireApprovalForInternal} type="checkbox" /> Require approval for internal payments
+            </label>
+          </section>
+          <section className="panel policy-group-panel">
+            <SectionHeader title="Thresholds" description="Raw amount triggers for mandatory approval checks." />
+            <label className="field">
+              External approval threshold
+              <input name="externalThreshold" defaultValue={formatRawUsdcCompact(policy.ruleJson.externalApprovalThresholdRaw)} />
+            </label>
+            <label className="field">
+              Internal approval threshold
+              <input name="internalThreshold" defaultValue={formatRawUsdcCompact(policy.ruleJson.internalApprovalThresholdRaw)} />
+            </label>
+          </section>
+          <div className="notice">
+            Saving applies immediately. Review approval queue impact after changes.
+          </div>
           <div className="action-cluster">
             <button className="button button-secondary" type="button" onClick={() => setEditOpen(false)}>
               Cancel
@@ -2750,6 +2912,12 @@ function ExceptionsPage({ session }: { session: AuthenticatedSession }) {
   const { workspaceId } = useParams<{ workspaceId: string }>();
   const queryClient = useQueryClient();
   const [message, setMessage] = useState<string | null>(null);
+  const [statusFilter, setStatusFilter] = useState<'all' | string>('all');
+  const [severityFilter, setSeverityFilter] = useState<'all' | string>('all');
+  const [ownerFilter, setOwnerFilter] = useState<'all' | 'assigned' | 'unassigned'>('all');
+  const [resolveModal, setResolveModal] = useState<{ exceptionId: string; title: string } | null>(null);
+  const [resolveAction, setResolveAction] = useState<'reviewed' | 'expected' | 'dismissed'>('reviewed');
+  const [resolveNote, setResolveNote] = useState('');
   const workspace = findWorkspace(session, workspaceId);
   const exceptionsQuery = useQuery({
     queryKey: queryKeys(workspaceId).exceptions,
@@ -2770,8 +2938,8 @@ function ExceptionsPage({ session }: { session: AuthenticatedSession }) {
     return m;
   }, [ordersForExceptionsQuery.data?.items]);
   const actionMutation = useMutation({
-    mutationFn: ({ exceptionId, action }: { exceptionId: string; action: 'reviewed' | 'expected' | 'dismissed' | 'reopen' }) => (
-      api.applyExceptionAction(workspaceId!, exceptionId, { action })
+    mutationFn: ({ exceptionId, action, note }: { exceptionId: string; action: 'reviewed' | 'expected' | 'dismissed' | 'reopen'; note?: string }) => (
+      api.applyExceptionAction(workspaceId!, exceptionId, { action, note })
     ),
     onSuccess: async () => {
       setMessage('Exception updated.');
@@ -2782,25 +2950,120 @@ function ExceptionsPage({ session }: { session: AuthenticatedSession }) {
 
   if (!workspaceId || !workspace) return <ScreenState title="Workspace unavailable" description="Choose a workspace from the sidebar." />;
   const exceptions = exceptionsQuery.data?.items ?? [];
+  const statuses = Array.from(new Set(exceptions.map((exception) => exception.status))).sort();
+  const severities = Array.from(new Set(exceptions.map((exception) => exception.severity))).sort();
+  const filteredExceptions = exceptions.filter((exception) => {
+    const statusMatch = statusFilter === 'all' || exception.status === statusFilter;
+    const severityMatch = severityFilter === 'all' || exception.severity === severityFilter;
+    const ownerMatch = ownerFilter === 'all'
+      || (ownerFilter === 'assigned' ? Boolean(exception.assignedToUserId) : !exception.assignedToUserId);
+    return statusMatch && severityMatch && ownerMatch;
+  });
   const openCount = exceptions.filter((exception) => exception.status === 'open').length;
-  const reviewedCount = exceptions.filter((exception) => exception.status === 'reviewed').length;
   const dismissedCount = exceptions.filter((exception) => exception.status === 'dismissed').length;
+  const highSeverityCount = exceptions.filter((exception) => exception.severity.toLowerCase().includes('critical')).length;
+  const unassignedCount = exceptions.filter((exception) => !exception.assignedToUserId).length;
+  const agingCount = exceptions.filter((exception) => ageHours(exception.createdAt) >= 24 && exception.status !== 'dismissed').length;
 
   return (
     <PageFrame eyebrow="Exceptions" title={`Exceptions [${exceptions.length}]`} description="Resolve operational problems created by settlement mismatch, partials, or unknown activity.">
       {message ? <div className="notice">{message}</div> : null}
-      <div className="metric-strip metric-strip-four">
-        <Metric label="Total" value={String(exceptions.length)} />
+      <div className="metric-strip metric-strip-five">
         <Metric label="Open" value={String(openCount)} />
-        <Metric label="Reviewed" value={String(reviewedCount)} />
+        <Metric label="High severity" value={String(highSeverityCount)} />
+        <Metric label="Unassigned" value={String(unassignedCount)} />
+        <Metric label="Aging >24h" value={String(agingCount)} />
         <Metric label="Dismissed" value={String(dismissedCount)} />
       </div>
+      <section className="panel panel-spaced">
+        <SectionHeader title="Triage filters" description="Narrow the exception queue by status, severity, and assignment." />
+        <div className="exceptions-filter-bar">
+          <label className="field">
+            Status
+            <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
+              <option value="all">All statuses</option>
+              {statuses.map((status) => (
+                <option key={status} value={status}>{status}</option>
+              ))}
+            </select>
+          </label>
+          <label className="field">
+            Severity
+            <select value={severityFilter} onChange={(event) => setSeverityFilter(event.target.value)}>
+              <option value="all">All severities</option>
+              {severities.map((severity) => (
+                <option key={severity} value={severity}>{severity}</option>
+              ))}
+            </select>
+          </label>
+          <label className="field">
+            Owner
+            <select value={ownerFilter} onChange={(event) => setOwnerFilter(event.target.value as 'all' | 'assigned' | 'unassigned')}>
+              <option value="all">All</option>
+              <option value="assigned">Assigned</option>
+              <option value="unassigned">Unassigned</option>
+            </select>
+          </label>
+        </div>
+      </section>
       <ExceptionsTable
         workspaceId={workspaceId}
-        exceptions={exceptions}
+        exceptions={filteredExceptions}
         paymentByTransferId={payByTransfer}
         onAction={(exceptionId, action) => actionMutation.mutate({ exceptionId, action })}
+        onResolve={(exception) => {
+          setResolveAction('reviewed');
+          setResolveNote('');
+          setResolveModal({ exceptionId: exception.exceptionId, title: humanizeExceptionReason(exception.reasonCode) });
+        }}
       />
+      <Modal
+        open={Boolean(resolveModal)}
+        onClose={() => setResolveModal(null)}
+        title={resolveModal?.title ?? 'Resolve exception'}
+      >
+        <div className="form-stack">
+          <label className="field">
+            Resolution
+            <select value={resolveAction} onChange={(event) => setResolveAction(event.target.value as 'reviewed' | 'expected' | 'dismissed')}>
+              <option value="reviewed">Mark reviewed</option>
+              <option value="expected">Dismiss as expected</option>
+              <option value="dismissed">Dismiss</option>
+            </select>
+          </label>
+          <label className="field">
+            Resolution note
+            <textarea
+              rows={3}
+              value={resolveNote}
+              onChange={(event) => setResolveNote(event.target.value)}
+              placeholder="Required audit note for this resolution."
+            />
+          </label>
+          <div className="action-cluster">
+            <button className="button button-secondary" type="button" onClick={() => setResolveModal(null)}>
+              Cancel
+            </button>
+            <button
+              className="button button-primary"
+              type="button"
+              disabled={!resolveNote.trim() || actionMutation.isPending || !resolveModal}
+              onClick={() => {
+                if (!resolveModal) return;
+                actionMutation.mutate({
+                  exceptionId: resolveModal.exceptionId,
+                  action: resolveAction,
+                  note: resolveNote.trim(),
+                }, {
+                  onSuccess: () => setResolveModal(null),
+                });
+              }}
+            >
+              {actionMutation.isPending ? 'Saving...' : 'Save resolution'}
+            </button>
+          </div>
+        </div>
+      </Modal>
     </PageFrame>
   );
 }
@@ -2968,43 +3231,6 @@ function ExceptionDetailPage({ session }: { session: AuthenticatedSession }) {
         ) : (
           <p className="section-copy">No notes recorded.</p>
         )}
-      </section>
-    </PageFrame>
-  );
-}
-
-function OpsPage({ session }: { session: AuthenticatedSession }) {
-  const { workspaceId } = useParams<{ workspaceId: string }>();
-  const workspace = findWorkspace(session, workspaceId);
-  const opsQuery = useQuery({
-    queryKey: queryKeys(workspaceId).opsHealth,
-    queryFn: () => api.getOpsHealth(workspaceId!),
-    enabled: Boolean(workspaceId),
-    refetchInterval: 10_000,
-  });
-  const reconciliationQuery = useQuery({
-    queryKey: ['reconciliation', workspaceId],
-    queryFn: () => api.listReconciliation(workspaceId!),
-    enabled: Boolean(workspaceId),
-    refetchInterval: 10_000,
-  });
-
-  if (!workspaceId || !workspace) return <ScreenState title="Workspace unavailable" description="Choose a workspace from the sidebar." />;
-  const health = opsQuery.data;
-
-  return (
-    <PageFrame eyebrow="Ops Health" title="Infrastructure health" description="Keep worker and reconciliation health visible without turning it into the main payment flow.">
-      {health ? <OpsHealthPanel health={health} /> : <EmptyState title="Loading health" description="Fetching worker and reconciliation metrics." />}
-      <section className="panel panel-spaced">
-        <SectionHeader title="Recent reconciliation rows" />
-        <SimpleList
-          items={(reconciliationQuery.data?.items ?? []).slice(0, 12).map((row) => ({
-            id: row.transferRequestId,
-            title: `${walletLabel(row.sourceWorkspaceAddress) ?? 'Source not set'} -> ${row.destination?.label ?? walletLabel(row.destinationWorkspaceAddress) ?? 'destination'}`,
-            meta: `${formatRawUsdcCompact(row.amountRaw)} ${assetSymbol(row.asset)} / ${displayReconciliationState(row.requestDisplayState)}`,
-          }))}
-          empty="No reconciliation rows yet."
-        />
       </section>
     </PageFrame>
   );
@@ -3908,20 +4134,23 @@ function ExceptionsTable({
   exceptions,
   paymentByTransferId,
   onAction,
+  onResolve,
 }: {
   workspaceId: string;
   exceptions: ExceptionItem[];
   paymentByTransferId: Map<string, PaymentOrder>;
   onAction: (exceptionId: string, action: 'reviewed' | 'expected' | 'dismissed' | 'reopen') => void;
+  onResolve: (exception: ExceptionItem) => void;
 }) {
   if (!exceptions.length) return <EmptyState title="No exceptions" description="Partial settlements, unmatched events, and review-needed payments will appear here." />;
   return (
     <DataTableShell>
       <div className="data-table-row data-table-head data-table-row-exceptions-v2 data-table-sticky-head">
         <span>Severity</span>
-        <span>Payment / context</span>
-        <span>Why flagged</span>
-        <span>Signature</span>
+        <span>Context</span>
+        <span>Exposure</span>
+        <span>Age</span>
+        <span>Owner</span>
         <span>Status</span>
         <span>Actions</span>
       </div>
@@ -3937,20 +4166,21 @@ function ExceptionsTable({
               <Link to={`/workspaces/${workspaceId}/exceptions/${exception.exceptionId}`}>
                 <strong>{payeeLabel}</strong>
               </Link>
-              <small>{linked ? `${formatRawUsdcCompact(linked.amountRaw)} ${assetSymbol(linked.asset)}` : 'No linked payment'}</small>
+              <small>{humanizeExceptionReason(exception.reasonCode)}</small>
             </span>
             <span>
-              <strong>{humanizeExceptionReason(exception.reasonCode)}</strong>
-              <small>{exception.exceptionType}</small>
+              <strong>{linked ? `${formatRawUsdcCompact(linked.amountRaw)} ${assetSymbol(linked.asset)}` : 'N/A'}</strong>
+              <small>{exception.exceptionType.replaceAll('_', ' ')}</small>
             </span>
-            <span>{exception.signature ? <AddressLink value={exception.signature} kind="transaction" /> : 'N/A'}</span>
+            <span>{formatRelativeTime(exception.createdAt)}</span>
+            <span>{exception.assignedToUser?.email ?? 'Unassigned'}</span>
             <span><StatusBadge tone={toneForGenericState(exception.status)}>{exception.status}</StatusBadge></span>
             <span className="table-actions">
               <Link className="button button-secondary button-small" to={`/workspaces/${workspaceId}/exceptions/${exception.exceptionId}`}>
                 Open
               </Link>
-              <button className="button button-secondary button-small" onClick={() => onAction(exception.exceptionId, 'reviewed')} type="button">
-                Reviewed
+              <button className="button button-primary button-small" onClick={() => onResolve(exception)} type="button">
+                Resolve
               </button>
               <button className="button button-secondary button-small" onClick={() => onAction(exception.exceptionId, 'dismissed')} type="button">
                 Dismiss
@@ -3960,25 +4190,6 @@ function ExceptionsTable({
         );
       })}
     </DataTableShell>
-  );
-}
-
-function OpsHealthPanel({ health }: { health: OpsHealth }) {
-  return (
-    <section className="panel">
-      <SectionHeader title="Worker and reconciliation health" />
-      <InfoGrid items={[
-        ['Postgres', health.postgres],
-        ['Worker', health.workerStatus],
-        ['Latest slot', health.latestSlot?.toLocaleString() ?? 'N/A'],
-        ['Latest event', health.latestEventTime ? formatDateCompact(health.latestEventTime) : 'N/A'],
-        ['Worker freshness', health.workerFreshnessMs === null ? 'Unknown' : `${health.workerFreshnessMs} ms`],
-        ['Open exceptions', String(health.openExceptionCount)],
-        ['Observed transactions', String(health.observedTransactionCount)],
-        ['Matches', String(health.matchCount)],
-        ['Chain to match p95', health.latencies.chainToMatchMs.p95 === null ? 'Unknown' : `${health.latencies.chainToMatchMs.p95} ms`],
-      ]} />
-    </section>
   );
 }
 
@@ -4713,6 +4924,53 @@ function hasExecutionRecorded(order: PaymentOrder): boolean {
     || order.derivedState === 'settled'
     || order.derivedState === 'closed'
   );
+}
+
+function ageHours(timestamp: string): number {
+  const parsed = new Date(timestamp).getTime();
+  if (Number.isNaN(parsed)) return 0;
+  return (Date.now() - parsed) / 3_600_000;
+}
+
+function commandPriorityScore(order: PaymentOrder): number {
+  const stateWeight: Record<PaymentOrder['derivedState'], number> = {
+    draft: 5,
+    pending_approval: 40,
+    approved: 22,
+    ready_for_execution: 34,
+    execution_recorded: 24,
+    partially_settled: 32,
+    settled: 1,
+    exception: 38,
+    closed: 1,
+    cancelled: 1,
+  };
+  const amountScore = Number.parseFloat(order.amountRaw) / 1_000_000;
+  const ageScore = Math.min(48, ageHours(order.createdAt));
+  return (stateWeight[order.derivedState] ?? 1) + amountScore + ageScore;
+}
+
+function commandPriorityReason(order: PaymentOrder): string {
+  const aging = ageHours(order.createdAt);
+  if (order.derivedState === 'pending_approval') return `Approval blocked for ${Math.floor(aging)}h.`;
+  if (order.derivedState === 'ready_for_execution') return `Approved and waiting execution for ${Math.floor(aging)}h.`;
+  if (order.derivedState === 'execution_recorded') return `Executed and waiting settlement for ${Math.floor(aging)}h.`;
+  if (order.derivedState === 'partially_settled') return 'Partial settlement requires reconciliation.';
+  if (order.derivedState === 'exception') return 'Exception state requires operator review.';
+  return `In workflow for ${Math.floor(aging)}h.`;
+}
+
+function proofReadinessLine(order: PaymentOrder): string {
+  const hasDecision = Boolean(order.reconciliationDetail?.approvalDecisions?.length);
+  const hasExecution = hasExecutionRecorded(order);
+  const hasMatch = Boolean(order.reconciliationDetail?.match?.signature);
+  const hasException = Boolean(order.reconciliationDetail?.exceptions?.length);
+  return [
+    hasDecision ? 'approval ok' : 'approval pending',
+    hasExecution ? 'execution present' : 'execution missing',
+    hasMatch ? 'settlement matched' : 'match pending',
+    hasException ? 'has exceptions' : 'no exceptions',
+  ].join(' · ');
 }
 
 function getFormString(formData: FormData, key: string) {

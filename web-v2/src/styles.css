@@ -1802,7 +1802,13 @@ a {
 }
 
 .data-table-row-exceptions-v2 {
-  grid-template-columns: 0.6fr 1.15fr 1.2fr 0.95fr 0.6fr 1fr;
+  grid-template-columns: 0.6fr 1.1fr 0.95fr 0.7fr 0.95fr 0.6fr 1fr;
+}
+
+.exceptions-filter-bar {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
 }
 
 .data-table-row-payments-ext {
@@ -1932,6 +1938,11 @@ a {
   margin: 0;
   font-size: 15px;
   font-weight: 600;
+}
+
+.policy-group-panel {
+  border-radius: 16px;
+  padding: 16px;
 }
 
 .proof-json-root {

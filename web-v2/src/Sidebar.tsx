@@ -143,17 +143,6 @@ const icons = {
       />
     </Icon>
   ),
-  ops: (
-    <Icon>
-      <path
-        d="M4 19h16M6 15l2-3 3 3 4-8 3 6"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </Icon>
-  ),
 } as const;
 
 function SidebarLink({
@@ -201,7 +190,6 @@ function workspaceNavItems(workspaceId: string) {
     administration: [
       { to: `${base}/registry`, end: false as const, label: 'Address book', icon: icons.address },
       { to: `${base}/policy`, end: false as const, label: 'Policy', icon: icons.policy },
-      { to: `${base}/ops`, end: false as const, label: 'Ops health', icon: icons.ops },
     ],
   };
 }
