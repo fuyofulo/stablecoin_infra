@@ -160,12 +160,14 @@ function AppShell({ session }: { session: AuthenticatedSession }) {
         paymentsIncompleteCount={paymentsIncompleteCount}
         approvalPendingCount={approvalPendingCount}
         executionQueueCount={executionQueueCount}
+        onWorkspaceSwitch={(workspaceId) => navigate(`/workspaces/${workspaceId}`)}
         onLogout={logout}
       />
       <main className="main-surface">
         <Routes>
           <Route path="/" element={<HomeRedirect session={session} />} />
           <Route path="/setup" element={<SetupPage session={session} />} />
+          <Route path="/profile" element={<ProfilePage session={session} />} />
           <Route path="/workspaces/:workspaceId" element={<CommandCenterPage session={session} />} />
           <Route path="/workspaces/:workspaceId/registry" element={<AddressBookPage session={session} />} />
           <Route path="/workspaces/:workspaceId/requests" element={<PaymentRequestsPage session={session} />} />
@@ -354,6 +356,129 @@ function SetupPage({ session }: { session: AuthenticatedSession }) {
           />
         </section>
       </div>
+    </PageFrame>
+  );
+}
+
+function ProfilePage({ session }: { session: AuthenticatedSession }) {
+  const queryClient = useQueryClient();
+  const navigate = useNavigate();
+  const [message, setMessage] = useState<string | null>(null);
+  const organizationsQuery = useQuery({
+    queryKey: ['organizations'],
+    queryFn: () => api.listOrganizations(),
+  });
+  const createWorkspaceMutation = useMutation({
+    mutationFn: async (formData: FormData) => {
+      const organizationId = getFormString(formData, 'organizationId');
+      const workspaceName = getFormString(formData, 'workspaceName');
+      if (!organizationId) throw new Error('Select an organization.');
+      if (!workspaceName) throw new Error('Workspace name is required.');
+      return api.createWorkspace(organizationId, { workspaceName });
+    },
+    onSuccess: async (workspace) => {
+      setMessage('Workspace created.');
+      await queryClient.invalidateQueries({ queryKey: queryKeys().session });
+      navigate(`/workspaces/${workspace.workspaceId}`);
+    },
+    onError: (error) => setMessage(error instanceof Error ? error.message : 'Unable to create workspace.'),
+  });
+  const createOrganizationMutation = useMutation({
+    mutationFn: async (formData: FormData) => {
+      const organizationName = getFormString(formData, 'organizationName');
+      const firstWorkspaceName = getOptionalFormString(formData, 'firstWorkspaceName');
+      if (!organizationName) throw new Error('Organization name is required.');
+      const organization = await api.createOrganization({ organizationName });
+      if (firstWorkspaceName) {
+        const workspace = await api.createWorkspace(organization.organizationId, { workspaceName: firstWorkspaceName });
+        return { organization, workspace };
+      }
+      return { organization, workspace: null };
+    },
+    onSuccess: async (result) => {
+      setMessage(result.workspace ? 'Organization and workspace created.' : 'Organization created.');
+      await queryClient.invalidateQueries({ queryKey: queryKeys().session });
+      if (result.workspace) {
+        navigate(`/workspaces/${result.workspace.workspaceId}`);
+      }
+    },
+    onError: (error) => setMessage(error instanceof Error ? error.message : 'Unable to create organization.'),
+  });
+
+  return (
+    <PageFrame
+      eyebrow="Account"
+      title="Profile and organization access"
+      description="Manage your operator identity, create organizations, and add workspaces without leaving the app."
+    >
+      {message ? <div className="notice">{message}</div> : null}
+      <div className="metric-strip metric-strip-three">
+        <Metric label="Organizations" value={String(session.organizations.length)} />
+        <Metric label="Workspaces" value={String(getWorkspaces(session).length)} />
+        <Metric label="User" value={session.user.email} />
+      </div>
+      <div className="split-panels">
+        <section className="panel">
+          <SectionHeader title="Create workspace in existing org" description="Add another workspace under an organization you already belong to." />
+          <form
+            className="form-stack"
+            onSubmit={(event) => {
+              event.preventDefault();
+              createWorkspaceMutation.mutate(new FormData(event.currentTarget));
+            }}
+          >
+            <label className="field">
+              Organization
+              <select name="organizationId" defaultValue="">
+                <option value="" disabled>Select organization</option>
+                {session.organizations.map((org) => (
+                  <option key={org.organizationId} value={org.organizationId}>{org.organizationName}</option>
+                ))}
+              </select>
+            </label>
+            <label className="field">
+              Workspace name
+              <input name="workspaceName" placeholder="Treasury Ops APAC" />
+            </label>
+            <button className="button button-primary" disabled={createWorkspaceMutation.isPending} type="submit">
+              {createWorkspaceMutation.isPending ? 'Creating...' : 'Create workspace'}
+            </button>
+          </form>
+        </section>
+        <section className="panel">
+          <SectionHeader title="Create organization" description="Create a new organization and optionally seed its first workspace." />
+          <form
+            className="form-stack"
+            onSubmit={(event) => {
+              event.preventDefault();
+              createOrganizationMutation.mutate(new FormData(event.currentTarget));
+            }}
+          >
+            <label className="field">
+              Organization name
+              <input name="organizationName" placeholder="Acme Treasury Group" />
+            </label>
+            <label className="field">
+              First workspace (optional)
+              <input name="firstWorkspaceName" placeholder="Main desk" />
+            </label>
+            <button className="button button-primary" disabled={createOrganizationMutation.isPending} type="submit">
+              {createOrganizationMutation.isPending ? 'Creating...' : 'Create organization'}
+            </button>
+          </form>
+        </section>
+      </div>
+      <section className="panel panel-spaced">
+        <SectionHeader title="Your organizations" description="Current organization and workspace access from this session." />
+        <SimpleList
+          items={(organizationsQuery.data?.items ?? []).map((organization) => ({
+            id: organization.organizationId,
+            title: organization.organizationName,
+            meta: `${organization.workspaceCount} workspace(s) / ${organization.isMember ? organization.membershipRole ?? 'member' : 'not joined'}`,
+          }))}
+          empty="No organizations found yet."
+        />
+      </section>
     </PageFrame>
   );
 }
@@ -1934,11 +2059,18 @@ function SettlementPage({ session }: { session: AuthenticatedSession }) {
     enabled: Boolean(workspaceId),
     refetchInterval: 5_000,
   });
+  const exceptionsQuery = useQuery({
+    queryKey: queryKeys(workspaceId).exceptions,
+    queryFn: () => api.listExceptions(workspaceId!),
+    enabled: Boolean(workspaceId),
+    refetchInterval: 5_000,
+  });
   if (!workspaceId || !workspace) return <ScreenState title="Workspace unavailable" description="Choose a workspace from the sidebar." />;
   const reconciliationRows = reconciliationQuery.data?.items ?? [];
   const observedTransfers = transfersQuery.data?.items ?? [];
+  const openExceptions = (exceptionsQuery.data?.items ?? []).filter((item) => item.status !== 'dismissed');
   const matchedCount = reconciliationRows.filter((row) => row.requestDisplayState === 'matched').length;
-  const exceptionCount = reconciliationRows.filter((row) => row.requestDisplayState === 'exception').length;
+  const reconciliationExceptionCount = reconciliationRows.filter((row) => row.requestDisplayState === 'exception').length;
   const rejectedCount = reconciliationRows.filter(
     (row) => row.approvalState === 'rejected' || row.executionState === 'rejected',
   ).length;
@@ -1952,7 +2084,7 @@ function SettlementPage({ session }: { session: AuthenticatedSession }) {
         <Metric label="Matched" value={String(matchedCount)} />
         <Metric label="Pending" value={String(pendingCount)} />
         <Metric label="Rejected" value={String(rejectedCount)} />
-        <Metric label="Exceptions" value={String(exceptionCount)} />
+        <Metric label="Open exceptions" value={String(openExceptions.length)} />
       </div>
       <Tabs
         active={settlementTab}
@@ -1964,7 +2096,7 @@ function SettlementPage({ session }: { session: AuthenticatedSession }) {
       />
       {settlementTab === 'reconciliation' ? (
         <section className="panel">
-          <SectionHeader title="Payment reconciliation" description="What the matcher attached to each transfer request." />
+          <SectionHeader title="Payment reconciliation" description={`What the matcher attached to each transfer request. Reconciliation exceptions: ${reconciliationExceptionCount}.`} />
           <SettlementReconciliationTable workspaceId={workspaceId} rows={reconciliationRows} />
         </section>
       ) : (

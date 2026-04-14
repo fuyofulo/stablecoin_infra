@@ -118,6 +118,67 @@ a {
   padding-bottom: 8px;
 }
 
+.sidebar-switcher {
+  padding: 0 2px 10px;
+  margin-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.sidebar-switcher-select-wrap {
+  position: relative;
+}
+
+.sidebar-switcher-select {
+  width: 100%;
+  appearance: none;
+  -webkit-appearance: none;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: #fff;
+  min-height: 34px;
+  padding: 0 34px 0 10px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text);
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.sidebar-switcher-select:hover {
+  border-color: var(--border-strong);
+}
+
+.sidebar-switcher-select:focus {
+  outline: none;
+  border-color: #111;
+  box-shadow: 0 0 0 3px rgba(17, 17, 17, 0.08);
+}
+
+.sidebar-switcher-chevron {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 14px;
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+.sidebar-switcher-create-link {
+  display: inline-flex;
+  margin-top: 7px;
+  padding: 3px 2px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  text-decoration: none;
+  letter-spacing: 0.01em;
+  transition: color 120ms ease;
+}
+
+.sidebar-switcher-create-link:hover {
+  color: var(--text);
+}
+
 .sidebar-workspace + .sidebar-workspace {
   margin-top: 8px;
   padding-top: 16px;
@@ -325,6 +386,19 @@ a {
   color: #111;
 }
 
+.sidebar-profile-link {
+  align-self: flex-start;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.sidebar-profile-link:hover {
+  color: #111;
+}
+
 .data-table small,
 .section-copy,
 .page-header p,
@@ -456,6 +530,10 @@ a {
 
 .metric-strip-four {
   grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.metric-strip-three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .metric-strip-five {

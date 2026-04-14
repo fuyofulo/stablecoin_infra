@@ -208,6 +208,7 @@ export function AppSidebar({
   paymentsIncompleteCount,
   approvalPendingCount,
   executionQueueCount,
+  onWorkspaceSwitch,
   onLogout,
 }: {
   session: AuthenticatedSession;
@@ -216,8 +217,13 @@ export function AppSidebar({
   paymentsIncompleteCount?: number;
   approvalPendingCount?: number;
   executionQueueCount?: number;
+  onWorkspaceSwitch: (workspaceId: string) => void;
   onLogout: () => void;
 }) {
+  const activeContext = workspaceContexts.find((ctx) => ctx.workspace.workspaceId === activeWorkspaceId)
+    ?? workspaceContexts[0];
+  const activeWorkspace = activeContext?.workspace;
+
   return (
     <aside className="sidebar" aria-label="Application">
       <div className="sidebar-brand">
@@ -229,7 +235,34 @@ export function AppSidebar({
       </div>
 
       <nav className="sidebar-scroll" aria-label="Workspace navigation">
-        {workspaceContexts.map(({ organization, workspace }) => {
+        {workspaceContexts.length ? (
+          <div className="sidebar-switcher">
+            <p className="sidebar-section-label">Workspace switcher</p>
+            <div className="sidebar-switcher-select-wrap">
+              <select
+                className="sidebar-switcher-select"
+                value={activeWorkspace?.workspaceId ?? ''}
+                onChange={(event) => {
+                  const nextWorkspaceId = event.target.value;
+                  if (!nextWorkspaceId) return;
+                  onWorkspaceSwitch(nextWorkspaceId);
+                }}
+              >
+                {workspaceContexts.map(({ organization, workspace }) => (
+                  <option key={workspace.workspaceId} value={workspace.workspaceId}>
+                    {organization.organizationName} / {workspace.workspaceName}
+                  </option>
+                ))}
+              </select>
+              <span className="sidebar-switcher-chevron" aria-hidden>⌄</span>
+            </div>
+            <NavLink className="sidebar-switcher-create-link" to="/setup">
+              + New org/workspace
+            </NavLink>
+          </div>
+        ) : null}
+        {activeContext ? (() => {
+          const { organization, workspace } = activeContext;
           const nav = workspaceNavItems(workspace.workspaceId);
           return (
             <div className="sidebar-workspace" key={workspace.workspaceId}>
@@ -280,7 +313,7 @@ export function AppSidebar({
               </div>
             </div>
           );
-        })}
+        })() : null}
 
         {!workspaceContexts.length ? (
           <div className="sidebar-empty-workspace">
@@ -301,6 +334,9 @@ export function AppSidebar({
             <span className="sidebar-user-email" title={session.user.email}>
               {session.user.email}
             </span>
+            <NavLink className="sidebar-profile-link" to="/profile">
+              Profile
+            </NavLink>
             <button className="sidebar-sign-out" onClick={() => void onLogout()} type="button">
               Sign out
             </button>
