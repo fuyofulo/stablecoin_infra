@@ -10,6 +10,7 @@ import type {
   PaymentExecutionPacket,
   PaymentExecutionPreparation,
   PaymentOrder,
+  Payee,
   PaymentRequest,
   PaymentRun,
   PaymentRunExecutionPreparation,
@@ -20,8 +21,9 @@ import type {
   WorkspaceAddress,
   WorkspaceAddressLite,
   WorkspaceMember,
+  PaymentOrderState,
 } from '../types';
-import { formatRawUsdc, formatRawUsdcCompact, formatRelativeTime, formatTimestamp, formatTimestampCompact, orbTransactionUrl, shortenAddress } from '../lib/app';
+import { formatRawUsdc, formatRawUsdcCompact, formatRelativeTime, formatTimestamp, formatTimestampCompact, orbTransactionUrl, shortenAddress, solanaAccountUrl } from '../lib/app';
 import { discoverSolanaWallets, subscribeSolanaWallets, type BrowserWalletOption } from '../lib/solana-wallet';
 import { InfoLine, Metric } from '../components/ui';
 
@@ -92,6 +94,14 @@ export function WorkspaceHomePage({
   selectedReconciliationDetail,
   transferRequests,
   isLoadingReconciliationDetail,
+  surface = 'command',
+  paymentOrders = [],
+  paymentRuns = [],
+  exceptions = [],
+  onOpenApprovals,
+  onOpenExecution,
+  onOpenExceptions,
+  onOpenPayments,
 }: {
   addresses: WorkspaceAddress[];
   currentRole: string | null;
@@ -131,6 +141,14 @@ export function WorkspaceHomePage({
   selectedReconciliationDetail: ReconciliationDetail | null;
   transferRequests: TransferRequest[];
   isLoadingReconciliationDetail: boolean;
+  surface?: 'command' | 'settlement';
+  paymentOrders?: PaymentOrder[];
+  paymentRuns?: PaymentRun[];
+  exceptions?: ExceptionItem[];
+  onOpenApprovals?: () => void;
+  onOpenExecution?: () => void;
+  onOpenExceptions?: () => void;
+  onOpenPayments?: () => void;
 }) {
   const matchedCount = reconciliationRows.filter((row) => row.requestDisplayState === 'matched').length;
   const pendingCount = reconciliationRows.filter((row) => row.requestDisplayState === 'pending').length;
@@ -179,6 +197,141 @@ export function WorkspaceHomePage({
   const sourceWalletHint = summarySourceAddress ? findWorkspaceAddressByChainValue(addresses, summarySourceAddress) : null;
   const destinationWalletHint = summaryDestinationAddress ? findWorkspaceAddressByChainValue(addresses, summaryDestinationAddress) : null;
 
+  if (surface === 'command') {
+    const needsApproval = paymentOrders.filter((order) => order.derivedState === 'pending_approval');
+    const ready = paymentOrders.filter((order) => order.derivedState === 'ready_for_execution');
+    const unsettled = paymentOrders.filter((order) => ['execution_recorded', 'approved', 'partially_settled'].includes(order.derivedState));
+    const completed = paymentOrders.filter((order) => ['settled', 'closed'].includes(order.derivedState));
+    const openExceptions = exceptions.filter((item) => item.status !== 'dismissed');
+    const agingCritical = paymentOrders.filter((order) => {
+      if (['settled', 'closed', 'cancelled'].includes(order.derivedState)) return false;
+      return hoursSince(order.createdAt) >= 24;
+    }).length;
+    const priorityRows = [...paymentOrders]
+      .filter((order) => ['pending_approval', 'approved', 'ready_for_execution', 'execution_recorded', 'partially_settled', 'exception'].includes(order.derivedState))
+      .sort((a, b) => commandPriorityScore(b) - commandPriorityScore(a))
+      .slice(0, 10);
+
+    return (
+      <div className="page-stack">
+        <section className="section-headline section-headline-compact">
+          <div className="section-headline-copy">
+            <p className="eyebrow">Command center</p>
+            <h1>{currentWorkspace.workspaceName}</h1>
+            <p className="section-copy">
+              Daily payment work across intake, approval, execution, settlement, exceptions, and proof.
+            </p>
+          </div>
+          <div className="hero-actions">
+            <button className="ghost-button" type="button" onClick={onOpenPayments}>New request</button>
+            <button className="primary-button" type="button" onClick={onOpenPayments}>Import CSV batch</button>
+          </div>
+        </section>
+
+        <section className="content-grid content-grid-single">
+          <div className="workspace-pulse-strip workspace-pulse-strip-standalone">
+            <div className="workspace-pulse-strip-grid">
+              <Metric label="Approval queue" value={String(needsApproval.length).padStart(2, '0')} />
+              <Metric label="Ready to execute" value={String(ready.length).padStart(2, '0')} />
+              <Metric label="Settlement watch" value={String(unsettled.length).padStart(2, '0')} />
+              <Metric label="Open exceptions" value={String(openExceptions.length).padStart(2, '0')} />
+            </div>
+            <span className="status-chip">{isLoading ? 'syncing' : currentRole ?? 'member'}</span>
+          </div>
+        </section>
+
+        <section className="command-center-main">
+          <div className="command-center-top-row">
+            <div className="content-panel content-panel-strong">
+              <div className="panel-header panel-header-stack">
+                <div>
+                  <p className="eyebrow">Today's focus</p>
+                  <h2>Priority-ranked work</h2>
+                  <p className="compact-copy">Priority ranked by state risk, amount, and age.</p>
+                </div>
+              </div>
+              <div className="request-table ops-request-table">
+                <div className="request-table-head">
+                  <span>Payment</span>
+                  <span>Status</span>
+                  <span>Amount</span>
+                  <span>Age</span>
+                  <span>Why now</span>
+                  <span>Do now</span>
+                </div>
+                {priorityRows.length ? priorityRows.map((order) => (
+                  <div key={order.paymentOrderId} className="request-table-row">
+                    <div className="request-row-button">
+                      <span className="request-cell-primary"><strong>{order.payee?.name ?? order.destination.label}</strong></span>
+                      <span className="request-cell-single"><span className={`tone-pill tone-pill-${getProgressTone(order.derivedState)}`}>{formatLabel(order.derivedState)}</span></span>
+                      <span className="request-cell-single">{formatRawUsdcCompact(order.amountRaw)} USDC</span>
+                      <span className="request-cell-single">{formatRelativeTime(order.createdAt)}</span>
+                      <span className="request-cell-single">{commandPriorityReason(order)}</span>
+                      <span className="request-cell-single">{executionAction(order)}</span>
+                    </div>
+                  </div>
+                )) : <div className="empty-box compact">No priority work right now.</div>}
+              </div>
+            </div>
+
+            <div className="content-panel content-panel-soft">
+              <div className="panel-header panel-header-stack">
+                <div>
+                  <p className="eyebrow">Operational load</p>
+                  <h2>Current queue distribution</h2>
+                </div>
+              </div>
+              <div className="info-grid-tight">
+                <InfoLine label="Approvals pending" value={String(needsApproval.length)} />
+                <InfoLine label="Execution ready" value={String(ready.length)} />
+                <InfoLine label="Settlement in-flight" value={String(unsettled.length)} />
+                <InfoLine label="Aging over 24h" value={String(agingCritical)} />
+                <InfoLine label="Proof-ready" value={String(completed.length)} />
+                <InfoLine label="Open exceptions" value={String(openExceptions.length)} />
+              </div>
+              <div className="exception-actions">
+                <button className="ghost-button compact-button" type="button" onClick={onOpenApprovals}>Open approvals</button>
+                <button className="ghost-button compact-button" type="button" onClick={onOpenExecution}>Open execution</button>
+                <button className="ghost-button compact-button" type="button" onClick={onOpenExceptions}>Open exceptions</button>
+              </div>
+            </div>
+          </div>
+
+          <div className="command-center-bottom-row">
+            <div className="content-panel content-panel-soft">
+              <div className="panel-header panel-header-stack">
+                <div>
+                  <p className="eyebrow">Recent payment runs</p>
+                  <h2>Batch imports and execution packets</h2>
+                </div>
+              </div>
+              <div className="request-table ops-request-table">
+                <div className="request-table-head">
+                  <span>Run</span>
+                  <span>Status</span>
+                  <span>Items</span>
+                  <span>Total</span>
+                  <span>Created</span>
+                </div>
+                {paymentRuns.slice(0, 8).map((run) => (
+                  <div className="request-table-row" key={run.paymentRunId}>
+                    <div className="request-row-button">
+                      <span className="request-cell-primary"><strong>{run.runName}</strong></span>
+                      <span className="request-cell-single"><span className={`tone-pill tone-pill-${getProgressTone(run.derivedState)}`}>{formatLabel(run.derivedState)}</span></span>
+                      <span className="request-cell-single">{run.totals.orderCount}</span>
+                      <span className="request-cell-single">{formatRawUsdcCompact(run.totals.totalAmountRaw)} USDC</span>
+                      <span className="request-cell-single">{formatTimestampCompact(run.createdAt)}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
+    );
+  }
+
   return (
     <div className="page-stack">
       <section className="section-headline section-headline-compact">
@@ -186,7 +339,9 @@ export function WorkspaceHomePage({
           <p className="eyebrow">Workspace</p>
           <h1>{currentWorkspace.workspaceName}</h1>
           <p className="section-copy">
-            Save wallets, create planned transfers, observe real USDC transfers, and reconcile them against what you expected.
+            {surface === 'settlement'
+              ? 'Settlement and reconciliation view for observed movement and request matching.'
+              : 'Command center for requests, execution, and settlement operations.'}
           </p>
         </div>
       </section>
@@ -1071,9 +1226,11 @@ export function WorkspaceRegistryPage({
   counterparties,
   currentWorkspace,
   destinations,
+  payees,
   onCreateAddress,
   onCreateCounterparty,
   onCreateDestination,
+  onCreatePayee,
   onUpdateAddress,
   onUpdateCounterparty,
   onUpdateDestination,
@@ -1083,9 +1240,11 @@ export function WorkspaceRegistryPage({
   counterparties: Counterparty[];
   currentWorkspace: Workspace;
   destinations: Destination[];
+  payees: Payee[];
   onCreateAddress: (event: FormEvent<HTMLFormElement>) => Promise<void>;
   onCreateCounterparty: (event: FormEvent<HTMLFormElement>) => Promise<void>;
   onCreateDestination: (event: FormEvent<HTMLFormElement>) => Promise<void>;
+  onCreatePayee: (event: FormEvent<HTMLFormElement>) => Promise<void>;
   onUpdateAddress: (workspaceAddressId: string, event: FormEvent<HTMLFormElement>) => Promise<void>;
   onUpdateCounterparty: (counterpartyId: string, event: FormEvent<HTMLFormElement>) => Promise<void>;
   onUpdateDestination: (destinationId: string, event: FormEvent<HTMLFormElement>) => Promise<void>;
@@ -1094,11 +1253,11 @@ export function WorkspaceRegistryPage({
   const [trustFilter, setTrustFilter] = useState<'all' | Destination['trustState']>('all');
   const [scopeFilter, setScopeFilter] = useState<'all' | 'internal' | 'external'>('all');
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('all');
-  const [copiedWalletId, setCopiedWalletId] = useState<string | null>(null);
   const [modalState, setModalState] = useState<
     | { type: 'create-wallet' }
     | { type: 'edit-wallet'; workspaceAddressId: string }
     | { type: 'create-counterparty' }
+    | { type: 'create-payee' }
     | { type: 'edit-counterparty'; counterpartyId: string }
     | { type: 'create-destination'; linkedWorkspaceAddressId?: string }
     | { type: 'edit-destination'; destinationId: string }
@@ -1182,15 +1341,6 @@ export function WorkspaceRegistryPage({
     counterpartyWalletCount.set(counterparty.counterpartyId, walletIds.size);
   }
 
-  useEffect(() => {
-    if (!copiedWalletId) {
-      return;
-    }
-
-    const timeout = window.setTimeout(() => setCopiedWalletId(null), 1200);
-    return () => window.clearTimeout(timeout);
-  }, [copiedWalletId]);
-
   async function handleAddressSubmit(event: FormEvent<HTMLFormElement>) {
     if (editingAddress) {
       await onUpdateAddress(editingAddress.workspaceAddressId, event);
@@ -1218,24 +1368,27 @@ export function WorkspaceRegistryPage({
     setModalState(null);
   }
 
-  async function handleCopyWalletAddress(workspaceAddressId: string, address: string) {
-    try {
-      await navigator.clipboard.writeText(address);
-      setCopiedWalletId(workspaceAddressId);
-    } catch {
-      setCopiedWalletId(null);
-    }
-  }
-
   return (
     <div className="page-stack page-stack-tight">
       <section className="section-headline section-headline-compact">
         <div className="section-headline-copy">
-          <p className="eyebrow">Address Book</p>
-          <h1>{currentWorkspace.workspaceName}</h1>
+          <p className="eyebrow">Support data</p>
+          <h1>Address book</h1>
           <p className="section-copy">
-            Save raw wallets, optionally define business owners, and name the payment destinations operators should use elsewhere in the product.
+            Manage wallets, destinations, and counterparties used by payment requests and run execution.
           </p>
+        </div>
+      </section>
+
+      <section className="content-grid content-grid-single">
+        <div className="workspace-pulse-strip workspace-pulse-strip-standalone">
+          <div className="workspace-pulse-strip-grid">
+            <Metric label="Wallets" value={String(addresses.length).padStart(2, '0')} />
+            <Metric label="Destinations" value={String(destinations.length).padStart(2, '0')} />
+            <Metric label="Counterparties" value={String(counterparties.length).padStart(2, '0')} />
+            <Metric label="Trusted" value={String(destinations.filter((d) => d.trustState === 'trusted').length).padStart(2, '0')} />
+            <Metric label="Internal" value={String(destinations.filter((d) => d.isInternal).length).padStart(2, '0')} />
+          </div>
         </div>
       </section>
 
@@ -1248,18 +1401,96 @@ export function WorkspaceRegistryPage({
         </div>
       ) : null}
 
-      <section className="registry-shell">
-        <div className="content-panel content-panel-strong registry-main-panel">
-          <TableSurfaceHeader
-            actionDisabled={!canManage || addresses.length === 0}
-            actionLabel="New destination"
-            count={destinations.length}
-            onAction={() => setModalState({ type: 'create-destination' })}
-            onSearchChange={setSearchQuery}
-            searchPlaceholder="Search destination, wallet, or counterparty"
-            searchValue={searchQuery}
-            title="Destinations"
-          />
+      <section className="content-grid content-grid-single">
+        <div className="content-panel content-panel-strong">
+          <div className="panel-header panel-header-stack">
+            <div>
+              <p className="eyebrow">Wallet registry</p>
+              <h2>Wallets [{addresses.length}]</h2>
+              <p className="compact-copy">Saved source wallets used for payment execution and destination linkage.</p>
+            </div>
+            {canManage ? (
+              <button className="primary-button compact-button" onClick={() => setModalState({ type: 'create-wallet' })} type="button">
+                + Add wallet
+              </button>
+            ) : null}
+          </div>
+          <div className="wallet-table">
+            <div className="wallet-table-head">
+              <span>Name</span>
+              <span>Address</span>
+              <span>Destination</span>
+              <span>Status</span>
+            </div>
+            {addresses.length ? (
+              addresses.map((item) => {
+                const linkedDestinations = destinationsByWalletId.get(item.workspaceAddressId) ?? [];
+                const primaryDestination = linkedDestinations[0] ?? null;
+                return (
+                  <div key={item.workspaceAddressId} className="wallet-table-row">
+                    <span className="wallet-table-name">{getWalletName(item)}</span>
+                    <span>
+                      <a
+                        className="wallet-link-button"
+                        href={solanaAccountUrl(item.address)}
+                        rel="noreferrer"
+                        target="_blank"
+                        title={item.address}
+                      >
+                        {shortenAddress(item.address, 8, 8)}
+                      </a>
+                    </span>
+                    <span>
+                      {primaryDestination ? (
+                        <button
+                          className="wallet-link-button"
+                          onClick={() => setModalState({ type: 'view-destination', destinationId: primaryDestination.destinationId })}
+                          type="button"
+                        >
+                          {primaryDestination.label}
+                          {linkedDestinations.length > 1 ? ` +${linkedDestinations.length - 1}` : ''}
+                        </button>
+                      ) : (
+                        'unlinked'
+                      )}
+                    </span>
+                    <span>{item.isActive ? 'active' : 'inactive'}</span>
+                  </div>
+                );
+              })
+            ) : (
+              <div className="empty-box compact">No wallets saved yet.</div>
+            )}
+          </div>
+        </div>
+      </section>
+
+      <section className="content-grid content-grid-single">
+        <div className="content-panel content-panel-strong">
+          <div className="panel-header panel-header-stack surface-panel-header">
+            <div className="surface-panel-copy">
+              <p className="eyebrow">Destination registry</p>
+              <h2>Destinations [{destinations.length}]</h2>
+              <p className="compact-copy">Operator-facing payout endpoints derived from wallets.</p>
+            </div>
+            <div className="surface-toolbar">
+              <input
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
+                placeholder="Search destination, wallet, or counterparty"
+              />
+              <div className="surface-toolbar-actions">
+                <button
+                  className="primary-button compact-button"
+                  disabled={!canManage || addresses.length === 0}
+                  onClick={() => setModalState({ type: 'create-destination' })}
+                  type="button"
+                >
+                  + Add destination
+                </button>
+              </div>
+            </div>
+          </div>
 
           <div className="registry-table">
             <div className="registry-table-head">
@@ -1295,10 +1526,7 @@ export function WorkspaceRegistryPage({
             </div>
             {filteredDestinations.length ? (
               filteredDestinations.map((item) => (
-                <div
-                  key={item.destinationId}
-                  className="registry-table-row"
-                >
+                <div key={item.destinationId} className="registry-table-row">
                   <button
                     className="registry-row-button"
                     onClick={() => setModalState({ type: 'view-destination', destinationId: item.destinationId })}
@@ -1322,7 +1550,7 @@ export function WorkspaceRegistryPage({
             ) : (
               <div className="empty-box compact">
                 <strong>No destinations yet.</strong>
-                <p>Start by turning one of the saved wallets into a named destination. That is the object operators will actually use in requests.</p>
+                <p>Start by turning one of the saved wallets into a named destination. That is the object operators use in requests.</p>
                 {canManage && addresses.length ? (
                   <button className="primary-button" onClick={() => setModalState({ type: 'create-destination' })} type="button">
                     Create first destination
@@ -1332,102 +1560,72 @@ export function WorkspaceRegistryPage({
             )}
           </div>
         </div>
+      </section>
 
-        <div className="registry-sidecar">
-          <div className="content-panel content-panel-soft">
-            <div className="panel-header">
-              <div>
-                <h2 className="registry-section-title">
-                  Wallets <span className="registry-count-inline">[{addresses.length}]</span>
-                </h2>
-              </div>
-              <div className="panel-header-actions">
-                {canManage ? (
-                  <button className="primary-button compact-button" onClick={() => setModalState({ type: 'create-wallet' })} type="button">
-                    Add wallet
-                  </button>
-                ) : null}
-              </div>
+      <section className="content-grid content-grid-single">
+        <div className="content-panel content-panel-strong">
+          <div className="panel-header panel-header-stack">
+            <div>
+              <p className="eyebrow">Recipient profiles</p>
+              <h2>Payees [{payees.length}]</h2>
+              <p className="compact-copy">Optional recipient profiles with default destination mappings.</p>
             </div>
-            <div className="wallet-table">
-              <div className="wallet-table-head">
-                <span>Name</span>
-                <span>Address</span>
-                <span>Destination</span>
-                <span>Status</span>
-              </div>
-              {addresses.length ? (
-                addresses.map((item) => {
-                  const linkedDestinations = destinationsByWalletId.get(item.workspaceAddressId) ?? [];
-                  const primaryDestination = linkedDestinations[0] ?? null;
-                  return (
-                    <div key={item.workspaceAddressId} className="wallet-table-row">
-                      <span className="wallet-table-name">{getWalletName(item)}</span>
-                      <span>
-                        <button
-                          className="wallet-address-button"
-                          onClick={() => void handleCopyWalletAddress(item.workspaceAddressId, item.address)}
-                          title={copiedWalletId === item.workspaceAddressId ? 'Copied' : item.address}
-                          type="button"
-                        >
-                          {shortenAddress(item.address)}
-                        </button>
-                      </span>
-                      <span>
-                        {primaryDestination ? (
-                          <button
-                            className="wallet-link-button"
-                            onClick={() => setModalState({ type: 'view-destination', destinationId: primaryDestination.destinationId })}
-                            type="button"
-                          >
-                            {primaryDestination.label}
-                            {linkedDestinations.length > 1 ? ` +${linkedDestinations.length - 1}` : ''}
-                          </button>
-                        ) : (
-                          'unlinked'
-                        )}
-                      </span>
-                      <span>{item.isActive ? 'active' : 'inactive'}</span>
-                    </div>
-                  );
-                })
-              ) : (
-                <div className="empty-box compact">No wallets saved yet.</div>
-              )}
-            </div>
+            {canManage ? (
+              <button className="primary-button compact-button" onClick={() => setModalState({ type: 'create-payee' })} type="button">
+                + Add payee
+              </button>
+            ) : null}
           </div>
+          <div className="payee-table">
+            <div className="payee-table-head">
+              <span>Name</span>
+              <span>Default destination</span>
+              <span>Status</span>
+            </div>
+            {payees.length ? (
+              payees.map((item) => (
+                <div key={item.payeeId} className="payee-table-row">
+                  <span className="payee-table-name">{item.name}</span>
+                  <span>{item.defaultDestination?.label ?? 'Unassigned'}</span>
+                  <span>{item.status}</span>
+                </div>
+              ))
+            ) : (
+              <div className="empty-box compact">No payees saved yet.</div>
+            )}
+          </div>
+        </div>
+      </section>
 
-          <div className="content-panel content-panel-soft">
-            <div className="panel-header">
-              <div>
-                <h2 className="registry-section-title">
-                  Counterparties <span className="registry-count-inline">[{counterparties.length}]</span>
-                </h2>
-              </div>
-              <div className="panel-header-actions">
-                {canManage ? (
-                  <button className="primary-button compact-button" onClick={() => setModalState({ type: 'create-counterparty' })} type="button">
-                    Add counterparty
-                  </button>
-                ) : null}
-              </div>
+      <section className="content-grid content-grid-single">
+        <div className="content-panel content-panel-strong">
+          <div className="panel-header panel-header-stack">
+            <div>
+              <p className="eyebrow">Business metadata</p>
+              <h2>Counterparties [{counterparties.length}]</h2>
+              <p className="compact-copy">Optional ownership metadata mapped to payout destinations.</p>
             </div>
-            <div className="counterparty-table">
-              <div className="counterparty-table-head">
-                <span>Name</span>
-                <span>Wallets</span>
-              </div>
-              {counterparties.length ? (
-                counterparties.map((item) => (
-                  <div key={item.counterpartyId} className="counterparty-table-row">
-                    <span className="counterparty-table-name">{item.displayName}</span>
-                    <span>{counterpartyWalletCount.get(item.counterpartyId) ?? 0}</span>
-                  </div>
-                ))
-              ) : (
-                <div className="empty-box compact">No counterparties saved yet.</div>
-              )}
+            {canManage ? (
+              <button className="primary-button compact-button" onClick={() => setModalState({ type: 'create-counterparty' })} type="button">
+                + Add counterparty
+              </button>
+            ) : null}
+          </div>
+          <div className="counterparty-table">
+            <div className="counterparty-table-head">
+              <span>Name</span>
+              <span>Wallets</span>
             </div>
+            {counterparties.length ? (
+              counterparties.map((item) => (
+                <div key={item.counterpartyId} className="counterparty-table-row">
+                  <span className="counterparty-table-name">{item.displayName}</span>
+                  <span>{counterpartyWalletCount.get(item.counterpartyId) ?? 0}</span>
+                </div>
+              ))
+            ) : (
+              <div className="empty-box compact">No counterparties saved yet.</div>
+            )}
           </div>
         </div>
       </section>
@@ -1520,6 +1718,55 @@ export function WorkspaceRegistryPage({
                   <div className="exception-actions">
                     <button className="primary-button" disabled={!canManage} type="submit">
                       {editingCounterparty ? 'Update counterparty' : 'Create counterparty'}
+                    </button>
+                  </div>
+                </form>
+              </>
+            ) : null}
+
+            {modalState.type === 'create-payee' ? (
+              <>
+                <div className="panel-header panel-header-stack">
+                  <div>
+                    <p className="eyebrow">Payee</p>
+                    <h2>Add payee</h2>
+                    <p className="compact-copy">Named recipient profile with optional default destination.</p>
+                  </div>
+                  <button className="ghost-button compact-button danger-button" onClick={() => setModalState(null)} type="button">
+                    close
+                  </button>
+                </div>
+                <form className="form-stack" onSubmit={async (event) => {
+                  await onCreatePayee(event);
+                  setModalState(null);
+                }}
+                >
+                  <label className="field">
+                    <span>Payee name</span>
+                    <input name="name" placeholder="Acme Corp" required />
+                  </label>
+                  <label className="field">
+                    <span>Default destination</span>
+                    <select name="defaultDestinationId" defaultValue="">
+                      <option value="">Optional</option>
+                      {destinations.map((destination) => (
+                        <option key={destination.destinationId} value={destination.destinationId}>
+                          {destination.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="field">
+                    <span>Reference</span>
+                    <input name="externalReference" placeholder="Vendor ID" />
+                  </label>
+                  <label className="field">
+                    <span>Notes</span>
+                    <input name="notes" placeholder="Optional context" />
+                  </label>
+                  <div className="exception-actions">
+                    <button className="primary-button" disabled={!canManage} type="submit">
+                      Save payee
                     </button>
                   </div>
                 </form>
@@ -1700,26 +1947,49 @@ export function WorkspaceRegistryPage({
 export function WorkspacePolicyPage({
   approvalPolicy,
   canManage,
-  currentWorkspace,
+  destinations,
+  paymentOrders,
   onUpdateApprovalPolicy,
 }: {
   approvalPolicy: ApprovalPolicy | null;
   canManage: boolean;
-  currentWorkspace: Workspace;
+  destinations: Destination[];
+  paymentOrders: PaymentOrder[];
   onUpdateApprovalPolicy: (event: FormEvent<HTMLFormElement>) => Promise<void>;
 }) {
-  const [modalState, setModalState] = useState<{ type: 'internal' | 'external' } | null>(null);
+  const [editOpen, setEditOpen] = useState(false);
+  const pendingApprovals = paymentOrders.filter((order) => order.derivedState === 'pending_approval').length;
+  const trustedDestinationCoverage = destinations.length
+    ? Math.round((destinations.filter((destination) => destination.trustState === 'trusted').length / destinations.length) * 100)
+    : 0;
+  const externalApprovalLoad = paymentOrders.filter(
+    (order) => order.destination && !order.destination.isInternal && order.derivedState === 'pending_approval',
+  ).length;
+  const thresholdTriggered = approvalPolicy
+    ? paymentOrders.filter((order) => {
+      const raw = BigInt(order.amountRaw);
+      return raw >= BigInt(approvalPolicy.ruleJson.externalApprovalThresholdRaw)
+        || raw >= BigInt(approvalPolicy.ruleJson.internalApprovalThresholdRaw);
+    }).length
+    : 0;
 
   return (
     <div className="page-stack page-stack-tight">
       <section className="section-headline section-headline-compact">
         <div className="section-headline-copy">
-          <p className="eyebrow">Approval Policy</p>
-          <h1>{currentWorkspace.workspaceName}</h1>
+          <p className="eyebrow">Policy</p>
+          <h1>Approval policy</h1>
           <p className="section-copy">
-            Control how internal and external requests become live.
+            Configure approval routing, trust gates, and thresholds that shape payment flow.
           </p>
         </div>
+        {canManage ? (
+          <div className="hero-actions">
+            <button className="primary-button compact-button" onClick={() => setEditOpen(true)} type="button">
+              Edit policy
+            </button>
+          </div>
+        ) : null}
       </section>
 
       {!canManage ? (
@@ -1732,85 +2002,59 @@ export function WorkspacePolicyPage({
       ) : null}
 
       <section className="content-grid content-grid-single">
+        <div className="workspace-pulse-strip workspace-pulse-strip-standalone">
+          <div className="workspace-pulse-strip-grid">
+            <Metric label="Pending approvals" value={String(pendingApprovals)} />
+            <Metric label="Threshold-triggered" value={String(thresholdTriggered)} />
+            <Metric label="Trusted destinations" value={`${trustedDestinationCoverage}%`} />
+            <Metric label="External approval load" value={String(externalApprovalLoad)} />
+          </div>
+        </div>
+      </section>
+
+      <section className="content-grid content-grid-single">
         <div className="content-panel content-panel-strong">
-          <div className="panel-header">
+          <div className="panel-header panel-header-stack">
             <div>
               <p className="eyebrow">Policy</p>
-              <h2>Approval strategies</h2>
+              <h2>Active strategy</h2>
+              <p className="compact-copy">Policy posture and live impact on current payment flow.</p>
             </div>
           </div>
           {approvalPolicy ? (
-            <div className="policy-stack">
-              <div className="setup-hint-card policy-inline-note">
-                <strong>Shared guardrails</strong>
-                <p>
-                  Policy is {approvalPolicy.isActive ? 'active' : 'inactive'}.
-                  {' '}
-                  {approvalPolicy.ruleJson.requireTrustedDestination
-                    ? 'Only trusted destinations can skip approval.'
-                    : 'Untrusted destinations can still be evaluated by the thresholds below.'}
-                </p>
-              </div>
-
-              <div className="policy-strategy-grid">
-                <div className="policy-strategy-card">
-                  <div className="policy-strategy-head">
-                    <div className="policy-strategy-copy">
-                      <span className="eyebrow">External</span>
-                      <strong>{approvalPolicy.ruleJson.requireApprovalForExternal ? 'Always require approval' : 'Threshold based'}</strong>
-                      <p>Controls vendor, exchange, and other non-internal destinations.</p>
-                    </div>
-                    {canManage ? (
-                      <button className="primary-button compact-button" onClick={() => setModalState({ type: 'external' })} type="button">
-                        Edit external
-                      </button>
-                    ) : null}
-                  </div>
-                  <div className="policy-strategy-list">
-                    <div className="policy-strategy-row">
-                      <span>Threshold</span>
-                      <strong>{formatRawUsdc(approvalPolicy.ruleJson.externalApprovalThresholdRaw)} USDC</strong>
-                    </div>
-                    <div className="policy-strategy-row">
-                      <span>Behavior</span>
-                      <strong>
-                        {approvalPolicy.ruleJson.requireApprovalForExternal
-                          ? 'Every trusted external request goes to approval'
-                          : `Trusted external requests below ${formatRawUsdc(approvalPolicy.ruleJson.externalApprovalThresholdRaw)} USDC can go live`}
-                      </strong>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="policy-strategy-card">
-                  <div className="policy-strategy-head">
-                    <div className="policy-strategy-copy">
-                      <span className="eyebrow">Internal</span>
-                      <strong>{approvalPolicy.ruleJson.requireApprovalForInternal ? 'Always require approval' : 'Threshold based'}</strong>
-                      <p>Controls treasury-owned or otherwise internal destinations.</p>
-                    </div>
-                    {canManage ? (
-                      <button className="primary-button compact-button" onClick={() => setModalState({ type: 'internal' })} type="button">
-                        Edit internal
-                      </button>
-                    ) : null}
-                  </div>
-                  <div className="policy-strategy-list">
-                    <div className="policy-strategy-row">
-                      <span>Threshold</span>
-                      <strong>{formatRawUsdc(approvalPolicy.ruleJson.internalApprovalThresholdRaw)} USDC</strong>
-                    </div>
-                    <div className="policy-strategy-row">
-                      <span>Behavior</span>
-                      <strong>
-                        {approvalPolicy.ruleJson.requireApprovalForInternal
-                          ? 'Every trusted internal request goes to approval'
-                          : `Trusted internal requests below ${formatRawUsdc(approvalPolicy.ruleJson.internalApprovalThresholdRaw)} USDC can go live`}
-                      </strong>
-                    </div>
-                  </div>
-                </div>
-              </div>
+            <div className="policy-summary-grid">
+              <dl className="policy-summary-card">
+                <dt>Policy name</dt>
+                <dd>{approvalPolicy.policyName}</dd>
+              </dl>
+              <dl className="policy-summary-card">
+                <dt>Status</dt>
+                <dd>{approvalPolicy.isActive ? 'Active' : 'Inactive'}</dd>
+              </dl>
+              <dl className="policy-summary-card">
+                <dt>Trusted destination</dt>
+                <dd>{approvalPolicy.ruleJson.requireTrustedDestination ? 'Yes' : 'No'}</dd>
+              </dl>
+              <dl className="policy-summary-card">
+                <dt>External approval</dt>
+                <dd>{approvalPolicy.ruleJson.requireApprovalForExternal ? 'Yes' : 'No'}</dd>
+              </dl>
+              <dl className="policy-summary-card">
+                <dt>Internal approval</dt>
+                <dd>{approvalPolicy.ruleJson.requireApprovalForInternal ? 'Yes' : 'No'}</dd>
+              </dl>
+              <dl className="policy-summary-card">
+                <dt>External threshold</dt>
+                <dd>{formatRawUsdcCompact(approvalPolicy.ruleJson.externalApprovalThresholdRaw)} USDC</dd>
+              </dl>
+              <dl className="policy-summary-card">
+                <dt>Internal threshold</dt>
+                <dd>{formatRawUsdcCompact(approvalPolicy.ruleJson.internalApprovalThresholdRaw)} USDC</dd>
+              </dl>
+              <dl className="policy-summary-card">
+                <dt>Updated</dt>
+                <dd>{formatTimestampCompact(approvalPolicy.updatedAt)}</dd>
+              </dl>
             </div>
           ) : (
             <div className="empty-box compact">Approval policy unavailable.</div>
@@ -1818,93 +2062,98 @@ export function WorkspacePolicyPage({
         </div>
       </section>
 
-      {modalState && approvalPolicy ? (
-        <div className="registry-modal-backdrop" onClick={() => setModalState(null)} role="presentation">
-          <div className="registry-modal" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true">
+      {editOpen && approvalPolicy ? (
+        <div className="registry-modal-backdrop" onClick={() => setEditOpen(false)} role="presentation">
+          <div className="registry-modal registry-modal-wide" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true">
             <div className="panel-header panel-header-stack">
               <div>
-                <p className="eyebrow">Approval strategy</p>
-                <h2>{modalState.type === 'external' ? 'Edit external strategy' : 'Edit internal strategy'}</h2>
-                <p className="compact-copy">
-                  {modalState.type === 'external'
-                    ? 'Define when trusted external requests should pause in approval.'
-                    : 'Define when trusted internal requests should pause in approval.'}
-                </p>
+                <p className="eyebrow">Policy</p>
+                <h2>Edit approval policy</h2>
               </div>
-              <button className="ghost-button compact-button danger-button" onClick={() => setModalState(null)} type="button">
+              <button className="ghost-button compact-button danger-button" onClick={() => setEditOpen(false)} type="button">
                 close
               </button>
             </div>
 
             <form
-              className="form-stack modal-form-grid"
+              className="form-stack"
               onSubmit={async (event) => {
                 await onUpdateApprovalPolicy(event);
-                setModalState(null);
+                setEditOpen(false);
               }}
             >
-              <input name="policyName" type="hidden" value={approvalPolicy.policyName} />
-              <input name="isActive" type="hidden" value={approvalPolicy.isActive ? 'true' : 'false'} />
-              <input
-                name="requireTrustedDestination"
-                type="hidden"
-                value={approvalPolicy.ruleJson.requireTrustedDestination ? 'true' : 'false'}
-              />
-              <input
-                name={modalState.type === 'external' ? 'requireApprovalForInternal' : 'requireApprovalForExternal'}
-                type="hidden"
-                value={
-                  modalState.type === 'external'
-                    ? (approvalPolicy.ruleJson.requireApprovalForInternal ? 'true' : 'false')
-                    : (approvalPolicy.ruleJson.requireApprovalForExternal ? 'true' : 'false')
-                }
-              />
-              <input
-                name={modalState.type === 'external' ? 'internalApprovalThresholdRaw' : 'externalApprovalThresholdRaw'}
-                type="hidden"
-                value={
-                  modalState.type === 'external'
-                    ? approvalPolicy.ruleJson.internalApprovalThresholdRaw
-                    : approvalPolicy.ruleJson.externalApprovalThresholdRaw
-                }
-              />
+              <section className="content-panel content-panel-soft policy-group-panel">
+                <div className="panel-header panel-header-stack">
+                  <div>
+                    <p className="eyebrow">Policy identity</p>
+                    <p className="compact-copy">Name and activation for this workspace policy.</p>
+                  </div>
+                </div>
+                <label className="field">
+                  <span>Policy name</span>
+                  <input name="policyName" defaultValue={approvalPolicy.policyName} />
+                </label>
+                <label className="field checkbox-field">
+                  <input name="isActive" defaultChecked={approvalPolicy.isActive} type="checkbox" />
+                  Active policy for new payment checks
+                </label>
+              </section>
 
-              <label className="field">
-                <span>Strategy</span>
-                <select
-                  defaultValue={
-                    modalState.type === 'external'
-                      ? (approvalPolicy.ruleJson.requireApprovalForExternal ? 'true' : 'false')
-                      : (approvalPolicy.ruleJson.requireApprovalForInternal ? 'true' : 'false')
-                  }
-                  name={modalState.type === 'external' ? 'requireApprovalForExternal' : 'requireApprovalForInternal'}
-                >
-                  <option value="false">threshold based</option>
-                  <option value="true">always require approval</option>
-                </select>
-              </label>
+              <section className="content-panel content-panel-soft policy-group-panel">
+                <div className="panel-header panel-header-stack">
+                  <div>
+                    <p className="eyebrow">Trust gates</p>
+                    <p className="compact-copy">Destination trust controls before execution.</p>
+                  </div>
+                </div>
+                <label className="field checkbox-field">
+                  <input name="requireTrustedDestination" defaultChecked={approvalPolicy.ruleJson.requireTrustedDestination} type="checkbox" />
+                  Require trusted destination before execution
+                </label>
+              </section>
 
-              <label className="field">
-                <span>Approval threshold</span>
-                <input
-                  defaultValue={
-                    modalState.type === 'external'
-                      ? approvalPolicy.ruleJson.externalApprovalThresholdRaw
-                      : approvalPolicy.ruleJson.internalApprovalThresholdRaw
-                  }
-                  name={modalState.type === 'external' ? 'externalApprovalThresholdRaw' : 'internalApprovalThresholdRaw'}
-                  required
-                />
-                <small className="field-note">
-                  {modalState.type === 'external'
-                    ? `Trusted external requests at or above ${formatRawUsdc(approvalPolicy.ruleJson.externalApprovalThresholdRaw)} USDC currently require approval.`
-                    : `Trusted internal requests at or above ${formatRawUsdc(approvalPolicy.ruleJson.internalApprovalThresholdRaw)} USDC currently require approval.`}
-                </small>
-              </label>
+              <section className="content-panel content-panel-soft policy-group-panel">
+                <div className="panel-header panel-header-stack">
+                  <div>
+                    <p className="eyebrow">Approval routing</p>
+                    <p className="compact-copy">Whether internal and external requests must go through approval.</p>
+                  </div>
+                </div>
+                <label className="field checkbox-field">
+                  <input name="requireApprovalForExternal" defaultChecked={approvalPolicy.ruleJson.requireApprovalForExternal} type="checkbox" />
+                  Require approval for external payments
+                </label>
+                <label className="field checkbox-field">
+                  <input name="requireApprovalForInternal" defaultChecked={approvalPolicy.ruleJson.requireApprovalForInternal} type="checkbox" />
+                  Require approval for internal payments
+                </label>
+              </section>
 
-              <div className="exception-actions modal-span-full">
+              <section className="content-panel content-panel-soft policy-group-panel">
+                <div className="panel-header panel-header-stack">
+                  <div>
+                    <p className="eyebrow">Thresholds</p>
+                    <p className="compact-copy">Raw amount triggers for mandatory approval checks.</p>
+                  </div>
+                </div>
+                <label className="field">
+                  <span>External threshold (raw)</span>
+                  <input name="externalApprovalThresholdRaw" defaultValue={approvalPolicy.ruleJson.externalApprovalThresholdRaw} required />
+                </label>
+                <label className="field">
+                  <span>Internal threshold (raw)</span>
+                  <input name="internalApprovalThresholdRaw" defaultValue={approvalPolicy.ruleJson.internalApprovalThresholdRaw} required />
+                </label>
+              </section>
+
+              <div className="notice">Saving applies immediately. Review approval queue impact after changes.</div>
+
+              <div className="exception-actions">
+                <button className="ghost-button compact-button" type="button" onClick={() => setEditOpen(false)}>
+                  Cancel
+                </button>
                 <button className="primary-button" disabled={!canManage} type="submit">
-                  Save strategy
+                  Save policy
                 </button>
               </div>
             </form>
@@ -1922,6 +2171,7 @@ export function WorkspaceRequestsPage({
   destinations,
   onAttachPaymentOrderSignature,
   onCancelPaymentOrder,
+  onDeletePaymentRun,
   onCreatePaymentOrder,
   onCreatePaymentOrderExecution,
   onDownloadPaymentOrderAuditExport,
@@ -1933,10 +2183,16 @@ export function WorkspaceRequestsPage({
   onSignPreparedPaymentOrder,
   onSignPreparedPaymentRun,
   onSubmitPaymentOrder,
+  onOpenPaymentDetail,
+  onOpenRunDetail,
+  onExitDetail,
+  focusedPaymentOrderId,
+  focusedPaymentRunId,
   paymentOrders,
   paymentRequests,
   paymentRuns,
   reconciliationRows,
+  mode = 'payments',
 }: {
   addresses: WorkspaceAddress[];
   canManage: boolean;
@@ -1944,6 +2200,7 @@ export function WorkspaceRequestsPage({
   destinations: Destination[];
   onAttachPaymentOrderSignature: (paymentOrderId: string, event: FormEvent<HTMLFormElement>) => Promise<void>;
   onCancelPaymentOrder: (paymentOrderId: string) => Promise<void>;
+  onDeletePaymentRun: (paymentRunId: string) => Promise<void>;
   onCreatePaymentOrder: (event: FormEvent<HTMLFormElement>) => Promise<void>;
   onCreatePaymentOrderExecution: (paymentOrderId: string, event: FormEvent<HTMLFormElement>) => Promise<void>;
   onDownloadPaymentOrderAuditExport: (paymentOrderId: string) => Promise<void>;
@@ -1961,10 +2218,16 @@ export function WorkspaceRequestsPage({
   onSignPreparedPaymentOrder: (paymentOrderId: string, packet: PaymentExecutionPacket, walletOptionId?: string) => Promise<string | null>;
   onSignPreparedPaymentRun: (paymentRunId: string, packet: PaymentExecutionPacket, walletOptionId?: string) => Promise<string | null>;
   onSubmitPaymentOrder: (paymentOrderId: string) => Promise<void>;
+  onOpenPaymentDetail?: (paymentOrderId: string) => void;
+  onOpenRunDetail?: (paymentRunId: string) => void;
+  onExitDetail?: () => void;
+  focusedPaymentOrderId?: string;
+  focusedPaymentRunId?: string;
   paymentOrders: PaymentOrder[];
   paymentRequests: PaymentRequest[];
   paymentRuns: PaymentRun[];
   reconciliationRows: ReconciliationRow[];
+  mode?: 'payments' | 'runs' | 'approvals' | 'execution';
 }) {
   const [modalState, setModalState] = useState<
     | { type: 'create' }
@@ -1986,6 +2249,18 @@ export function WorkspaceRequestsPage({
     status: 'signing' | 'success' | 'error';
     message: string;
   } | null>(null);
+  const [expandedRunLifecycleStages, setExpandedRunLifecycleStages] = useState<Record<'imported' | 'reviewed' | 'approved' | 'submitted' | 'settled' | 'proven', boolean>>({
+    imported: false,
+    reviewed: false,
+    approved: false,
+    submitted: false,
+    settled: false,
+    proven: false,
+  });
+  const [expandedTimelineStages, setExpandedTimelineStages] = useState<{ approval: boolean; settlement: boolean }>({
+    approval: false,
+    settlement: false,
+  });
   const selectedRequestDestination =
     destinations.find((item) => item.destinationId === selectedRequestDestinationId) ?? null;
   const reconciliationByRequestId = new Map(reconciliationRows.map((row) => [row.transferRequestId, row] as const));
@@ -2041,13 +2316,134 @@ export function WorkspaceRequestsPage({
         .toLowerCase()
         .includes(query);
     });
+  const visibleWorkItems = paymentWorkItems.filter((item) => {
+    const order = item.order;
+    if (mode === 'approvals') return order?.derivedState === 'pending_approval';
+    if (mode === 'execution') {
+      return Boolean(order && ['approved', 'ready_for_execution', 'execution_recorded', 'partially_settled', 'exception'].includes(order.derivedState));
+    }
+    return true;
+  });
+  const visibleRuns = mode === 'runs' ? paymentRuns : paymentRuns;
+  const canCreateRequest = mode === 'payments';
+  const showCsvImport = mode === 'payments' || mode === 'runs';
+  const actionLabel = canCreateRequest ? 'New payment request' : mode === 'runs' ? 'Open run' : 'Open queue';
+  const pendingApprovalOrders = paymentOrders
+    .filter((order) => order.derivedState === 'pending_approval')
+    .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
+  const approvalHistoryOrders = paymentOrders
+    .filter((order) => (order.reconciliationDetail?.approvalDecisions ?? []).some((d) => ['approve', 'reject', 'escalate'].includes(d.action)))
+    .sort((left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime());
+  const executionQueueOrders = paymentOrders
+    .filter((order) => ['approved', 'ready_for_execution', 'execution_recorded', 'partially_settled', 'exception'].includes(order.derivedState))
+    .sort((left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime());
+  const latestDecisions = approvalHistoryOrders
+    .map((order) => {
+      const decisions = (order.reconciliationDetail?.approvalDecisions ?? [])
+        .filter((decision) => ['approve', 'reject', 'escalate'].includes(decision.action))
+        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      return decisions[0] ?? null;
+    })
+    .filter((decision): decision is NonNullable<typeof decision> => Boolean(decision));
+  const approvedCount = latestDecisions.filter((decision) => decision.action === 'approve').length;
+  const rejectedCount = latestDecisions.filter((decision) => decision.action === 'reject').length;
+  const escalatedCount = latestDecisions.filter((decision) => decision.action === 'escalate').length;
+  const readyToSignCount = executionQueueOrders.filter((order) => order.derivedState === 'ready_for_execution').length;
+  const executedCount = paymentOrders.filter((order) => Boolean(order.reconciliationDetail?.latestExecution?.submittedSignature)).length;
+  const executionNeedsReviewCount = executionQueueOrders.filter((order) => order.derivedState === 'exception' || order.derivedState === 'partially_settled').length;
+  const executedHistoryOrders = paymentOrders
+    .filter((order) => Boolean(order.reconciliationDetail?.latestExecution?.submittedSignature))
+    .sort((a, b) => {
+      const aTime = new Date(a.reconciliationDetail?.latestExecution?.submittedAt ?? a.updatedAt).getTime();
+      const bTime = new Date(b.reconciliationDetail?.latestExecution?.submittedAt ?? b.updatedAt).getTime();
+      return bTime - aTime;
+    })
+    .slice(0, 12);
+  const standaloneOrders = paymentOrders.filter((order) => !order.paymentRunId);
+  const standaloneNeedsAction = standaloneOrders.filter(isActionableOrder).length;
+  const runNeedsAction = paymentRuns.filter((run) => ['draft', 'pending_approval', 'ready_for_execution', 'execution_recorded', 'partially_settled', 'exception'].includes(run.derivedState)).length;
+  const standaloneReadyToSign = standaloneOrders.filter((order) => order.derivedState === 'ready_for_execution').length;
+  const runReadyToSign = paymentRuns.filter((run) => run.derivedState === 'ready_for_execution').length;
+  const standaloneCompleted = standaloneOrders.filter((order) => order.derivedState === 'settled' || order.derivedState === 'closed').length;
+  const runCompleted = paymentRuns.filter((run) => run.derivedState === 'settled' || run.derivedState === 'closed').length;
+  const unifiedRows = [
+    ...standaloneOrders.map((order) => ({
+      kind: 'payment' as const,
+      id: order.paymentOrderId,
+      name: order.payee?.name ?? order.destination.label,
+      amountLabel: `${formatRawUsdcCompact(order.amountRaw)} ${(order.asset ?? 'USDC').toUpperCase()}`,
+      sourceLabel: order.sourceWorkspaceAddress ? getWalletName(order.sourceWorkspaceAddress) : 'Not set',
+      refLabel: order.externalReference ?? order.invoiceNumber ?? order.memo ?? 'N/A',
+      stateLabel: formatLabel(order.derivedState),
+      tone: getProgressTone(order.derivedState),
+      createdAt: order.createdAt,
+      order,
+      run: null as PaymentRun | null,
+    })),
+    ...paymentRuns.map((run) => ({
+      kind: 'run' as const,
+      id: run.paymentRunId,
+      name: run.runName,
+      amountLabel: `${formatRawUsdcCompact(run.totals.totalAmountRaw)} USDC`,
+      sourceLabel: run.sourceWorkspaceAddress ? getWalletName(run.sourceWorkspaceAddress) : 'Not set',
+      refLabel: `${run.totals.orderCount} rows`,
+      stateLabel: formatLabel(run.derivedState),
+      tone: getProgressTone(run.derivedState),
+      createdAt: run.createdAt,
+      order: null as PaymentOrder | null,
+      run,
+    })),
+  ].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  const surfaceMeta = mode === 'runs'
+    ? {
+        eyebrow: 'Payment runs',
+        title: 'Batch run operations',
+        copy: 'Review imported runs, execute eligible rows, and export run-level proof packets.',
+        tableTitle: 'Runs to proof',
+      }
+    : mode === 'approvals'
+      ? {
+          eyebrow: 'Approvals',
+          title: 'Approval queue',
+          copy: 'Payments waiting for decision before execution can begin.',
+          tableTitle: 'Pending approvals',
+        }
+      : mode === 'execution'
+        ? {
+            eyebrow: 'Execution',
+            title: 'Execution queue',
+            copy: 'Prepare, sign, and submit approved payments with clear operational sequencing.',
+            tableTitle: 'Execution work items',
+          }
+        : {
+            eyebrow: 'Payments',
+            title: 'Payment control',
+            copy: 'Review payment intent, execution, settlement, exceptions, and proof from one queue.',
+            tableTitle: 'Payments and batches',
+          };
+  const isPlainQueueSurface = mode === 'approvals' || mode === 'execution';
+  const activeModalState = focusedPaymentOrderId
+    ? { type: 'view' as const, paymentOrderId: focusedPaymentOrderId }
+    : focusedPaymentRunId
+      ? { type: 'view-run' as const, paymentRunId: focusedPaymentRunId }
+      : modalState;
+  const usingRouteDetail = Boolean(focusedPaymentOrderId || focusedPaymentRunId);
+  const isPaymentsListSurface = !usingRouteDetail && mode === 'payments';
+  const isQueueSurface = !usingRouteDetail && (mode === 'approvals' || mode === 'execution');
+  const closeDetail = () => {
+    if (usingRouteDetail) {
+      onExitDetail?.();
+      return;
+    }
+    setModalState(null);
+  };
   const selectedOrder =
-    modalState?.type === 'view'
-      ? paymentOrders.find((item) => item.paymentOrderId === modalState.paymentOrderId) ?? null
+    activeModalState?.type === 'view'
+      ? paymentOrders.find((item) => item.paymentOrderId === activeModalState.paymentOrderId) ?? null
       : null;
   const selectedRun =
-    modalState?.type === 'view-run'
-      ? paymentRuns.find((item) => item.paymentRunId === modalState.paymentRunId) ?? null
+    activeModalState?.type === 'view-run'
+      ? paymentRuns.find((item) => item.paymentRunId === activeModalState.paymentRunId) ?? null
       : null;
   const selectedOrderDetail = selectedOrder?.reconciliationDetail ?? null;
   const selectedRequestRow = selectedOrder?.transferRequestId
@@ -2065,6 +2461,41 @@ export function WorkspaceRequestsPage({
     selectedOrder
       ? getPaymentProgress(selectedOrder, selectedRequestRow, selectedOrderPreparedExecution)
       : null;
+  const runOrders = selectedRun
+    ? paymentOrders.filter((order) => order.paymentRunId === selectedRun.paymentRunId)
+    : [];
+  const runWorkflowSteps = selectedRun ? buildRunWorkflow(selectedRun) : [];
+  const resolvedApprovalEvents = runOrders
+    .flatMap((order) => (order.reconciliationDetail?.approvalDecisions ?? []).map((decision) => ({ order, decision })))
+    .filter(({ decision }) => ['approve', 'reject', 'escalate'].includes(decision.action))
+    .sort((a, b) => new Date(b.decision.createdAt).getTime() - new Date(a.decision.createdAt).getTime());
+  const submissionEvents = runOrders
+    .flatMap((order) => {
+      const latestExecution = order.reconciliationDetail?.latestExecution;
+      if (!latestExecution?.submittedSignature) return [];
+      return [{
+        order,
+        signature: latestExecution.submittedSignature,
+        submittedAt: latestExecution.submittedAt ?? latestExecution.createdAt ?? order.updatedAt,
+      }];
+    })
+    .sort((a, b) => new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime());
+  const settlementEvents = runOrders
+    .flatMap((order) => {
+      const match = order.reconciliationDetail?.match;
+      if (!match?.matchedAt) return [];
+      return [{
+        order,
+        matchStatus: match.matchStatus,
+        matchedAt: match.matchedAt,
+      }];
+    })
+    .sort((a, b) => new Date(b.matchedAt).getTime() - new Date(a.matchedAt).getTime());
+  const latestDecision = selectedOrder
+    ? (selectedOrder.reconciliationDetail?.approvalDecisions ?? [])
+      .slice()
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0] ?? null
+    : null;
 
   useEffect(() => {
     if (!selectedRequestDestination) {
@@ -2117,17 +2548,162 @@ export function WorkspaceRequestsPage({
 
   return (
     <div className="page-stack page-stack-tight">
-      <section className="section-headline section-headline-compact">
-        <div className="section-headline-copy">
-          <p className="eyebrow">Payment Requests</p>
-          <h1>{currentWorkspace.workspaceName}</h1>
-          <p className="section-copy">
-            Start from a real request, control the payment, execute from the source wallet, then prove settlement onchain.
-          </p>
-        </div>
-      </section>
+      {isPaymentsListSurface ? (
+        <div className="request-detail-page">
+          <div className="request-main-panel request-detail-surface">
+            <section className="section-headline section-headline-compact">
+              <div className="section-headline-copy">
+                <p className="eyebrow">{surfaceMeta.eyebrow}</p>
+                <h1>{surfaceMeta.title}</h1>
+                <p className="section-copy">{surfaceMeta.copy}</p>
+              </div>
+              <div className="hero-actions">
+                <button
+                  className="ghost-button"
+                  disabled={!canManage}
+                  onClick={() => {
+                    setCsvImportMessage(null);
+                    setModalState({ type: 'import-csv' });
+                  }}
+                  type="button"
+                >
+                  Import CSV batch
+                </button>
+                <button
+                  className="primary-button"
+                  disabled={!canManage}
+                  onClick={() => setModalState({ type: 'create' })}
+                  type="button"
+                >
+                  New payment request
+                </button>
+              </div>
+            </section>
 
-      {!canManage ? (
+            {!canManage ? (
+              <div className="notice-banner">
+                <div>
+                  <strong>Read only.</strong>
+                  <p>Only organization admins can create or change payment requests in this workspace.</p>
+                </div>
+              </div>
+            ) : null}
+
+            <section className="content-grid content-grid-single">
+              <div className="workspace-pulse-strip workspace-pulse-strip-standalone">
+                <div className="workspace-pulse-strip-grid">
+                  <Metric label="Needs action" value={String(standaloneNeedsAction + runNeedsAction).padStart(2, '0')} />
+                  <Metric label="Ready to sign" value={String(standaloneReadyToSign + runReadyToSign).padStart(2, '0')} />
+                  <Metric label="Completed" value={String(standaloneCompleted + runCompleted).padStart(2, '0')} />
+                </div>
+              </div>
+            </section>
+
+            <div className="panel-header surface-panel-header">
+              <div className="surface-panel-copy">
+                <h2 className="registry-section-title">
+                  Payments and batches <span className="registry-count-inline">[{unifiedRows.length}]</span>
+                </h2>
+              </div>
+              <div className="surface-toolbar">
+                <label className="queue-select surface-search">
+                  <input
+                    value={searchQuery}
+                    onChange={(event) => setSearchQuery(event.target.value)}
+                    placeholder="Search payment, run, source, reference, or state"
+                  />
+                </label>
+              </div>
+            </div>
+
+            <div className="request-table compact-request-table payment-order-table unified-payments-table">
+              <div className="request-table-head">
+                <span>Type</span>
+                <span>Name</span>
+                <span>Amount</span>
+                <span>Source</span>
+                <span>Reference</span>
+                <span>Status</span>
+                <span>Created</span>
+              </div>
+              {unifiedRows
+                .filter((row) => {
+                  if (!searchQuery.trim()) return true;
+                  const q = searchQuery.trim().toLowerCase();
+                  return [row.name, row.amountLabel, row.sourceLabel, row.refLabel, row.stateLabel].join(' ').toLowerCase().includes(q);
+                })
+                .map((row) => (
+                  <div className="request-table-row" key={row.id}>
+                    <button
+                      className="request-row-button"
+                      onClick={() => {
+                        if (row.kind === 'run' && row.run) {
+                          setExecutionSourceWalletId(row.run.sourceWorkspaceAddressId ?? '');
+                          onOpenRunDetail?.(row.run.paymentRunId);
+                          if (!onOpenRunDetail) setModalState({ type: 'view-run', paymentRunId: row.run.paymentRunId });
+                          return;
+                        }
+                        if (row.order) {
+                          onOpenPaymentDetail?.(row.order.paymentOrderId);
+                          if (!onOpenPaymentDetail) setModalState({ type: 'view', paymentOrderId: row.order.paymentOrderId });
+                        }
+                      }}
+                      type="button"
+                    >
+                      <span className="request-cell-single">{row.kind === 'run' ? 'Batch run' : 'Payment'}</span>
+                      <span className="request-cell-primary"><strong>{row.name}</strong></span>
+                      <span className="request-cell-single">{row.amountLabel}</span>
+                      <span className="request-cell-single">{row.sourceLabel}</span>
+                      <span className="request-cell-single">{row.refLabel}</span>
+                      <span className="request-cell-single"><span className={`tone-pill tone-pill-${row.tone}`}>{row.stateLabel}</span></span>
+                      <span className="request-cell-single">{formatTimestampCompact(row.createdAt)}</span>
+                    </button>
+                  </div>
+                ))}
+              {!unifiedRows.length ? (
+                <div className="empty-box compact">No payments yet. Create a payment request or import a CSV batch.</div>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {!usingRouteDetail && !isPaymentsListSurface && !isQueueSurface ? (
+        <section className="section-headline section-headline-compact">
+          <div className="section-headline-copy">
+            <p className="eyebrow">{surfaceMeta.eyebrow}</p>
+            <h1>{surfaceMeta.title}</h1>
+            <p className="section-copy">
+              {surfaceMeta.copy}
+            </p>
+          </div>
+          {mode === 'payments' ? (
+            <div className="hero-actions">
+              <button
+                className="ghost-button"
+                disabled={!canManage}
+                onClick={() => {
+                  setCsvImportMessage(null);
+                  setModalState({ type: 'import-csv' });
+                }}
+                type="button"
+              >
+                Import CSV batch
+              </button>
+              <button
+                className="primary-button"
+                disabled={!canManage}
+                onClick={() => setModalState({ type: 'create' })}
+                type="button"
+              >
+                New payment request
+              </button>
+            </div>
+          ) : null}
+        </section>
+      ) : null}
+
+      {!canManage && !isPaymentsListSurface && !isQueueSurface ? (
         <div className="notice-banner">
           <div>
             <strong>Read only.</strong>
@@ -2136,34 +2712,154 @@ export function WorkspaceRequestsPage({
         </div>
       ) : null}
 
-      <section className="request-shell">
-        <div className="content-panel content-panel-strong request-main-panel">
-          <TableSurfaceHeader
-            actionDisabled={!canManage}
-            actionLabel="New payment request"
-            count={paymentWorkItems.length}
-            onAction={() => setModalState({ type: 'create' })}
-            onSearchChange={setSearchQuery}
-            searchPlaceholder="Search request, payee, destination, reference, or state"
-            searchValue={searchQuery}
-            title="Requests to proof"
-          />
-          <div className="inline-action-row">
-            <button
-              className="ghost-button compact-button"
-              disabled={!canManage}
-              onClick={() => {
-                setCsvImportMessage(null);
-                setModalState({ type: 'import-csv' });
-              }}
-              type="button"
-            >
-              Import CSV batch
-            </button>
-            <small>CSV columns: payee, destination, amount, reference, due_date.</small>
+      {mode === 'payments' && !usingRouteDetail && !isPaymentsListSurface ? (
+        <section className="content-grid content-grid-single">
+          <div className="workspace-pulse-strip workspace-pulse-strip-standalone">
+            <div className="workspace-pulse-strip-grid">
+              <Metric label="Needs action" value={String(standaloneNeedsAction + runNeedsAction).padStart(2, '0')} />
+              <Metric label="Ready to sign" value={String(standaloneReadyToSign + runReadyToSign).padStart(2, '0')} />
+              <Metric label="Completed" value={String(standaloneCompleted + runCompleted).padStart(2, '0')} />
+            </div>
           </div>
+        </section>
+      ) : null}
 
-          {paymentRuns.length ? (
+      {!usingRouteDetail && !isPaymentsListSurface ? (
+      <div className="request-detail-page">
+      <section className="request-shell">
+        <div
+          className={
+            isPlainQueueSurface
+              ? 'request-main-panel request-detail-surface'
+              : mode === 'payments'
+                ? 'request-main-panel request-detail-surface'
+                : 'content-panel content-panel-strong request-main-panel'
+          }
+        >
+          {isQueueSurface ? (
+            <>
+              <section className="section-headline section-headline-compact">
+                <div className="section-headline-copy">
+                  <p className="eyebrow">{surfaceMeta.eyebrow}</p>
+                  <h1>{surfaceMeta.title}</h1>
+                  <p className="section-copy">{surfaceMeta.copy}</p>
+                </div>
+              </section>
+              {!canManage ? (
+                <div className="notice-banner">
+                  <div>
+                    <strong>Read only.</strong>
+                    <p>Only organization admins can create or change payment requests in this workspace.</p>
+                  </div>
+                </div>
+              ) : null}
+            </>
+          ) : null}
+
+          {mode !== 'payments' ? (
+            <>
+              {mode !== 'approvals' && mode !== 'execution' ? (
+                <TableSurfaceHeader
+                  actionDisabled={!canManage || !canCreateRequest}
+                  actionLabel={actionLabel}
+                  count={mode === 'runs' ? visibleRuns.length : visibleWorkItems.length}
+                  onAction={() => {
+                    if (canCreateRequest) setModalState({ type: 'create' });
+                  }}
+                  onSearchChange={setSearchQuery}
+                  searchPlaceholder="Search request, payee, destination, reference, or state"
+                  searchValue={searchQuery}
+                  title={surfaceMeta.tableTitle}
+                />
+              ) : null}
+              {showCsvImport ? (
+              <div className="inline-action-row">
+                <button
+                  className="ghost-button compact-button"
+                  disabled={!canManage}
+                  onClick={() => {
+                    setCsvImportMessage(null);
+                    setModalState({ type: 'import-csv' });
+                  }}
+                  type="button"
+                >
+                  Import CSV batch
+                </button>
+                <small>CSV columns: payee, destination, amount, reference, due_date.</small>
+              </div>
+              ) : null}
+            </>
+          ) : (
+            <div className="panel-header surface-panel-header">
+              <div className="surface-panel-copy">
+                <h2 className="registry-section-title">
+                  Payments and batches <span className="registry-count-inline">[{unifiedRows.length}]</span>
+                </h2>
+              </div>
+              <div className="surface-toolbar">
+                <label className="queue-select surface-search">
+                  <input
+                    value={searchQuery}
+                    onChange={(event) => setSearchQuery(event.target.value)}
+                    placeholder="Search payment, run, source, reference, or state"
+                  />
+                </label>
+              </div>
+            </div>
+          )}
+
+          {mode === 'payments' ? (
+            <div className="request-table compact-request-table payment-order-table unified-payments-table">
+              <div className="request-table-head">
+                <span>Type</span>
+                <span>Name</span>
+                <span>Amount</span>
+                <span>Source</span>
+                <span>Reference</span>
+                <span>Status</span>
+                <span>Created</span>
+              </div>
+              {unifiedRows
+                .filter((row) => {
+                  if (!searchQuery.trim()) return true;
+                  const q = searchQuery.trim().toLowerCase();
+                  return [row.name, row.amountLabel, row.sourceLabel, row.refLabel, row.stateLabel].join(' ').toLowerCase().includes(q);
+                })
+                .map((row) => (
+                  <div className="request-table-row" key={row.id}>
+                    <button
+                      className="request-row-button"
+                      onClick={() => {
+                        if (row.kind === 'run' && row.run) {
+                          setExecutionSourceWalletId(row.run.sourceWorkspaceAddressId ?? '');
+                          onOpenRunDetail?.(row.run.paymentRunId);
+                          if (!onOpenRunDetail) setModalState({ type: 'view-run', paymentRunId: row.run.paymentRunId });
+                          return;
+                        }
+                        if (row.order) {
+                          onOpenPaymentDetail?.(row.order.paymentOrderId);
+                          if (!onOpenPaymentDetail) setModalState({ type: 'view', paymentOrderId: row.order.paymentOrderId });
+                        }
+                      }}
+                      type="button"
+                    >
+                      <span className="request-cell-single">{row.kind === 'run' ? 'Batch run' : 'Payment'}</span>
+                      <span className="request-cell-primary"><strong>{row.name}</strong></span>
+                      <span className="request-cell-single">{row.amountLabel}</span>
+                      <span className="request-cell-single">{row.sourceLabel}</span>
+                      <span className="request-cell-single">{row.refLabel}</span>
+                      <span className="request-cell-single"><span className={`tone-pill tone-pill-${row.tone}`}>{row.stateLabel}</span></span>
+                      <span className="request-cell-single">{formatTimestampCompact(row.createdAt)}</span>
+                    </button>
+                  </div>
+                ))}
+              {!unifiedRows.length ? (
+                <div className="empty-box compact">No payments yet. Create a payment request or import a CSV batch.</div>
+              ) : null}
+            </div>
+          ) : null}
+
+          {(mode === 'runs') && visibleRuns.length ? (
             <div className="request-table compact-request-table payment-order-table payment-run-table">
               <div className="request-table-head">
                 <span>Run</span>
@@ -2173,13 +2869,14 @@ export function WorkspaceRequestsPage({
                 <span>State</span>
                 <span>Created</span>
               </div>
-              {paymentRuns.map((run) => (
+              {visibleRuns.map((run) => (
                 <div key={run.paymentRunId} className="request-table-row">
                   <button
                     className="request-row-button"
                     onClick={() => {
                       setExecutionSourceWalletId(run.sourceWorkspaceAddressId ?? '');
-                      setModalState({ type: 'view-run', paymentRunId: run.paymentRunId });
+                      onOpenRunDetail?.(run.paymentRunId);
+                      if (!onOpenRunDetail) setModalState({ type: 'view-run', paymentRunId: run.paymentRunId });
                     }}
                     type="button"
                   >
@@ -2204,6 +2901,206 @@ export function WorkspaceRequestsPage({
             </div>
           ) : null}
 
+          {mode === 'approvals' ? (
+          <>
+            <section className="content-grid content-grid-single">
+              <div className="workspace-pulse-strip workspace-pulse-strip-standalone">
+                <div className="workspace-pulse-strip-grid">
+                  <Metric label="Pending" value={String(pendingApprovalOrders.length)} />
+                  <Metric label="Approved" value={String(approvedCount)} />
+                  <Metric label="Rejected" value={String(rejectedCount)} />
+                  <Metric label="Escalated" value={String(escalatedCount)} />
+                </div>
+              </div>
+            </section>
+            <div className="panel-header surface-panel-header parity-section-gap">
+              <div className="surface-panel-copy">
+                <h2 className="registry-section-title">
+                  Pending approvals <span className="registry-count-inline">[{pendingApprovalOrders.length}]</span>
+                </h2>
+              </div>
+            </div>
+            <div className="request-table compact-request-table payment-order-table parity-section-gap">
+              <div className="request-table-head">
+                <span>Payee</span>
+                <span>Destination</span>
+                <span>Amount</span>
+                <span>Reason</span>
+                <span>Age</span>
+                <span>Status</span>
+              </div>
+              {pendingApprovalOrders.length ? pendingApprovalOrders.map((order) => (
+                <div className="request-table-row" key={order.paymentOrderId}>
+                  <button
+                    className="request-row-button"
+                    onClick={() => {
+                      onOpenPaymentDetail?.(order.paymentOrderId);
+                      if (!onOpenPaymentDetail) setModalState({ type: 'view', paymentOrderId: order.paymentOrderId });
+                    }}
+                    type="button"
+                  >
+                    <span className="request-cell-primary">
+                      <strong>{order.payee?.name ?? order.destination.label}</strong>
+                      <small>{shortenAddress(order.paymentOrderId, 8, 6)}</small>
+                    </span>
+                    <span className="request-cell-single">{order.destination.label}</span>
+                    <span className="request-cell-single">{formatRawUsdcCompact(order.amountRaw)} {(order.asset ?? 'USDC').toUpperCase()}</span>
+                    <span className="request-cell-single">{order.reconciliationDetail?.approvalEvaluation?.reasons?.[0]?.message ?? 'Policy approval required'}</span>
+                    <span className="request-cell-single">{formatRelativeTime(order.createdAt)}</span>
+                    <span className="request-cell-single"><span className="tone-pill tone-pill-pending">pending approval</span></span>
+                  </button>
+                </div>
+              )) : <div className="empty-box compact">No approvals waiting.</div>}
+            </div>
+
+            <div className="panel-header surface-panel-header parity-section-gap-large">
+              <div className="surface-panel-copy">
+                <h2 className="registry-section-title">
+                  Approval history <span className="registry-count-inline">[{approvalHistoryOrders.length}]</span>
+                </h2>
+              </div>
+            </div>
+            <div className="request-table compact-request-table payment-order-table parity-section-gap">
+              <div className="request-table-head">
+                <span>Payee</span>
+                <span>Amount</span>
+                <span>Decision</span>
+                <span>Actor</span>
+                <span>Decision time</span>
+                <span>Payment status</span>
+              </div>
+              {approvalHistoryOrders.length ? approvalHistoryOrders.map((order) => {
+                const decisions = (order.reconciliationDetail?.approvalDecisions ?? [])
+                  .filter((decision) => ['approve', 'reject', 'escalate'].includes(decision.action))
+                  .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
+                const latest = decisions[0];
+                if (!latest) return null;
+                return (
+                  <div className="request-table-row" key={order.paymentOrderId}>
+                    <button
+                      className="request-row-button"
+                      onClick={() => {
+                        onOpenPaymentDetail?.(order.paymentOrderId);
+                        if (!onOpenPaymentDetail) setModalState({ type: 'view', paymentOrderId: order.paymentOrderId });
+                      }}
+                      type="button"
+                    >
+                      <span className="request-cell-primary">
+                        <strong>{order.payee?.name ?? order.destination.label}</strong>
+                        <small>{shortenAddress(order.paymentOrderId, 8, 6)}</small>
+                      </span>
+                      <span className="request-cell-single">{formatRawUsdcCompact(order.amountRaw)} {(order.asset ?? 'USDC').toUpperCase()}</span>
+                      <span className="request-cell-single">{formatLabel(latest.action)}</span>
+                      <span className="request-cell-single">{latest.actorUser?.displayName ?? latest.actorUser?.email ?? latest.actorType}</span>
+                      <span className="request-cell-single">{formatTimestampCompact(latest.createdAt)}</span>
+                      <span className="request-cell-single">{formatLabel(order.derivedState)}</span>
+                    </button>
+                  </div>
+                );
+              }) : <div className="empty-box compact">No approval decisions recorded yet.</div>}
+            </div>
+          </>
+          ) : null}
+
+          {mode === 'execution' ? (
+          <>
+            <section className="content-grid content-grid-single">
+              <div className="workspace-pulse-strip workspace-pulse-strip-standalone">
+                <div className="workspace-pulse-strip-grid">
+                  <Metric label="In queue" value={String(executionQueueOrders.length)} />
+                  <Metric label="Ready to sign" value={String(readyToSignCount)} />
+                  <Metric label="Executed" value={String(executedCount)} />
+                  <Metric label="Needs review" value={String(executionNeedsReviewCount)} />
+                </div>
+              </div>
+            </section>
+            <div className="panel-header surface-panel-header parity-section-gap">
+              <div className="surface-panel-copy">
+                <h2 className="registry-section-title">
+                  Execution queue <span className="registry-count-inline">[{executionQueueOrders.length}]</span>
+                </h2>
+              </div>
+            </div>
+            <div className="request-table compact-request-table payment-order-table parity-section-gap">
+              <div className="request-table-head">
+                <span>Payee</span>
+                <span>Destination</span>
+                <span>Amount</span>
+                <span>Why now</span>
+                <span>Status</span>
+                <span>Open</span>
+              </div>
+              {executionQueueOrders.length ? executionQueueOrders.map((order) => (
+                <div className="request-table-row" key={order.paymentOrderId}>
+                  <button
+                    className="request-row-button"
+                    onClick={() => {
+                      onOpenPaymentDetail?.(order.paymentOrderId);
+                      if (!onOpenPaymentDetail) setModalState({ type: 'view', paymentOrderId: order.paymentOrderId });
+                    }}
+                    type="button"
+                  >
+                    <span className="request-cell-primary">
+                      <strong>{order.payee?.name ?? order.destination.label}</strong>
+                      <small>{shortenAddress(order.paymentOrderId, 8, 6)}</small>
+                    </span>
+                    <span className="request-cell-single">{order.destination.label}</span>
+                    <span className="request-cell-single">{formatRawUsdcCompact(order.amountRaw)} {(order.asset ?? 'USDC').toUpperCase()}</span>
+                    <span className="request-cell-single">{executionReason(order)}</span>
+                    <span className="request-cell-single"><span className={`tone-pill tone-pill-${getProgressTone(order.derivedState)}`}>{formatLabel(order.derivedState)}</span></span>
+                    <span className="request-cell-single">{executionAction(order)}</span>
+                  </button>
+                </div>
+              )) : <div className="empty-box compact">No payments in execution queue.</div>}
+            </div>
+
+            <div className="panel-header surface-panel-header parity-section-gap-large">
+              <div className="surface-panel-copy">
+                <h2 className="registry-section-title">
+                  Recent executed <span className="registry-count-inline">[{executedHistoryOrders.length}]</span>
+                </h2>
+              </div>
+            </div>
+            <div className="request-table compact-request-table payment-order-table parity-section-gap">
+              <div className="request-table-head">
+                <span>Payee</span>
+                <span>Destination</span>
+                <span>Amount</span>
+                <span>Execution signature</span>
+                <span>Status</span>
+                <span>Open</span>
+              </div>
+              {executedHistoryOrders.length ? executedHistoryOrders.map((order) => (
+                <div className="request-table-row" key={order.paymentOrderId}>
+                  <button
+                    className="request-row-button"
+                    onClick={() => {
+                      onOpenPaymentDetail?.(order.paymentOrderId);
+                      if (!onOpenPaymentDetail) setModalState({ type: 'view', paymentOrderId: order.paymentOrderId });
+                    }}
+                    type="button"
+                  >
+                    <span className="request-cell-primary">
+                      <strong>{order.payee?.name ?? order.destination.label}</strong>
+                      <small>{shortenAddress(order.paymentOrderId, 8, 6)}</small>
+                    </span>
+                    <span className="request-cell-single">{order.destination.label}</span>
+                    <span className="request-cell-single">{formatRawUsdcCompact(order.amountRaw)} {(order.asset ?? 'USDC').toUpperCase()}</span>
+                    <span className="request-cell-single">
+                      {order.reconciliationDetail?.latestExecution?.submittedSignature
+                        ? shortenAddress(order.reconciliationDetail.latestExecution.submittedSignature, 10, 8)
+                        : 'N/A'}
+                    </span>
+                    <span className="request-cell-single"><span className={`tone-pill tone-pill-${getProgressTone(order.derivedState)}`}>{formatLabel(order.derivedState)}</span></span>
+                    <span className="request-cell-single">Open payment</span>
+                  </button>
+                </div>
+              )) : <div className="empty-box compact">No executed payments yet.</div>}
+            </div>
+          </>
+          ) : null}
+
+          {(mode !== 'runs' && mode !== 'approvals' && mode !== 'execution' && mode !== 'payments') ? (
           <div className="request-table compact-request-table payment-order-table">
             <div className="request-table-head">
               <span>Request</span>
@@ -2213,8 +3110,8 @@ export function WorkspaceRequestsPage({
               <span>Progress</span>
               <span>Created</span>
             </div>
-            {paymentWorkItems.length ? (
-              paymentWorkItems.map((item) => {
+            {visibleWorkItems.length ? (
+              visibleWorkItems.map((item) => {
                 const order = item.order;
                 const request = item.request;
                 const row = order?.transferRequestId
@@ -2229,7 +3126,11 @@ export function WorkspaceRequestsPage({
                     <button
                       className="request-row-button"
                       disabled={!order}
-                      onClick={() => order ? setModalState({ type: 'view', paymentOrderId: order.paymentOrderId }) : undefined}
+                      onClick={() => {
+                        if (!order) return;
+                        onOpenPaymentDetail?.(order.paymentOrderId);
+                        if (!onOpenPaymentDetail) setModalState({ type: 'view', paymentOrderId: order.paymentOrderId });
+                      }}
                       title={order ? `${order.paymentOrderId} // ${order.sourceWorkspaceAddress ? getWalletName(order.sourceWorkspaceAddress) : 'source not set'} -> ${order.destination.label}` : request?.reason}
                       type="button"
                     >
@@ -2266,14 +3167,22 @@ export function WorkspaceRequestsPage({
               </div>
             )}
           </div>
+          ) : null}
 
         </div>
       </section>
+      </div>
+      ) : null}
 
-      {modalState ? (
-        <div className="registry-modal-backdrop" onClick={() => setModalState(null)} role="presentation">
-          <div className="registry-modal request-modal" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true">
-            {modalState.type === 'create' ? (
+      {activeModalState ? (
+        <div className={usingRouteDetail ? 'request-detail-page' : 'registry-modal-backdrop'} onClick={usingRouteDetail ? undefined : () => setModalState(null)} role="presentation">
+          <div
+            className={usingRouteDetail ? 'request-main-panel request-detail-surface' : 'registry-modal request-modal'}
+            onClick={(event) => event.stopPropagation()}
+            role={usingRouteDetail ? undefined : 'dialog'}
+            aria-modal={usingRouteDetail ? undefined : 'true'}
+          >
+            {activeModalState.type === 'create' ? (
               <>
                 <div className="panel-header panel-header-stack">
                   <div>
@@ -2400,7 +3309,7 @@ export function WorkspaceRequestsPage({
               </>
             ) : null}
 
-            {modalState.type === 'import-csv' ? (
+            {activeModalState.type === 'import-csv' ? (
               <>
                 <div className="panel-header panel-header-stack">
                   <div>
@@ -2470,36 +3379,46 @@ export function WorkspaceRequestsPage({
               </>
             ) : null}
 
-            {modalState.type === 'view-run' && selectedRun ? (
+            {activeModalState.type === 'view-run' && selectedRun ? (
               <>
-                <div className="registry-modal-hero request-modal-hero">
-                  <div className="registry-modal-hero-copy">
-                    <h2>{selectedRun.runName}</h2>
-                    <span className={`tone-pill tone-pill-${getRunTone(selectedRun.derivedState)}`}>
-                      {formatLabel(selectedRun.derivedState)}
-                    </span>
+                <section className="section-headline section-headline-compact">
+                  <div className="section-headline-copy">
+                    <p className="eyebrow">Payment Run</p>
+                    <h1>{selectedRun.runName}</h1>
+                    <p className="section-copy">
+                      {selectedRun.totals.orderCount} payment(s) / {formatRawUsdcCompact(selectedRun.totals.totalAmountRaw)} USDC / {formatLabel(selectedRun.derivedState)}
+                    </p>
                   </div>
-                  <div className="panel-header-actions">
-                    <button className="primary-button compact-button" onClick={() => void onDownloadPaymentRunProof(selectedRun.paymentRunId)} type="button">
-                      export run proof
+                  <div className="hero-actions">
+                    <button className="ghost-button" onClick={() => void onDownloadPaymentRunProof(selectedRun.paymentRunId)} type="button">
+                      Export run proof
                     </button>
-                    <button className="ghost-button compact-button danger-button" onClick={() => setModalState(null)} type="button">
-                      close
+                    <button className="ghost-button danger-button" disabled={!canManage} onClick={() => void onDeletePaymentRun(selectedRun.paymentRunId)} type="button">
+                      Delete run
                     </button>
+                    {!['settled', 'closed', 'cancelled', 'proven'].includes(selectedRun.derivedState) ? (
+                      <button
+                        className="primary-button compact-button"
+                        onClick={() => {
+                          document.getElementById('run-execution')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                        }}
+                        type="button"
+                      >
+                        Execute payments
+                      </button>
+                    ) : null}
+                    {!usingRouteDetail ? (
+                      <button className="ghost-button compact-button danger-button" onClick={closeDetail} type="button">
+                        close
+                      </button>
+                    ) : null}
                   </div>
-                </div>
+                </section>
 
-                <div className="info-grid-tight">
-                  <InfoLine label="Rows" value={String(selectedRun.totals.orderCount)} />
-                  <InfoLine label="Total" value={`${formatRawUsdcCompact(selectedRun.totals.totalAmountRaw)} USDC`} />
-                  <InfoLine label="Ready rows" value={`${selectedRun.totals.readyCount}/${selectedRun.totals.orderCount}`} />
-                  <InfoLine label="Needs approval" value={String(selectedRun.totals.pendingApprovalCount)} />
-                  <InfoLine label="Exceptions" value={String(selectedRun.totals.exceptionCount)} />
-                  <InfoLine label="Source wallet" value={selectedRun.sourceWorkspaceAddress ? getWalletName(selectedRun.sourceWorkspaceAddress) : 'Not set'} />
-                </div>
+                <RunProgressTracker steps={runWorkflowSteps} />
 
-                {!['settled', 'closed', 'cancelled'].includes(selectedRun.derivedState) ? (
-                  <div className="registry-detail-group">
+                {!['settled', 'closed', 'cancelled', 'proven'].includes(selectedRun.derivedState) ? (
+                  <div className="registry-detail-group" id="run-execution">
                     <div className="registry-detail-head">
                       <strong>Batch execution</strong>
                     </div>
@@ -2626,141 +3545,224 @@ export function WorkspaceRequestsPage({
 
                 <div className="request-table compact-request-table payment-order-table">
                   <div className="request-table-head">
-                    <span>Row</span>
-                    <span>Destination</span>
+                    <span>Payee</span>
                     <span>Amount</span>
-                    <span>State</span>
+                    <span>Source</span>
+                    <span>Destination</span>
                     <span>Reference</span>
-                    <span>Created</span>
+                    <span>Due</span>
+                    <span>Status</span>
+                    <span>Export Proof</span>
                   </div>
-                  {paymentOrders.filter((order) => order.paymentRunId === selectedRun.paymentRunId).map((order) => (
+                  {runOrders.map((order) => (
                     <div key={order.paymentOrderId} className="request-table-row">
-                      <button
+                      <div
                         className="request-row-button"
-                        onClick={() => setModalState({ type: 'view', paymentOrderId: order.paymentOrderId })}
-                        type="button"
+                        onClick={() => {
+                          onOpenPaymentDetail?.(order.paymentOrderId);
+                          if (!onOpenPaymentDetail) setModalState({ type: 'view', paymentOrderId: order.paymentOrderId });
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter' || event.key === ' ') {
+                            event.preventDefault();
+                            onOpenPaymentDetail?.(order.paymentOrderId);
+                            if (!onOpenPaymentDetail) setModalState({ type: 'view', paymentOrderId: order.paymentOrderId });
+                          }
+                        }}
+                        role="button"
+                        tabIndex={0}
                       >
                         <span className="request-cell-primary">
                           <strong>{order.payee?.name ?? shortenAddress(order.paymentOrderId, 8, 6)}</strong>
                           <small>{shortenAddress(order.paymentOrderId, 8, 6)}</small>
                         </span>
-                        <span className="request-cell-single">{order.destination.label}</span>
                         <span className="request-cell-single">{formatRawUsdcCompact(order.amountRaw)} {order.asset.toUpperCase()}</span>
-                        <span className="request-cell-single">{formatLabel(order.derivedState)}</span>
+                        <span className="request-cell-single">
+                          {order.sourceWorkspaceAddress ? getWalletName(order.sourceWorkspaceAddress) : 'N/A'}
+                        </span>
+                        <span className="request-cell-single">{order.destination.label}</span>
                         <span className="request-cell-single">{order.externalReference ?? order.invoiceNumber ?? '-'}</span>
-                        <span className="request-cell-single">{formatTimestampCompact(order.createdAt)}</span>
-                      </button>
+                        <span className="request-cell-single">{order.dueAt ? formatTimestampCompact(order.dueAt) : '-'}</span>
+                        <span className="request-cell-single">
+                          <span className={`tone-pill tone-pill-${getProgressTone(order.derivedState)}`}>
+                            {formatLabel(order.derivedState)}
+                          </span>
+                        </span>
+                        <span className="request-cell-single">
+                          <button
+                            className="ghost-button compact-button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              void onDownloadPaymentOrderProof(order.paymentOrderId);
+                            }}
+                            type="button"
+                          >
+                            Export
+                          </button>
+                        </span>
+                      </div>
                     </div>
                   ))}
+                </div>
+
+                <div className="registry-detail-group">
+                  <div className="registry-detail-head">
+                    <strong>Lifecycle details</strong>
+                  </div>
+                  <div className="vertical-timeline">
+                    {runWorkflowSteps.map((step) => {
+                      const stageKey = step.label.startsWith('Import')
+                        ? 'imported'
+                        : step.label.startsWith('Review')
+                          ? 'reviewed'
+                          : step.label.startsWith('Approve')
+                            ? 'approved'
+                            : step.label.startsWith('Execute') || step.label.startsWith('Executed')
+                              ? 'submitted'
+                              : step.label.startsWith('Settle') || step.label.startsWith('Settled')
+                                ? 'settled'
+                                : 'proven';
+                      return (
+                        <article className={`vertical-timeline-item vertical-timeline-item-${step.state}`} key={step.label}>
+                          <span className="vertical-timeline-marker" />
+                          <div className="vertical-timeline-content">
+                            <div className="vertical-timeline-title-row">
+                              <strong>{step.label}</strong>
+                              <button
+                                className="timeline-inline-toggle"
+                                onClick={() => {
+                                  setExpandedRunLifecycleStages((s) => ({ ...s, [stageKey]: !s[stageKey] }));
+                                }}
+                                type="button"
+                                aria-label={expandedRunLifecycleStages[stageKey] ? `Collapse ${step.label} details` : `Expand ${step.label} details`}
+                              >
+                                {expandedRunLifecycleStages[stageKey] ? '▾' : '▸'}
+                              </button>
+                            </div>
+                            <p>{step.subtext}</p>
+                            {step.label === 'Imported' && expandedRunLifecycleStages.imported ? (
+                              <CompactStageEvents
+                                items={[
+                                  {
+                                    title: 'Run created',
+                                    body: `Imported ${selectedRun.totals.orderCount} row(s) into ${selectedRun.runName}.`,
+                                    time: selectedRun.createdAt,
+                                  },
+                                ]}
+                              />
+                            ) : null}
+                            {(step.label === 'Approved' || step.label === 'Approve') && expandedRunLifecycleStages.approved ? (
+                              resolvedApprovalEvents.length ? (
+                                <CompactStageEvents
+                                  items={resolvedApprovalEvents.map(({ order, decision }) => ({
+                                    title: `${decision.action.replaceAll('_', ' ')} · ${order.payee?.name ?? order.destination.label}`,
+                                    body: `${decision.actorUser?.email ?? decision.actorType} · ${order.externalReference ?? order.invoiceNumber ?? 'No reference'}`,
+                                    time: decision.createdAt,
+                                  }))}
+                                />
+                              ) : <p>No resolved approval decisions yet.</p>
+                            ) : null}
+                            {(step.label === 'Execute' || step.label === 'Executed') && expandedRunLifecycleStages.submitted ? (
+                              submissionEvents.length ? (
+                                <CompactStageEvents
+                                  items={submissionEvents.map((event) => ({
+                                    title: `${event.order.payee?.name ?? event.order.destination.label}`,
+                                    body: `Signature ${shortenAddress(event.signature, 10, 8)}`,
+                                    time: event.submittedAt,
+                                  }))}
+                                />
+                              ) : <p>No signatures executed yet.</p>
+                            ) : null}
+                            {(step.label === 'Settle' || step.label === 'Settled') && expandedRunLifecycleStages.settled ? (
+                              settlementEvents.length ? (
+                                <CompactStageEvents
+                                  items={settlementEvents.map((event) => ({
+                                    title: `${event.order.payee?.name ?? event.order.destination.label}`,
+                                    body: event.matchStatus.replaceAll('_', ' '),
+                                    time: event.matchedAt,
+                                  }))}
+                                />
+                              ) : <p>No settlement matches yet.</p>
+                            ) : null}
+                          </div>
+                        </article>
+                      );
+                    })}
+                  </div>
                 </div>
               </>
             ) : null}
 
-            {modalState.type === 'view' && selectedOrder ? (
+            {activeModalState.type === 'view' && selectedOrder ? (
               <>
-                <div className="registry-modal-hero request-modal-hero">
-                  <div className="registry-modal-hero-copy">
-                    <h2>{selectedOrder.paymentRequest?.reason ?? selectedOrder.memo ?? `${selectedOrder.sourceWorkspaceAddress ? getWalletName(selectedOrder.sourceWorkspaceAddress) : 'Source not set'} -> ${selectedOrder.destination.label}`}</h2>
-                    <span className={`tone-pill tone-pill-${selectedOrderProgress?.tone ?? 'pending'}`}>
-                      {selectedOrderProgress?.label ?? 'draft'}
-                    </span>
+                <section className="section-headline section-headline-compact">
+                  <div className="section-headline-copy">
+                    <p className="eyebrow">Payment</p>
+                    <h1>{selectedOrder.payee?.name ?? selectedOrder.destination.label}</h1>
+                    <p className="section-copy">
+                      {formatRawUsdcCompact(selectedOrder.amountRaw)} {(selectedOrder.asset ?? 'USDC').toUpperCase()} / {selectedOrder.externalReference ?? selectedOrder.invoiceNumber ?? 'No reference'}
+                    </p>
                   </div>
-                  <div className="panel-header-actions">
-                    <button className="primary-button compact-button" onClick={() => void onDownloadPaymentOrderProof(selectedOrder.paymentOrderId)} type="button">
-                      export proof
+                  <div className="hero-actions">
+                    <button className="ghost-button" onClick={() => void onDownloadPaymentOrderProof(selectedOrder.paymentOrderId)} type="button">
+                      Export proof
                     </button>
-                    <button className="ghost-button compact-button" onClick={() => void onDownloadPaymentOrderAuditExport(selectedOrder.paymentOrderId)} type="button">
-                      export audit
+                    <button className="ghost-button" onClick={() => void onDownloadPaymentOrderAuditExport(selectedOrder.paymentOrderId)} type="button">
+                      Audit CSV
                     </button>
                     {selectedOrder.derivedState === 'draft' ? (
-                      <button className="primary-button compact-button" disabled={!canManage} onClick={() => void onSubmitPaymentOrder(selectedOrder.paymentOrderId)} type="button">
-                        submit
+                      <button className="ghost-button" disabled={!canManage} onClick={() => void onSubmitPaymentOrder(selectedOrder.paymentOrderId)} type="button">
+                        Submit for approval
                       </button>
                     ) : null}
                     {selectedOrder.derivedState !== 'settled' && selectedOrder.derivedState !== 'closed' && selectedOrder.derivedState !== 'cancelled' ? (
-                      <button className="ghost-button compact-button danger-button" disabled={!canManage} onClick={() => void onCancelPaymentOrder(selectedOrder.paymentOrderId)} type="button">
-                        cancel
+                      <button className="ghost-button danger-button" disabled={!canManage} onClick={() => void onCancelPaymentOrder(selectedOrder.paymentOrderId)} type="button">
+                        Delete payment
                       </button>
                     ) : null}
-                    <button className="ghost-button compact-button danger-button" onClick={() => setModalState(null)} type="button">
-                      close
-                    </button>
+                    {!usingRouteDetail ? (
+                      <button className="primary-button" onClick={closeDetail} type="button">
+                        close
+                      </button>
+                    ) : null}
                   </div>
-                </div>
+                </section>
 
-                <div className="info-grid-tight">
-                  {selectedOrder.paymentRequest ? (
-                    <InfoLine label="Payment request" value={shortenAddress(selectedOrder.paymentRequest.paymentRequestId, 8, 8)} />
-                  ) : null}
-                  <InfoLine label="Payment order" value={shortenAddress(selectedOrder.paymentOrderId, 8, 8)} />
-                  <InfoLine label="Amount" value={`${formatRawUsdcCompact(selectedOrder.amountRaw)} ${selectedOrder.asset.toUpperCase()}`} />
-                  <InfoLine label="Created" value={formatTimestamp(selectedOrder.createdAt)} />
-                  <InfoLine label="Due" value={selectedOrder.dueAt ? formatTimestamp(selectedOrder.dueAt) : 'No due date'} />
-                  <InfoLine label="Source wallet" value={selectedOrder.sourceWorkspaceAddress ? getWalletName(selectedOrder.sourceWorkspaceAddress) : 'Not set'} />
-                  <InfoLine label="Destination" value={selectedOrder.destination.label} />
-                  <InfoLine label="Payee" value={selectedOrder.payee?.name ?? 'Unassigned'} />
-                  <InfoLine label="Counterparty" value={selectedOrder.counterparty?.displayName ?? 'Unassigned'} />
-                  <InfoLine label="Destination trust" value={`${selectedOrder.destination.trustState} // ${selectedOrder.destination.isInternal ? 'internal' : 'external'}`} />
-                </div>
-
-                {selectedOrderProgress ? (
-                  <div className="payment-progress-panel">
-                    <div className="payment-progress-head">
-                      <span className="eyebrow">Payment progress</span>
-                      <strong>{selectedOrderProgress.label}</strong>
-                      <p>{selectedOrderProgress.description}</p>
-                    </div>
-                    <div className="payment-progress-steps" aria-label="Payment progress steps">
-                      {PAYMENT_PROGRESS_STEPS.map((step) => (
-                        <div
-                          key={step.index}
-                          className={
-                            step.index < selectedOrderProgress.step
-                              ? 'payment-progress-step is-complete'
-                              : step.index === selectedOrderProgress.step
-                                ? 'payment-progress-step is-current'
-                                : 'payment-progress-step'
-                          }
-                        >
-                          <span>{step.index}</span>
-                          <strong>{step.label}</strong>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ) : null}
-
+                <RunProgressTracker steps={buildWorkflow(selectedOrder)} />
                 <div className="registry-detail-group">
                   <div className="registry-detail-head">
-                    <strong>Source readiness</strong>
+                    <strong>Payment snapshot</strong>
                   </div>
-                  <div className="registry-detail-box">
-                    <strong>{selectedOrder.balanceWarning.message}</strong>
-                    <small>
-                      {selectedOrder.balanceWarning.balanceRaw
-                        ? `Snapshot: ${formatRawUsdcCompact(selectedOrder.balanceWarning.balanceRaw)} USDC`
-                        : 'No source balance snapshot was captured for this order.'}
-                    </small>
+                  <div className="payment-snapshot-grid">
+                    <div className="payment-snapshot-card">
+                      <small>Amount</small>
+                      <strong>{formatRawUsdcCompact(selectedOrder.amountRaw)} {(selectedOrder.asset ?? 'USDC').toUpperCase()}</strong>
+                    </div>
+                    <div className="payment-snapshot-card">
+                      <small>From</small>
+                      <strong>{selectedOrder.sourceWorkspaceAddress?.address ? shortenAddress(selectedOrder.sourceWorkspaceAddress.address, 6, 6) : 'Source not set'}</strong>
+                    </div>
+                    <div className="payment-snapshot-card">
+                      <small>To</small>
+                      <strong>{selectedOrder.destination?.walletAddress ? shortenAddress(selectedOrder.destination.walletAddress, 6, 6) : 'Destination unavailable'}</strong>
+                    </div>
+                    <div className="payment-snapshot-card">
+                      <small>Signature</small>
+                      <strong>{selectedRequestRow?.latestExecution?.submittedSignature ? shortenAddress(selectedRequestRow.latestExecution.submittedSignature, 6, 6) : 'Not executed'}</strong>
+                    </div>
+                    <div className="payment-snapshot-card">
+                      <small>Time label</small>
+                      <strong>{selectedRequestRow?.latestExecution?.submittedSignature ? 'Executed' : 'Created'}</strong>
+                    </div>
+                    <div className="payment-snapshot-card">
+                      <small>Time</small>
+                      <strong>{formatRelativeTime(selectedRequestRow?.latestExecution?.submittedAt ?? selectedOrder.createdAt)}</strong>
+                    </div>
                   </div>
                 </div>
 
-                {selectedRequestRow?.latestExecution ? (
-                  <div className="registry-detail-group">
-                    <div className="registry-detail-head">
-                      <strong>Latest execution</strong>
-                    </div>
-                    <div className="registry-detail-box">
-                      <strong>{getExecutionStateLabel(selectedRequestRow.latestExecution.state)}</strong>
-                      <small>
-                        {selectedRequestRow.latestExecution.submittedSignature
-                          ? shortenAddress(selectedRequestRow.latestExecution.submittedSignature, 8, 8)
-                          : 'No submitted signature yet'}
-                      </small>
-                    </div>
-                  </div>
-                ) : null}
 
-                {!['settled', 'closed', 'cancelled'].includes(selectedOrder.derivedState) ? (
+                {!['settled', 'closed', 'cancelled', 'proven'].includes(selectedOrder.derivedState) ? (
                   <div className="registry-detail-group">
                     <div className="registry-detail-head">
                       <strong>Prepare payment</strong>
@@ -2944,52 +3946,102 @@ export function WorkspaceRequestsPage({
                   </div>
                 ) : null}
 
-                {selectedRequestRow?.matchExplanation ? (
-                  <div className="registry-detail-group">
-                    <div className="registry-detail-head">
-                      <strong>Settlement result</strong>
-                    </div>
-                    <div className="registry-detail-box">
-                      <p>{selectedRequestRow.matchExplanation}</p>
-                    </div>
+                <div className="registry-detail-group">
+                  <div className="registry-detail-head">
+                    <strong>Lifecycle details</strong>
                   </div>
-                ) : null}
-
-                {selectedOrder.memo || selectedOrder.externalReference || selectedOrder.invoiceNumber || selectedOrder.attachmentUrl ? (
-                  <div className="info-grid-tight">
-                    {selectedOrder.externalReference ? (
-                      <InfoLine label="Reference" value={selectedOrder.externalReference} />
-                    ) : null}
-                    {selectedOrder.invoiceNumber ? (
-                      <InfoLine label="Invoice" value={selectedOrder.invoiceNumber} />
-                    ) : null}
-                    {selectedOrder.attachmentUrl ? (
-                      <InfoLine label="Attachment" value={selectedOrder.attachmentUrl} />
-                    ) : null}
-                    {selectedOrder.memo ? (
-                      <InfoLine label="Memo" value={selectedOrder.memo} />
-                    ) : null}
+                  <div className="vertical-timeline">
+                    {(() => {
+                      const stageState = paymentTimelineStates(selectedOrder.derivedState);
+                      const approvalDecisions = selectedOrder.reconciliationDetail?.approvalDecisions ?? [];
+                      const exceptions = selectedOrder.reconciliationDetail?.exceptions ?? [];
+                      const latestExecution = selectedOrder.reconciliationDetail?.latestExecution ?? null;
+                      const match = selectedOrder.reconciliationDetail?.match ?? null;
+                      const proofReady = selectedOrder.derivedState === 'settled' || selectedOrder.derivedState === 'closed';
+                      return (
+                        <>
+                          <article className={`vertical-timeline-item vertical-timeline-item-${stageState.request}`}>
+                            <span className="vertical-timeline-marker" />
+                            <div className="vertical-timeline-content">
+                              <strong>Request</strong>
+                              <p>Created by {selectedOrder.createdByUser?.email ?? 'System'} at {formatTimestampCompact(selectedOrder.createdAt)}.</p>
+                            </div>
+                          </article>
+                          <article className={`vertical-timeline-item vertical-timeline-item-${stageState.approval}`}>
+                            <span className="vertical-timeline-marker" />
+                            <div className="vertical-timeline-content">
+                              <div className="vertical-timeline-title-row">
+                                <strong>Approval</strong>
+                                {approvalDecisions.length ? (
+                                  <button
+                                    className="timeline-inline-toggle"
+                                    onClick={() => setExpandedTimelineStages((s) => ({ ...s, approval: !s.approval }))}
+                                    type="button"
+                                    aria-label={expandedTimelineStages.approval ? 'Collapse approval details' : 'Expand approval details'}
+                                  >
+                                    {expandedTimelineStages.approval ? '▾' : '▸'}
+                                  </button>
+                                ) : null}
+                              </div>
+                              <p>{latestDecision ? `${latestDecision.action.replaceAll('_', ' ')} by ${latestDecision.actorUser?.email ?? latestDecision.actorType}` : 'No approval decision recorded yet.'}</p>
+                              {approvalDecisions.length && expandedTimelineStages.approval ? (
+                                <CompactStageEvents
+                                  items={approvalDecisions.map((decision) => ({
+                                    title: decision.action.replaceAll('_', ' '),
+                                    body: decision.comment ?? 'Policy decision recorded.',
+                                    time: decision.createdAt,
+                                  }))}
+                                />
+                              ) : null}
+                            </div>
+                          </article>
+                          <article className={`vertical-timeline-item vertical-timeline-item-${stageState.execution}`}>
+                            <span className="vertical-timeline-marker" />
+                            <div className="vertical-timeline-content">
+                              <strong>Execution</strong>
+                              <p>{latestExecution?.submittedSignature ? `Executed on-chain with ${shortenAddress(latestExecution.submittedSignature)}.` : 'Not executed on-chain yet.'}</p>
+                            </div>
+                          </article>
+                          <article className={`vertical-timeline-item vertical-timeline-item-${stageState.settlement}`}>
+                            <span className="vertical-timeline-marker" />
+                            <div className="vertical-timeline-content">
+                              <div className="vertical-timeline-title-row">
+                                <strong>Settlement</strong>
+                                {exceptions.length ? (
+                                  <button
+                                    className="timeline-inline-toggle"
+                                    onClick={() => setExpandedTimelineStages((s) => ({ ...s, settlement: !s.settlement }))}
+                                    type="button"
+                                    aria-label={expandedTimelineStages.settlement ? 'Collapse settlement details' : 'Expand settlement details'}
+                                  >
+                                    {expandedTimelineStages.settlement ? '▾' : '▸'}
+                                  </button>
+                                ) : null}
+                              </div>
+                              <p>{match ? `${match.matchStatus.replaceAll('_', ' ')} at ${formatTimestampCompact(match.matchedAt ?? selectedOrder.updatedAt)}.` : 'Waiting for chain match and reconciliation.'}</p>
+                              {exceptions.length && expandedTimelineStages.settlement ? (
+                                <CompactStageEvents
+                                  items={exceptions.map((exception) => ({
+                                    title: `${exception.severity} / ${exception.status}`,
+                                    body: exception.explanation,
+                                    time: exception.createdAt,
+                                  }))}
+                                />
+                              ) : null}
+                            </div>
+                          </article>
+                          <article className={`vertical-timeline-item vertical-timeline-item-${stageState.proof}`}>
+                            <span className="vertical-timeline-marker" />
+                            <div className="vertical-timeline-content">
+                              <strong>Proof</strong>
+                              <p>{proofReady ? 'Proof is ready for export.' : 'Proof becomes complete after settlement.'}</p>
+                            </div>
+                          </article>
+                        </>
+                      );
+                    })()}
                   </div>
-                ) : null}
-
-                {selectedOrder.events.length ? (
-                  <div className="registry-detail-group">
-                    <div className="registry-detail-head">
-                      <strong>Payment order events</strong>
-                    </div>
-                    <div className="timeline-list">
-                      {selectedOrder.events.slice(0, 8).map((event) => (
-                        <div key={event.paymentOrderEventId} className="timeline-item">
-                          <strong>{formatLabel(event.eventType)}</strong>
-                          <small>
-                            {event.beforeState && event.afterState ? `${formatLabel(event.beforeState)} -> ${formatLabel(event.afterState)} // ` : ''}
-                            {formatTimestamp(event.createdAt)}
-                          </small>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ) : null}
+                </div>
               </>
             ) : null}
           </div>
@@ -3312,30 +4364,286 @@ export function WorkspaceExceptionsPage({
   );
 }
 
-export function WorkspaceOpsPage({
+export function WorkspaceSettlementPage({
   currentWorkspace,
-  opsHealth,
-  exportJobs,
-  onDownloadReconciliationExport,
-  onDownloadExceptionsExport,
+  reconciliationRows,
+  observedTransfers,
+  exceptions,
 }: {
   currentWorkspace: Workspace;
-  opsHealth: OpsHealth | null;
-  exportJobs: ExportJob[];
-  onDownloadReconciliationExport: () => Promise<void>;
-  onDownloadExceptionsExport: () => Promise<void>;
+  reconciliationRows: ReconciliationRow[];
+  observedTransfers: ObservedTransfer[];
+  exceptions: ExceptionItem[];
 }) {
+  const [tab, setTab] = useState<'reconciliation' | 'raw'>('reconciliation');
+  const matchedCount = reconciliationRows.filter((row) => row.requestDisplayState === 'matched').length;
+  const rejectedCount = reconciliationRows.filter((row) => row.approvalState === 'rejected' || row.executionState === 'rejected').length;
+  const pendingCount = reconciliationRows.filter((row) => row.requestDisplayState === 'pending' && row.approvalState !== 'rejected' && row.executionState !== 'rejected').length;
+  const openExceptions = exceptions.filter((item) => item.status !== 'dismissed').length;
+
   return (
     <div className="page-stack page-stack-tight">
       <section className="section-headline section-headline-compact">
         <div className="section-headline-copy">
-          <p className="eyebrow">Ops</p>
+          <p className="eyebrow">Settlement</p>
+          <h1>Settlement and reconciliation</h1>
+          <p className="section-copy">Payment-centric chain truth first; use observed movement for raw USDC debugging.</p>
+        </div>
+      </section>
+
+      <section className="content-grid content-grid-single">
+        <div className="workspace-pulse-strip workspace-pulse-strip-standalone">
+          <div className="workspace-pulse-strip-grid">
+            <Metric label="Rows tracked" value={String(reconciliationRows.length)} />
+            <Metric label="Matched" value={String(matchedCount)} />
+            <Metric label="Pending" value={String(pendingCount)} />
+            <Metric label="Rejected" value={String(rejectedCount)} />
+            <Metric label="Open exceptions" value={String(openExceptions)} />
+          </div>
+        </div>
+      </section>
+
+      <section className="request-shell">
+        <div className="content-panel content-panel-strong request-main-panel">
+          <div className="filter-row filter-row-compact">
+            <button className={tab === 'reconciliation' ? 'filter-chip is-active' : 'filter-chip'} onClick={() => setTab('reconciliation')} type="button">
+              Reconciliation ({reconciliationRows.length})
+            </button>
+            <button className={tab === 'raw' ? 'filter-chip is-active' : 'filter-chip'} onClick={() => setTab('raw')} type="button">
+              Observed movement ({observedTransfers.length})
+            </button>
+          </div>
+
+          {tab === 'reconciliation' ? (
+            <div className="request-table compact-request-table payment-order-table">
+              <div className="request-table-head">
+                <span>Payment</span>
+                <span>Amount</span>
+                <span>Display state</span>
+                <span>Match status</span>
+                <span>Signature</span>
+                <span>Updated</span>
+              </div>
+              {reconciliationRows.length ? reconciliationRows.map((row) => (
+                <div className="request-table-row" key={row.transferRequestId}>
+                  <div className="request-row-button">
+                    <span className="request-cell-primary">
+                      <strong>{row.destination?.label ?? getDestinationLabel(row.destination, row.destinationWorkspaceAddress)}</strong>
+                      <small>{shortenAddress(row.transferRequestId, 8, 6)}</small>
+                    </span>
+                    <span className="request-cell-single">{formatRawUsdcCompact(row.amountRaw)} {(row.asset ?? 'USDC').toUpperCase()}</span>
+                    <span className="request-cell-single">
+                      <span className={`tone-pill tone-pill-${getSettlementTone(row)}`}>{getDisplayStateLabel(row)}</span>
+                    </span>
+                    <span className="request-cell-single">{row.match?.matchStatus ? formatLabel(row.match.matchStatus) : 'pending'}</span>
+                    <span className="request-cell-single">{row.match?.signature ? shortenAddress(row.match.signature, 8, 8) : 'N/A'}</span>
+                    <span className="request-cell-single">{formatTimestampCompact(row.match?.updatedAt ?? row.requestedAt)}</span>
+                  </div>
+                </div>
+              )) : <div className="empty-box compact">No reconciliation rows yet.</div>}
+            </div>
+          ) : (
+            <div className="request-table compact-request-table payment-order-table">
+              <div className="request-table-head">
+                <span>Source</span>
+                <span>Destination</span>
+                <span>Amount</span>
+                <span>Signature</span>
+                <span>Slot</span>
+                <span>Observed</span>
+                <span>Lag</span>
+              </div>
+              {observedTransfers.length ? observedTransfers.map((row) => (
+                <div className="request-table-row" key={row.transferId}>
+                  <div className="request-row-button">
+                    <span className="request-cell-single">{row.sourceWallet ? shortenAddress(row.sourceWallet, 8, 8) : 'unknown'}</span>
+                    <span className="request-cell-single">{row.destinationWallet ? shortenAddress(row.destinationWallet, 8, 8) : 'unknown'}</span>
+                    <span className="request-cell-single">{formatRawUsdcCompact(row.amountRaw)} {(row.asset ?? 'USDC').toUpperCase()}</span>
+                    <span className="request-cell-single">{shortenAddress(row.signature, 8, 8)}</span>
+                    <span className="request-cell-single">{row.slot.toLocaleString()}</span>
+                    <span className="request-cell-single">{formatTimestampCompact(row.eventTime)}</span>
+                    <span className="request-cell-single">{row.chainToWriteMs.toLocaleString()} ms</span>
+                  </div>
+                </div>
+              )) : <div className="empty-box compact">No observed transfers yet.</div>}
+            </div>
+          )}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+export function WorkspaceProofsPage({
+  paymentOrders,
+  paymentRuns,
+  onDownloadPaymentOrderProof,
+  onDownloadPaymentRunProof,
+}: {
+  paymentOrders: PaymentOrder[];
+  paymentRuns: PaymentRun[];
+  onDownloadPaymentOrderProof: (paymentOrderId: string) => Promise<void>;
+  onDownloadPaymentRunProof: (paymentRunId: string) => Promise<void>;
+}) {
+  const [tab, setTab] = useState<'needs_review' | 'ready' | 'exported'>('needs_review');
+  const proofNeedsReview = paymentOrders.filter((order) => ['partially_settled', 'exception', 'execution_recorded'].includes(order.derivedState));
+  const proofReadyOrders = paymentOrders.filter((order) => ['settled', 'closed'].includes(order.derivedState));
+  const exportedLikeOrders = paymentOrders.filter((order) => order.derivedState === 'closed');
+  const runNeedsReview = paymentRuns.filter((run) => ['exception', 'partially_settled'].includes(run.derivedState));
+  const runReady = paymentRuns.filter((run) => ['settled', 'closed'].includes(run.derivedState));
+  const runExported = paymentRuns.filter((run) => run.derivedState === 'closed');
+
+  const activeOrders = tab === 'needs_review' ? proofNeedsReview : tab === 'ready' ? proofReadyOrders : exportedLikeOrders;
+  const activeRuns = tab === 'needs_review' ? runNeedsReview : tab === 'ready' ? runReady : runExported;
+
+  return (
+    <div className="page-stack page-stack-tight">
+      <section className="section-headline section-headline-compact">
+        <div className="section-headline-copy">
+          <p className="eyebrow">Proofs</p>
+          <h1>Proof packets</h1>
+          <p className="section-copy">Preview structured proof or export JSON for finance review and audit handoff.</p>
+        </div>
+      </section>
+
+      <section className="content-grid content-grid-single">
+        <div className="workspace-pulse-strip workspace-pulse-strip-standalone">
+          <div className="workspace-pulse-strip-grid">
+            <Metric label="Needs review" value={String(proofNeedsReview.length + runNeedsReview.length)} />
+            <Metric label="Ready to export" value={String(proofReadyOrders.length + runReady.length)} />
+            <Metric label="Exported / closed" value={String(exportedLikeOrders.length + runExported.length)} />
+            <Metric label="Total proof records" value={String(paymentOrders.length + paymentRuns.length)} />
+          </div>
+        </div>
+      </section>
+
+      <section className="request-shell">
+        <div className="content-panel content-panel-strong request-main-panel">
+          <div className="filter-row filter-row-compact">
+            <button className={tab === 'needs_review' ? 'filter-chip is-active' : 'filter-chip'} onClick={() => setTab('needs_review')} type="button">
+              Needs review ({proofNeedsReview.length + runNeedsReview.length})
+            </button>
+            <button className={tab === 'ready' ? 'filter-chip is-active' : 'filter-chip'} onClick={() => setTab('ready')} type="button">
+              Ready to export ({proofReadyOrders.length + runReady.length})
+            </button>
+            <button className={tab === 'exported' ? 'filter-chip is-active' : 'filter-chip'} onClick={() => setTab('exported')} type="button">
+              Exported ({exportedLikeOrders.length + runExported.length})
+            </button>
+          </div>
+
+          <div className="panel-header surface-panel-header">
+            <div className="surface-panel-copy">
+              <h2 className="registry-section-title">Payment proofs <span className="registry-count-inline">[{activeOrders.length}]</span></h2>
+            </div>
+          </div>
+          <div className="request-table compact-request-table payment-order-table">
+            <div className="request-table-head">
+              <span>Payee</span>
+              <span>Destination</span>
+              <span>Amount</span>
+              <span>Readiness</span>
+              <span>Status</span>
+              <span>Action</span>
+            </div>
+            {activeOrders.length ? activeOrders.map((order) => (
+              <div className="request-table-row" key={order.paymentOrderId}>
+                <div className="request-row-button">
+                  <span className="request-cell-primary">
+                    <strong>{order.payee?.name ?? order.destination.label}</strong>
+                    <small>{shortenAddress(order.paymentOrderId, 8, 6)}</small>
+                  </span>
+                  <span className="request-cell-single">{order.destination.label}</span>
+                  <span className="request-cell-single">{formatRawUsdcCompact(order.amountRaw)} {(order.asset ?? 'USDC').toUpperCase()}</span>
+                  <span className="request-cell-single">{proofReadinessLine(order)}</span>
+                  <span className="request-cell-single"><span className={`tone-pill tone-pill-${getProgressTone(order.derivedState)}`}>{formatLabel(order.derivedState)}</span></span>
+                  <span className="request-cell-single">
+                    <button className="ghost-button compact-button" onClick={() => void onDownloadPaymentOrderProof(order.paymentOrderId)} type="button">
+                      Export
+                    </button>
+                  </span>
+                </div>
+              </div>
+            )) : <div className="empty-box compact">No payment proofs in this tab.</div>}
+          </div>
+
+          <div className="panel-header surface-panel-header">
+            <div className="surface-panel-copy">
+              <h2 className="registry-section-title">Run proofs <span className="registry-count-inline">[{activeRuns.length}]</span></h2>
+            </div>
+          </div>
+          <div className="request-table compact-request-table payment-order-table">
+            <div className="request-table-head">
+              <span>Run</span>
+              <span>Rows</span>
+              <span>Total</span>
+              <span>Readiness</span>
+              <span>Status</span>
+              <span>Action</span>
+            </div>
+            {activeRuns.length ? activeRuns.map((run) => (
+              <div className="request-table-row" key={run.paymentRunId}>
+                <div className="request-row-button">
+                  <span className="request-cell-primary">
+                    <strong>{run.runName}</strong>
+                    <small>{shortenAddress(run.paymentRunId, 8, 6)}</small>
+                  </span>
+                  <span className="request-cell-single">{run.totals.orderCount}</span>
+                  <span className="request-cell-single">{formatRawUsdcCompact(run.totals.totalAmountRaw)} USDC</span>
+                  <span className="request-cell-single">{run.derivedState === 'settled' || run.derivedState === 'closed' ? 'Ready' : 'Needs review'}</span>
+                  <span className="request-cell-single"><span className={`tone-pill tone-pill-${getRunTone(run.derivedState)}`}>{formatLabel(run.derivedState)}</span></span>
+                  <span className="request-cell-single">
+                    <button className="ghost-button compact-button" onClick={() => void onDownloadPaymentRunProof(run.paymentRunId)} type="button">
+                      Export
+                    </button>
+                  </span>
+                </div>
+              </div>
+            )) : <div className="empty-box compact">No run proofs in this tab.</div>}
+          </div>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+export function WorkspaceOpsPage({
+  currentWorkspace,
+  opsHealth,
+  exportJobs,
+  paymentOrders,
+  paymentRuns,
+  onDownloadReconciliationExport,
+  onDownloadExceptionsExport,
+  surface = 'ops',
+}: {
+  currentWorkspace: Workspace;
+  opsHealth: OpsHealth | null;
+  exportJobs: ExportJob[];
+  paymentOrders: PaymentOrder[];
+  paymentRuns: PaymentRun[];
+  onDownloadReconciliationExport: () => Promise<void>;
+  onDownloadExceptionsExport: () => Promise<void>;
+  surface?: 'ops' | 'proofs';
+}) {
+  const proofNeedsReviewCount = paymentOrders.filter((order) => ['exception', 'partially_settled', 'execution_recorded'].includes(order.derivedState)).length;
+  const proofReadyCount = paymentOrders.filter((order) => ['settled', 'closed'].includes(order.derivedState)).length;
+  const runProofReadyCount = paymentRuns.filter((run) => ['settled', 'closed'].includes(run.derivedState)).length;
+  return (
+    <div className="page-stack page-stack-tight">
+      <section className="section-headline section-headline-compact">
+        <div className="section-headline-copy">
+          <p className="eyebrow">{surface === 'proofs' ? 'Proofs' : 'Ops'}</p>
           <h1>{currentWorkspace.workspaceName}</h1>
-          <p className="section-copy">Check pipeline health, watch latency, and export records for operators and finance.</p>
+          <p className="section-copy">
+            {surface === 'proofs'
+              ? 'Proof packet workflow and export center for audit-ready records.'
+              : 'Check pipeline health, watch latency, and export records for operators and finance.'}
+          </p>
         </div>
       </section>
 
       <section className="content-grid content-grid-two">
+        {surface === 'ops' ? (
         <div className="content-panel content-panel-strong">
           <div className="panel-header">
             <div>
@@ -3400,12 +4708,52 @@ export function WorkspaceOpsPage({
             <div className="empty-box compact">Loading ops health…</div>
           )}
         </div>
+        ) : (
+        <div className="content-panel content-panel-strong">
+          <div className="panel-header">
+            <div>
+              <p className="eyebrow">Proof readiness</p>
+              <h2>Proof packet state</h2>
+            </div>
+          </div>
+          <div className="health-grid">
+            <div className="state-summary-card">
+              <span>Total exports</span>
+              <strong>{exportJobs.length}</strong>
+            </div>
+            <div className="state-summary-card">
+              <span>Completed</span>
+              <strong>{exportJobs.filter((job) => job.status === 'completed').length}</strong>
+            </div>
+            <div className="state-summary-card">
+              <span>Running</span>
+              <strong>{exportJobs.filter((job) => job.status === 'running').length}</strong>
+            </div>
+            <div className="state-summary-card">
+              <span>Failed</span>
+              <strong>{exportJobs.filter((job) => job.status === 'failed').length}</strong>
+            </div>
+            <div className="state-summary-card">
+              <span>Needs review</span>
+              <strong>{proofNeedsReviewCount}</strong>
+            </div>
+            <div className="state-summary-card">
+              <span>Ready (payments)</span>
+              <strong>{proofReadyCount}</strong>
+            </div>
+            <div className="state-summary-card">
+              <span>Ready (runs)</span>
+              <strong>{runProofReadyCount}</strong>
+            </div>
+          </div>
+        </div>
+        )}
 
         <div className="content-panel content-panel-soft">
           <div className="panel-header">
             <div>
-              <p className="eyebrow">Export</p>
-              <h2>Record export center</h2>
+              <p className="eyebrow">{surface === 'proofs' ? 'Proof exports' : 'Export'}</p>
+              <h2>{surface === 'proofs' ? 'Proof packet center' : 'Record export center'}</h2>
             </div>
           </div>
 
@@ -3496,6 +4844,77 @@ function getExceptionReasonLabel(reasonCode: string) {
   return reasonCode.replaceAll('_', ' ');
 }
 
+function executionReason(order: PaymentOrder) {
+  if (!order.sourceWorkspaceAddressId && order.derivedState === 'ready_for_execution') {
+    return 'Source wallet missing before signing.';
+  }
+  if (order.derivedState === 'ready_for_execution') return 'Approved and waiting for signature.';
+  if (order.derivedState === 'execution_recorded') return 'Signed and waiting for chain match.';
+  if (order.derivedState === 'exception') return 'Exception needs operator review.';
+  if (order.derivedState === 'partially_settled') return 'Partial match detected, verify settlement.';
+  return 'Waiting for execution step.';
+}
+
+function proofReadinessLine(order: PaymentOrder) {
+  if (order.derivedState === 'settled' || order.derivedState === 'closed') return 'Ready for export';
+  if (order.derivedState === 'execution_recorded') return 'Executed, waiting for settlement proof';
+  if (order.derivedState === 'partially_settled') return 'Partial settlement needs review';
+  if (order.derivedState === 'exception') return 'Exception context required';
+  return 'Not proof-ready yet';
+}
+
+function hoursSince(timestamp: string) {
+  const diff = Date.now() - new Date(timestamp).getTime();
+  return Math.max(0, Math.floor(diff / (1000 * 60 * 60)));
+}
+
+function commandPriorityScore(order: PaymentOrder) {
+  const stateWeight = order.derivedState === 'exception'
+    ? 8
+    : order.derivedState === 'pending_approval'
+      ? 7
+      : order.derivedState === 'partially_settled'
+        ? 6
+        : order.derivedState === 'execution_recorded'
+          ? 5
+          : order.derivedState === 'ready_for_execution'
+            ? 4
+            : order.derivedState === 'approved'
+              ? 3
+              : 1;
+  const amountWeight = Math.min(6, Math.floor(Number(order.amountRaw) / 1_000_000_000));
+  const ageWeight = Math.min(6, Math.floor(hoursSince(order.createdAt) / 4));
+  return stateWeight * 10 + amountWeight + ageWeight;
+}
+
+function commandPriorityReason(order: PaymentOrder) {
+  if (order.derivedState === 'exception') return 'Exception needs operator review.';
+  if (order.derivedState === 'pending_approval') return 'Waiting for approval decision.';
+  if (order.derivedState === 'ready_for_execution') return 'Approved and waiting for signature.';
+  if (order.derivedState === 'execution_recorded') return 'Signed and waiting for settlement.';
+  if (order.derivedState === 'partially_settled') return 'Partial settlement detected.';
+  if (hoursSince(order.createdAt) >= 24) return 'Aging over 24h.';
+  return 'Active operational item.';
+}
+
+function isActionableOrder(order: PaymentOrder) {
+  return !['settled', 'closed', 'cancelled'].includes(order.derivedState);
+}
+
+function executionAction(order: PaymentOrder) {
+  if (order.derivedState === 'ready_for_execution') return 'Open signer';
+  if (order.derivedState === 'execution_recorded') return 'Track settlement';
+  if (order.derivedState === 'exception' || order.derivedState === 'partially_settled') return 'Resolve issue';
+  return 'Open payment';
+}
+
+function getProgressTone(state: string) {
+  if (state === 'settled' || state === 'closed') return 'matched';
+  if (state === 'exception' || state === 'cancelled') return 'exception';
+  if (state === 'partially_settled') return 'partial';
+  return 'pending';
+}
+
 function formatLabel(value: string) {
   return value.replaceAll('_', ' ');
 }
@@ -3548,13 +4967,176 @@ function getApprovalStateLabel(state: string) {
   }
 }
 
-const PAYMENT_PROGRESS_STEPS = [
-  { index: 1, label: 'Draft' },
-  { index: 2, label: 'Approval' },
-  { index: 3, label: 'Prepare' },
-  { index: 4, label: 'Submit' },
-  { index: 5, label: 'Settle' },
-] as const;
+function RunProgressTracker({
+  steps,
+}: {
+  steps: Array<{ label: string; subtext: string; state: 'pending' | 'current' | 'complete' | 'blocked' }>;
+}) {
+  return (
+    <section className="run-progress" aria-label="Payment progress">
+      {steps.map((step, index) => (
+        <div className="run-progress-step-wrap" key={step.label}>
+          <div className={`run-progress-step run-progress-step-${step.state}`}>
+            <div className="run-progress-row">
+              <span className={`run-progress-dot run-progress-dot-${step.state}`} aria-hidden />
+              {index < steps.length - 1 ? <span className={`run-progress-line run-progress-line-${step.state}`} aria-hidden /> : null}
+            </div>
+            <div className="run-progress-copy">
+              <strong>{step.label}</strong>
+              <small>{step.subtext}</small>
+            </div>
+          </div>
+        </div>
+      ))}
+    </section>
+  );
+}
+
+function CompactStageEvents({ items }: { items: Array<{ title: string; body: ReactNode; time: string }> }) {
+  return (
+    <div className="compact-stage-events">
+      {items.map((item, index) => (
+        <div key={`${item.title}-${item.time}-${index}`} className="compact-stage-event">
+          <strong>{item.title}</strong>
+          <time title={formatTimestamp(item.time)}>{formatRelativeTime(item.time)}</time>
+          <p>{item.body}</p>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function buildWorkflow(order: PaymentOrder) {
+  if (order.derivedState === 'cancelled') {
+    return [
+      { label: 'Imported', subtext: '1 row', state: 'complete' as const },
+      { label: 'Review', subtext: 'Not started', state: 'pending' as const },
+      { label: 'Approved', subtext: 'Rejected', state: 'blocked' as const },
+      { label: 'Execute', subtext: 'Not started', state: 'pending' as const },
+      { label: 'Settle', subtext: 'Waiting', state: 'pending' as const },
+      { label: 'Prove', subtext: 'Pending', state: 'pending' as const },
+    ];
+  }
+
+  const currentIndexMap: Record<PaymentOrderState, number> = {
+    draft: 1,
+    pending_approval: 2,
+    approved: 3,
+    ready_for_execution: 3,
+    execution_recorded: 4,
+    settled: 5,
+    partially_settled: 4,
+    exception: 4,
+    cancelled: 4,
+    closed: 5,
+  };
+  const currentIndex = currentIndexMap[order.derivedState] ?? 1;
+  const blocked = order.derivedState === 'exception' || order.derivedState === 'partially_settled';
+  const reviewState = stepState(1, currentIndex, blocked);
+  const approveState = stepState(2, currentIndex, blocked);
+  const executeState = stepState(3, currentIndex, blocked);
+  const settleState = blocked ? ('blocked' as const) : stepState(4, currentIndex, false);
+  const proveState = order.derivedState === 'settled' || order.derivedState === 'closed'
+    ? ('complete' as const)
+    : blocked
+      ? ('blocked' as const)
+      : ('pending' as const);
+  const tenseLabel = (complete: boolean, past: string, present: string) => (complete ? past : present);
+  return [
+    { label: 'Imported', subtext: '1 row', state: 'complete' as const },
+    { label: tenseLabel(reviewState === 'complete', 'Reviewed', 'Review'), subtext: reviewState === 'complete' ? 'Reviewed' : 'Review pending', state: reviewState },
+    { label: tenseLabel(approveState === 'complete', 'Approved', 'Approve'), subtext: getApprovalLabel(order), state: approveState },
+    { label: tenseLabel(executeState === 'complete', 'Executed', 'Execute'), subtext: getExecutionLabel(order), state: executeState },
+    { label: tenseLabel(settleState === 'complete', 'Settled', 'Settle'), subtext: getSettlementLabel(order), state: settleState },
+    { label: tenseLabel(proveState === 'complete', 'Proven', 'Prove'), subtext: proveState === 'complete' ? 'Ready' : 'Pending', state: proveState },
+  ];
+}
+
+function buildRunWorkflow(run: PaymentRun) {
+  const state = run.derivedState;
+  const blocked = state === 'exception' || state === 'partially_settled';
+  const settled = state === 'settled' || state === 'closed';
+  const approvedDone = run.totals.approvedCount > 0 || settled || state === 'execution_recorded' || state === 'exception' || state === 'partially_settled';
+  const submittedDone = ['execution_recorded', 'partially_settled', 'settled', 'closed', 'exception'].includes(state);
+  const reviewedCurrent = !approvedDone && run.totals.pendingApprovalCount > 0;
+  const submittedCurrent = approvedDone && !submittedDone && !blocked;
+  const settledCurrent = !blocked && !settled && submittedDone;
+  const reviewedState = reviewedCurrent ? ('current' as const) : ('complete' as const);
+  const approvedState = approvedDone ? ('complete' as const) : ('pending' as const);
+  const submittedState = blocked ? ('blocked' as const) : submittedDone ? ('complete' as const) : submittedCurrent ? ('current' as const) : ('pending' as const);
+  const settledState = blocked ? ('blocked' as const) : settled ? ('complete' as const) : settledCurrent ? ('current' as const) : ('pending' as const);
+  const provenState = settled ? ('complete' as const) : ('pending' as const);
+  const tenseLabel = (complete: boolean, past: string, present: string) => (complete ? past : present);
+  const approvedRows = run.totals.approvedCount;
+  const rejectedRows = run.totals.cancelledCount;
+  const approvalSummary = rejectedRows > 0
+    ? `${approvedRows} approved / ${rejectedRows} rejected`
+    : approvedDone
+      ? 'Ready rows exist'
+      : 'Waiting';
+  return [
+    { label: 'Imported', subtext: `${run.totals.orderCount} rows`, state: 'complete' as const },
+    { label: tenseLabel(reviewedState === 'complete', 'Reviewed', 'Review'), subtext: run.totals.pendingApprovalCount ? `${run.totals.pendingApprovalCount} need approval` : 'Reviewed', state: reviewedState },
+    { label: tenseLabel(approvedState === 'complete', 'Approved', 'Approve'), subtext: approvalSummary, state: approvedState },
+    { label: tenseLabel(submittedState === 'complete', 'Executed', 'Execute'), subtext: blocked ? 'Needs review' : submittedDone ? 'On chain' : approvedDone ? 'Ready to sign and execute' : 'Pending', state: submittedState },
+    { label: tenseLabel(settledState === 'complete', 'Settled', 'Settle'), subtext: `${run.totals.settledCount}/${Math.max(run.totals.actionableCount, 1)} matched`, state: settledState },
+    { label: tenseLabel(provenState === 'complete', 'Proven', 'Prove'), subtext: settled ? 'Proof ready' : 'Pending', state: provenState },
+  ];
+}
+
+function stepState(stepIndex: number, currentIndex: number, blocked: boolean) {
+  if (blocked && stepIndex >= currentIndex) return 'blocked' as const;
+  if (stepIndex < currentIndex) return 'complete' as const;
+  if (stepIndex === currentIndex) return 'current' as const;
+  return 'pending' as const;
+}
+
+function paymentTimelineStates(state: PaymentOrderState): Record<'request' | 'approval' | 'execution' | 'settlement' | 'proof', 'complete' | 'current' | 'pending' | 'blocked'> {
+  if (state === 'cancelled') {
+    return { request: 'complete', approval: 'blocked', execution: 'pending', settlement: 'pending', proof: 'pending' };
+  }
+  const blocked = state === 'exception' || state === 'partially_settled';
+  const indexMap: Record<string, number> = {
+    draft: 0,
+    pending_approval: 1,
+    approved: 2,
+    ready_for_execution: 2,
+    execution_recorded: 3,
+    settled: 4,
+    closed: 4,
+  };
+  const current = Math.max(indexMap[state] ?? 0, 0);
+  const resolve = (idx: number) => stepState(idx, current, blocked);
+  return {
+    request: resolve(0),
+    approval: resolve(1),
+    execution: resolve(2),
+    settlement: resolve(3),
+    proof: state === 'settled' || state === 'closed' ? 'complete' : blocked ? 'blocked' : 'pending',
+  };
+}
+
+function getApprovalLabel(order: PaymentOrder) {
+  if (order.derivedState === 'pending_approval') return 'Needs approval';
+  if (order.derivedState === 'draft') return 'Draft';
+  if (order.derivedState === 'cancelled') return 'Rejected';
+  return 'Approved';
+}
+
+function getExecutionLabel(order: PaymentOrder) {
+  if (order.derivedState === 'ready_for_execution') return 'Ready to sign';
+  if (order.derivedState === 'execution_recorded') return 'Executed';
+  if (order.derivedState === 'settled' || order.derivedState === 'closed') return 'Completed';
+  if (order.derivedState === 'exception' || order.derivedState === 'partially_settled') return 'Needs review';
+  return 'Not started';
+}
+
+function getSettlementLabel(order: PaymentOrder) {
+  if (order.derivedState === 'settled' || order.derivedState === 'closed') return 'Matched';
+  if (order.derivedState === 'partially_settled') return 'Partial';
+  if (order.derivedState === 'exception') return 'Needs review';
+  return 'Waiting';
+}
 
 function getPaymentProgress(
   order: PaymentOrder,

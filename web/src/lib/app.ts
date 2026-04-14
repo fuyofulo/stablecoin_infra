@@ -5,10 +5,20 @@ export type Route =
   | { name: 'landingEditorial' }
   | { name: 'login' }
   | { name: 'dashboard' }
+  | { name: 'setup' }
   | { name: 'profile' }
   | { name: 'orgs' }
   | { name: 'organizationHome'; organizationId: string }
   | { name: 'workspaceHome'; workspaceId: string }
+  | { name: 'workspaceCommandCenter'; workspaceId: string }
+  | { name: 'workspacePayments'; workspaceId: string }
+  | { name: 'workspacePaymentDetail'; workspaceId: string; paymentOrderId: string }
+  | { name: 'workspaceRuns'; workspaceId: string }
+  | { name: 'workspaceRunDetail'; workspaceId: string; paymentRunId: string }
+  | { name: 'workspaceApprovals'; workspaceId: string }
+  | { name: 'workspaceExecution'; workspaceId: string }
+  | { name: 'workspaceSettlement'; workspaceId: string }
+  | { name: 'workspaceProofs'; workspaceId: string }
   | { name: 'workspaceRegistry'; workspaceId: string }
   | { name: 'workspacePolicy'; workspaceId: string }
   | { name: 'workspaceRequests'; workspaceId: string }
@@ -118,6 +128,7 @@ export function parseRoute(pathname: string): Route {
   if (pathname === '/landing/editorial') return { name: 'landingEditorial' };
   if (pathname === '/landing/brand-film') return { name: 'landingEditorial' };
   if (pathname === '/login') return { name: 'login' };
+  if (pathname === '/setup') return { name: 'setup' };
   if (pathname === '/profile') return { name: 'profile' };
   if (pathname === '/orgs') return { name: 'orgs' };
 
@@ -126,10 +137,29 @@ export function parseRoute(pathname: string): Route {
     return { name: 'organizationHome', organizationId: organizationMatch[1] };
   }
 
-  const workspaceMatch = pathname.match(/^\/workspaces\/([0-9a-f-]+)\/(home|setup|registry|policy|requests|exceptions|ops)$/i);
+  const paymentDetailMatch = pathname.match(/^\/workspaces\/([0-9a-f-]+)\/payments\/([0-9a-f-]+)$/i);
+  if (paymentDetailMatch) {
+    const [, workspaceId, paymentOrderId] = paymentDetailMatch;
+    return { name: 'workspacePaymentDetail', workspaceId, paymentOrderId };
+  }
+
+  const runDetailMatch = pathname.match(/^\/workspaces\/([0-9a-f-]+)\/runs\/([0-9a-f-]+)$/i);
+  if (runDetailMatch) {
+    const [, workspaceId, paymentRunId] = runDetailMatch;
+    return { name: 'workspaceRunDetail', workspaceId, paymentRunId };
+  }
+
+  const workspaceMatch = pathname.match(/^\/workspaces\/([0-9a-f-]+)\/(home|command|payments|runs|approvals|execution|settlement|proofs|setup|registry|policy|requests|exceptions|ops)$/i);
   if (workspaceMatch) {
     const [, workspaceId, page] = workspaceMatch;
     if (page === 'home') return { name: 'workspaceHome', workspaceId };
+    if (page === 'command') return { name: 'workspaceCommandCenter', workspaceId };
+    if (page === 'payments') return { name: 'workspacePayments', workspaceId };
+    if (page === 'runs') return { name: 'workspaceRuns', workspaceId };
+    if (page === 'approvals') return { name: 'workspaceApprovals', workspaceId };
+    if (page === 'execution') return { name: 'workspaceExecution', workspaceId };
+    if (page === 'settlement') return { name: 'workspaceSettlement', workspaceId };
+    if (page === 'proofs') return { name: 'workspaceProofs', workspaceId };
     if (page === 'policy') return { name: 'workspacePolicy', workspaceId };
     if (page === 'requests') return { name: 'workspaceRequests', workspaceId };
     if (page === 'exceptions') return { name: 'workspaceExceptions', workspaceId };
@@ -148,6 +178,8 @@ export function routeToPath(route: Route) {
       return '/login';
     case 'dashboard':
       return '/';
+    case 'setup':
+      return '/setup';
     case 'profile':
       return '/profile';
     case 'orgs':
@@ -156,6 +188,24 @@ export function routeToPath(route: Route) {
       return `/orgs/${route.organizationId}`;
     case 'workspaceHome':
       return `/workspaces/${route.workspaceId}/home`;
+    case 'workspaceCommandCenter':
+      return `/workspaces/${route.workspaceId}/command`;
+    case 'workspacePayments':
+      return `/workspaces/${route.workspaceId}/payments`;
+    case 'workspacePaymentDetail':
+      return `/workspaces/${route.workspaceId}/payments/${route.paymentOrderId}`;
+    case 'workspaceRuns':
+      return `/workspaces/${route.workspaceId}/runs`;
+    case 'workspaceRunDetail':
+      return `/workspaces/${route.workspaceId}/runs/${route.paymentRunId}`;
+    case 'workspaceApprovals':
+      return `/workspaces/${route.workspaceId}/approvals`;
+    case 'workspaceExecution':
+      return `/workspaces/${route.workspaceId}/execution`;
+    case 'workspaceSettlement':
+      return `/workspaces/${route.workspaceId}/settlement`;
+    case 'workspaceProofs':
+      return `/workspaces/${route.workspaceId}/proofs`;
     case 'workspaceRegistry':
       return `/workspaces/${route.workspaceId}/registry`;
     case 'workspacePolicy':

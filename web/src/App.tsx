@@ -22,11 +22,14 @@ import {
   OrganizationsPage,
   ProfilePage,
 } from './screens/general-pages';
+import { AppSidebar } from './components/sidebar';
 import { LandingEditorialPage } from './screens/landing-editorial';
 import {
   WorkspaceHomePage,
   WorkspaceExceptionsPage,
   WorkspaceOpsPage,
+  WorkspaceProofsPage,
+  WorkspaceSettlementPage,
   WorkspacePolicyPage,
   WorkspaceRegistryPage,
   WorkspaceRequestsPage,
@@ -44,6 +47,7 @@ import type {
   PaymentExecutionPreparation,
   PaymentExecutionPacket,
   PaymentOrder,
+  Payee,
   PaymentRequest,
   PaymentRun,
   PaymentRunExecutionPreparation,
@@ -57,36 +61,6 @@ import type {
 type AuthStatus = 'booting' | 'anonymous' | 'authenticated';
 const WORKSPACE_STATIC_REFRESH_INTERVAL_MS = 10_000;
 const RECONCILIATION_LIVE_REFRESH_INTERVAL_MS = 2_000;
-
-function ThemeIcon({ theme }: { theme: Theme }) {
-  if (theme === 'dark') {
-    return (
-      <svg aria-hidden="true" className="theme-icon" viewBox="0 0 24 24">
-        <path
-          d="M12 4.5V2m0 20v-2.5M6.34 6.34 4.57 4.57m14.86 14.86-1.77-1.77M4.5 12H2m20 0h-2.5M6.34 17.66l-1.77 1.77m14.86-14.86-1.77 1.77M12 17a5 5 0 1 0 0-10 5 5 0 0 0 0 10Z"
-          fill="none"
-          stroke="currentColor"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          strokeWidth="1.5"
-        />
-      </svg>
-    );
-  }
-
-  return (
-    <svg aria-hidden="true" className="theme-icon" viewBox="0 0 24 24">
-      <path
-        d="M21 12.8A9 9 0 1 1 11.2 3a7.2 7.2 0 0 0 9.8 9.8Z"
-        fill="none"
-        stroke="currentColor"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        strokeWidth="1.5"
-      />
-    </svg>
-  );
-}
 
 function downloadJson(fileName: string, payload: unknown) {
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
@@ -116,13 +90,14 @@ function resetViewport(sectionId?: string) {
 }
 
 export function App() {
-  const [theme, setTheme] = useState<Theme>(() => loadTheme());
+  const [theme] = useState<Theme>(() => loadTheme());
   const [authStatus, setAuthStatus] = useState<AuthStatus>('booting');
   const [session, setSession] = useState<AuthenticatedSession | null>(null);
   const [route, setRoute] = useState<Route>(() => parseRoute(window.location.pathname));
   const [addresses, setAddresses] = useState<WorkspaceAddress[]>([]);
   const [counterparties, setCounterparties] = useState<Counterparty[]>([]);
   const [destinations, setDestinations] = useState<Destination[]>([]);
+  const [payees, setPayees] = useState<Payee[]>([]);
   const [paymentRequests, setPaymentRequests] = useState<PaymentRequest[]>([]);
   const [paymentOrders, setPaymentOrders] = useState<PaymentOrder[]>([]);
   const [paymentRuns, setPaymentRuns] = useState<PaymentRun[]>([]);
@@ -148,6 +123,15 @@ export function App() {
 
   const currentWorkspaceId =
     route.name === 'workspaceHome'
+    || route.name === 'workspaceCommandCenter'
+    || route.name === 'workspacePayments'
+    || route.name === 'workspacePaymentDetail'
+    || route.name === 'workspaceRuns'
+    || route.name === 'workspaceRunDetail'
+    || route.name === 'workspaceApprovals'
+    || route.name === 'workspaceExecution'
+    || route.name === 'workspaceSettlement'
+    || route.name === 'workspaceProofs'
     || route.name === 'workspaceRegistry'
     || route.name === 'workspacePolicy'
     || route.name === 'workspaceRequests'
@@ -167,6 +151,12 @@ export function App() {
   const currentRole = currentWorkspaceOrganization?.role ?? currentOrganization?.role ?? null;
   const canManageCurrentOrg = isAdminRole(currentRole);
   const sidebarWorkspace = currentWorkspace ?? currentOrganization?.workspaces[0] ?? null;
+  const workspaceContexts = session
+    ? session.organizations.flatMap((organization) => organization.workspaces.map((workspace) => ({ organization, workspace })))
+    : [];
+  const paymentsIncompleteCount = paymentOrders.filter((order) => !['settled', 'closed', 'cancelled'].includes(order.derivedState)).length;
+  const approvalPendingCount = paymentOrders.filter((order) => order.derivedState === 'pending_approval').length;
+  const executionQueueCount = paymentOrders.filter((order) => ['approved', 'ready_for_execution', 'execution_recorded', 'partially_settled', 'exception'].includes(order.derivedState)).length;
 
   useEffect(() => {
     const onPopstate = () => {
@@ -210,7 +200,18 @@ export function App() {
     if (
       authStatus !== 'authenticated'
       || !currentWorkspaceId
-      || (route.name !== 'workspaceHome' && route.name !== 'workspaceRequests')
+      || (
+        route.name !== 'workspaceHome'
+        && route.name !== 'workspaceCommandCenter'
+        && route.name !== 'workspaceSettlement'
+        && route.name !== 'workspaceRequests'
+        && route.name !== 'workspacePayments'
+        && route.name !== 'workspacePaymentDetail'
+        && route.name !== 'workspaceRuns'
+        && route.name !== 'workspaceRunDetail'
+        && route.name !== 'workspaceApprovals'
+        && route.name !== 'workspaceExecution'
+      )
     ) {
       return;
     }
@@ -228,7 +229,18 @@ export function App() {
     if (
       authStatus !== 'authenticated'
       || !currentWorkspaceId
-      || (route.name !== 'workspaceHome' && route.name !== 'workspaceRequests')
+      || (
+        route.name !== 'workspaceHome'
+        && route.name !== 'workspaceCommandCenter'
+        && route.name !== 'workspaceSettlement'
+        && route.name !== 'workspaceRequests'
+        && route.name !== 'workspacePayments'
+        && route.name !== 'workspacePaymentDetail'
+        && route.name !== 'workspaceRuns'
+        && route.name !== 'workspaceRunDetail'
+        && route.name !== 'workspaceApprovals'
+        && route.name !== 'workspaceExecution'
+      )
     ) {
       return;
     }
@@ -237,7 +249,15 @@ export function App() {
       void Promise.all([
         loadObservedTransfersData(currentWorkspaceId, { silent: true }),
         loadReconciliationData(currentWorkspaceId, { silent: true }),
-        route.name === 'workspaceRequests'
+        (
+          route.name === 'workspaceRequests'
+          || route.name === 'workspacePayments'
+          || route.name === 'workspacePaymentDetail'
+          || route.name === 'workspaceRuns'
+          || route.name === 'workspaceRunDetail'
+          || route.name === 'workspaceApprovals'
+          || route.name === 'workspaceExecution'
+        )
           ? loadPaymentOrdersData(currentWorkspaceId)
           : Promise.resolve(),
       ]);
@@ -259,7 +279,7 @@ export function App() {
     if (
       authStatus !== 'authenticated'
       || !currentWorkspaceId
-      || (route.name !== 'workspaceExceptions' && route.name !== 'workspaceOps')
+      || (route.name !== 'workspaceExceptions' && route.name !== 'workspaceOps' && route.name !== 'workspaceProofs')
     ) {
       return;
     }
@@ -268,7 +288,7 @@ export function App() {
   }, [authStatus, currentWorkspaceId, route.name]);
 
   useEffect(() => {
-    if (authStatus !== 'authenticated' || !currentWorkspaceId || route.name !== 'workspaceOps') {
+    if (authStatus !== 'authenticated' || !currentWorkspaceId || (route.name !== 'workspaceOps' && route.name !== 'workspaceProofs')) {
       return;
     }
 
@@ -279,6 +299,7 @@ export function App() {
     setAddresses([]);
     setCounterparties([]);
     setDestinations([]);
+    setPayees([]);
     setPaymentRequests([]);
     setPaymentOrders([]);
     setPaymentRuns([]);
@@ -371,6 +392,7 @@ export function App() {
         nextAddresses,
         nextCounterparties,
         nextDestinations,
+        nextPayees,
         nextPaymentRequests,
         nextPaymentOrders,
         nextPaymentRuns,
@@ -381,6 +403,7 @@ export function App() {
         api.listAddresses(workspaceId),
         api.listCounterparties(workspaceId),
         api.listDestinations(workspaceId),
+        api.listPayees(workspaceId),
         api.listPaymentRequests(workspaceId),
         api.listPaymentOrders(workspaceId),
         api.listPaymentRuns(workspaceId),
@@ -392,6 +415,7 @@ export function App() {
       setAddresses(nextAddresses.items);
       setCounterparties(nextCounterparties.items);
       setDestinations(nextDestinations.items);
+      setPayees(nextPayees.items);
       setPaymentRequests(nextPaymentRequests.items);
       setPaymentOrders(nextPaymentOrders.items);
       setPaymentRuns(nextPaymentRuns.items);
@@ -503,7 +527,7 @@ export function App() {
       loadObservedTransfersData(workspaceId),
       loadReconciliationData(workspaceId),
       loadExceptionData(workspaceId),
-      ...(route.name === 'workspaceOps' ? [loadOpsData(workspaceId)] : []),
+      ...((route.name === 'workspaceOps' || route.name === 'workspaceProofs') ? [loadOpsData(workspaceId)] : []),
     ]);
   }
 
@@ -753,6 +777,18 @@ export function App() {
     }
   }
 
+  async function handleDeletePaymentRun(paymentRunId: string) {
+    if (!currentWorkspaceId) return;
+
+    try {
+      setErrorMessage(null);
+      await api.deletePaymentRun(currentWorkspaceId, paymentRunId);
+      await loadWorkspace(currentWorkspaceId);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Failed to delete payment run');
+    }
+  }
+
   async function handleCreatePaymentOrderExecution(paymentOrderId: string, event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!currentWorkspaceId) return;
@@ -968,6 +1004,32 @@ export function App() {
     }
   }
 
+  async function handleCreatePayee(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!currentWorkspaceId) return;
+    const form = event.currentTarget;
+    const formData = new FormData(form);
+    const name = String(formData.get('name') ?? '').trim();
+    const defaultDestinationId = String(formData.get('defaultDestinationId') ?? '').trim();
+    const externalReference = String(formData.get('externalReference') ?? '').trim();
+    const notes = String(formData.get('notes') ?? '').trim();
+    if (!name) return;
+
+    try {
+      setErrorMessage(null);
+      await api.createPayee(currentWorkspaceId, {
+        name,
+        defaultDestinationId: defaultDestinationId || null,
+        externalReference: externalReference || null,
+        notes: notes || null,
+      });
+      form.reset();
+      await loadWorkspaceStaticData(currentWorkspaceId);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Failed to create payee');
+    }
+  }
+
   async function handleUpdateDestination(
     destinationId: string,
     event: FormEvent<HTMLFormElement>,
@@ -1134,11 +1196,17 @@ export function App() {
       setErrorMessage(null);
       await api.updateApprovalPolicy(currentWorkspaceId, {
         policyName: String(formData.get('policyName') ?? '').trim() || undefined,
-        isActive: String(formData.get('isActive') ?? 'true') !== 'false',
+        isActive: formData.get('isActive') === 'on' || String(formData.get('isActive') ?? 'true') !== 'false',
         ruleJson: {
-          requireTrustedDestination: String(formData.get('requireTrustedDestination') ?? 'true') === 'true',
-          requireApprovalForExternal: String(formData.get('requireApprovalForExternal') ?? 'false') === 'true',
-          requireApprovalForInternal: String(formData.get('requireApprovalForInternal') ?? 'false') === 'true',
+          requireTrustedDestination:
+            formData.get('requireTrustedDestination') === 'on'
+            || String(formData.get('requireTrustedDestination') ?? 'true') === 'true',
+          requireApprovalForExternal:
+            formData.get('requireApprovalForExternal') === 'on'
+            || String(formData.get('requireApprovalForExternal') ?? 'false') === 'true',
+          requireApprovalForInternal:
+            formData.get('requireApprovalForInternal') === 'on'
+            || String(formData.get('requireApprovalForInternal') ?? 'false') === 'true',
           externalApprovalThresholdRaw: String(formData.get('externalApprovalThresholdRaw') ?? '').trim() || undefined,
           internalApprovalThresholdRaw: String(formData.get('internalApprovalThresholdRaw') ?? '').trim() || undefined,
         },
@@ -1184,7 +1252,7 @@ export function App() {
         transferRequestId
           ? loadReconciliationDetail(currentWorkspaceId, transferRequestId, { silent: true })
           : Promise.resolve(),
-        route.name === 'workspaceOps'
+        (route.name === 'workspaceOps' || route.name === 'workspaceProofs')
           ? loadOpsData(currentWorkspaceId)
           : Promise.resolve(),
       ]);
@@ -1215,7 +1283,7 @@ export function App() {
         transferRequestId
           ? loadReconciliationDetail(currentWorkspaceId, transferRequestId, { silent: true })
           : Promise.resolve(),
-        route.name === 'workspaceOps'
+        (route.name === 'workspaceOps' || route.name === 'workspaceProofs')
           ? loadOpsData(currentWorkspaceId)
           : Promise.resolve(),
       ]);
@@ -1247,7 +1315,7 @@ export function App() {
         transferRequestId
           ? loadReconciliationDetail(currentWorkspaceId, transferRequestId, { silent: true })
           : Promise.resolve(),
-        route.name === 'workspaceOps'
+        (route.name === 'workspaceOps' || route.name === 'workspaceProofs')
           ? loadOpsData(currentWorkspaceId)
           : Promise.resolve(),
       ]);
@@ -1386,7 +1454,7 @@ export function App() {
   }
 
   function handleOpenWorkspace(workspaceId: string) {
-    navigate({ name: 'workspaceHome', workspaceId }, setRoute);
+    navigate({ name: 'workspaceCommandCenter', workspaceId }, setRoute);
     resetViewport();
   }
 
@@ -1401,7 +1469,32 @@ export function App() {
   }
 
   function handleOpenWorkspaceRequests(workspaceId: string) {
-    navigate({ name: 'workspaceRequests', workspaceId }, setRoute);
+    navigate({ name: 'workspacePayments', workspaceId }, setRoute);
+    resetViewport();
+  }
+
+  function handleOpenWorkspaceRuns(workspaceId: string) {
+    navigate({ name: 'workspaceRuns', workspaceId }, setRoute);
+    resetViewport();
+  }
+
+  function handleOpenPaymentDetail(workspaceId: string, paymentOrderId: string) {
+    navigate({ name: 'workspacePaymentDetail', workspaceId, paymentOrderId }, setRoute);
+    resetViewport();
+  }
+
+  function handleOpenRunDetail(workspaceId: string, paymentRunId: string) {
+    navigate({ name: 'workspaceRunDetail', workspaceId, paymentRunId }, setRoute);
+    resetViewport();
+  }
+
+  function handleOpenWorkspaceApprovals(workspaceId: string) {
+    navigate({ name: 'workspaceApprovals', workspaceId }, setRoute);
+    resetViewport();
+  }
+
+  function handleOpenWorkspaceExecution(workspaceId: string) {
+    navigate({ name: 'workspaceExecution', workspaceId }, setRoute);
     resetViewport();
   }
 
@@ -1411,7 +1504,7 @@ export function App() {
   }
 
   function handleOpenWorkspaceOps(workspaceId: string) {
-    navigate({ name: 'workspaceOps', workspaceId }, setRoute);
+    navigate({ name: 'workspaceProofs', workspaceId }, setRoute);
     resetViewport();
   }
 
@@ -1442,200 +1535,35 @@ export function App() {
   return (
     <div className="app-root">
       <GridBackdrop />
-      <div className="shell">
-        <header className="topbar">
-          <div className="topbar-brand">
-            <strong>[project name]</strong>
-            <span className="status-chip">
-              {currentWorkspace ? currentWorkspace.workspaceName : currentOrganization ? currentOrganization.organizationName : 'personal view'}
-            </span>
-          </div>
-
-          <nav className="topbar-nav" aria-label="Global navigation">
-            <button
-              className={route.name === 'dashboard' ? 'topbar-link is-active' : 'topbar-link'}
-              onClick={() => navigate({ name: 'dashboard' }, setRoute)}
-              type="button"
-            >
-              Dashboard
-            </button>
-              <button
-                className={
-                route.name === 'orgs'
-                || route.name === 'organizationHome'
-                || route.name === 'workspaceHome'
-                || route.name === 'workspaceRegistry'
-                || route.name === 'workspacePolicy'
-                || route.name === 'workspaceRequests'
-                || route.name === 'workspaceExceptions'
-                || route.name === 'workspaceOps'
-                  ? 'topbar-link is-active'
-                  : 'topbar-link'
-                }
-              onClick={() => navigate({ name: 'orgs' }, setRoute)}
-              type="button"
-            >
-              Orgs
-            </button>
-            <button
-              className={route.name === 'profile' ? 'topbar-link is-active' : 'topbar-link'}
-              onClick={() => navigate({ name: 'profile' }, setRoute)}
-              type="button"
-            >
-              Profile
-            </button>
-          </nav>
-
-          <div className="topbar-meta">
-            <button
-              aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-              className="ghost-button icon-button"
-              onClick={() => setTheme((current) => (current === 'dark' ? 'light' : 'dark'))}
-              title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-              type="button"
-            >
-              <ThemeIcon theme={theme} />
-            </button>
-            <span className="topbar-user">{session.user.displayName}</span>
-            <button
-              className="ghost-button danger-button"
-              onClick={handleLogout}
-              type="button"
-            >
-              Logout
-            </button>
-          </div>
-        </header>
-
-        <div className={currentOrganization ? 'shell-grid shell-grid-with-rail' : 'shell-grid shell-grid-full'}>
-          {currentOrganization ? (
-            <aside className="rail org-rail">
-              <div className="rail-section">
-                <div className="section-header">
-                  <span>Org</span>
-                  <small>{currentOrganization.role}</small>
-                </div>
-                <label className="field rail-field">
-                  <span>Select org</span>
-                  <select
-                    aria-label="Select organization"
-                    value={currentOrganization.organizationId}
-                    onChange={(event) => handleOpenOrganization(event.target.value)}
-                  >
-                    {session.organizations.map((organization) => (
-                      <option key={organization.organizationId} value={organization.organizationId}>
-                        {organization.organizationName}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <div className="stack-list">
-                  <button
-                    className={
-                      route.name === 'organizationHome'
-                        ? 'rail-link is-active'
-                        : 'rail-link'
-                    }
-                    onClick={() => handleOpenOrganization(currentOrganization.organizationId)}
-                    type="button"
-                  >
-                    Dashboard
-                  </button>
-                </div>
-              </div>
-
-              {sidebarWorkspace ? (
-                <div className="rail-section">
-                <div className="section-header">
-                  <span>Current watch system</span>
-                  <small>{sidebarWorkspace.workspaceName}</small>
-                </div>
-                <div className="stack-list">
-                  <button
-                    className={route.name === 'workspaceHome' ? 'rail-link is-active' : 'rail-link'}
-                    onClick={() => handleOpenWorkspace(sidebarWorkspace.workspaceId)}
-                    type="button"
-                  >
-                    Watch system
-                  </button>
-                  <button
-                    className={route.name === 'workspaceRegistry' ? 'rail-link is-active' : 'rail-link'}
-                    onClick={() => handleOpenWorkspaceRegistry(sidebarWorkspace.workspaceId)}
-                    type="button"
-                  >
-                    Address book
-                  </button>
-                  <button
-                    className={route.name === 'workspacePolicy' ? 'rail-link is-active' : 'rail-link'}
-                    onClick={() => handleOpenWorkspacePolicy(sidebarWorkspace.workspaceId)}
-                    type="button"
-                  >
-                    Approval policy
-                  </button>
-                  <button
-                    className={route.name === 'workspaceRequests' ? 'rail-link is-active' : 'rail-link'}
-                    onClick={() => handleOpenWorkspaceRequests(sidebarWorkspace.workspaceId)}
-                    type="button"
-                  >
-                    Payment requests
-                  </button>
-                  <button
-                    className={route.name === 'workspaceExceptions' ? 'rail-link is-active' : 'rail-link'}
-                    onClick={() => handleOpenWorkspaceExceptions(sidebarWorkspace.workspaceId)}
-                    type="button"
-                  >
-                    Exceptions
-                  </button>
-                  <button
-                    className={route.name === 'workspaceOps' ? 'rail-link is-active' : 'rail-link'}
-                    onClick={() => handleOpenWorkspaceOps(sidebarWorkspace.workspaceId)}
-                    type="button"
-                  >
-                    Ops
-                  </button>
-                </div>
-              </div>
-              ) : null}
-
-              <div className="rail-section">
-                <div className="section-header">
-                  <span>Watch systems</span>
-                  <small>{currentOrganization.workspaces.length}</small>
-                </div>
-                <div className="stack-list">
-                  {currentOrganization.workspaces.length ? (
-                    currentOrganization.workspaces.map((workspace) => (
-                      <button
-                        key={workspace.workspaceId}
-                        className={
-                          currentWorkspaceId === workspace.workspaceId &&
-                          (
-                            route.name === 'workspaceHome'
-                            || route.name === 'workspaceRegistry'
-                            || route.name === 'workspacePolicy'
-                            || route.name === 'workspaceRequests'
-                            || route.name === 'workspaceExceptions'
-                            || route.name === 'workspaceOps'
-                          )
-                            ? 'workspace-link is-active'
-                            : 'workspace-link'
-                        }
-                        onClick={() => handleOpenWorkspace(workspace.workspaceId)}
-                        type="button"
-                      >
-                        <strong>{workspace.workspaceName}</strong>
-                        <small>{workspace.status}</small>
-                      </button>
-                    ))
-                  ) : (
-                    <div className="empty-box compact">No workspaces yet.</div>
-                  )}
-                </div>
-              </div>
-            </aside>
-          ) : null}
-
-          <main className="main-panel">
+      <div className="app-shell">
+        <AppSidebar
+          session={session}
+          workspaceContexts={workspaceContexts}
+          activeWorkspaceId={currentWorkspaceId ?? undefined}
+          route={route}
+          paymentsIncompleteCount={paymentsIncompleteCount}
+          approvalPendingCount={approvalPendingCount}
+          executionQueueCount={executionQueueCount}
+          onWorkspaceSwitch={handleOpenWorkspace}
+          onOpenSection={(section) => {
+            const workspaceId = currentWorkspaceId ?? sidebarWorkspace?.workspaceId;
+            if (!workspaceId) return;
+            if (section === 'command') handleOpenWorkspace(workspaceId);
+            if (section === 'payments') handleOpenWorkspaceRequests(workspaceId);
+            if (section === 'approvals') handleOpenWorkspaceApprovals(workspaceId);
+            if (section === 'execution') handleOpenWorkspaceExecution(workspaceId);
+            if (section === 'settlement') navigate({ name: 'workspaceSettlement', workspaceId }, setRoute);
+            if (section === 'exceptions') handleOpenWorkspaceExceptions(workspaceId);
+            if (section === 'proofs') handleOpenWorkspaceOps(workspaceId);
+            if (section === 'registry') handleOpenWorkspaceRegistry(workspaceId);
+            if (section === 'policy') handleOpenWorkspacePolicy(workspaceId);
+          }}
+          onOpenProfile={() => navigate({ name: 'profile' }, setRoute)}
+          onOpenSetup={() => navigate({ name: 'setup' }, setRoute)}
+          onLogout={handleLogout}
+        />
+        <main className="main-surface">
+          <section className="main-panel">
             {errorMessage ? <div className="error-banner">{errorMessage}</div> : null}
 
             {route.name === 'dashboard' ? (
@@ -1654,6 +1582,14 @@ export function App() {
               />
             ) : null}
 
+            {route.name === 'setup' ? (
+              <OrganizationsPage
+                onCreateOrganization={handleCreateOrganization}
+                onOpenOrganization={handleOpenOrganization}
+                session={session}
+              />
+            ) : null}
+
             {route.name === 'organizationHome' && currentOrganization ? (
               <OrganizationPage
                 organization={currentOrganization}
@@ -1665,59 +1601,101 @@ export function App() {
 
             {route.name === 'profile' ? <ProfilePage session={session} /> : null}
 
-            {route.name === 'workspaceHome' && currentWorkspace ? (
-              <WorkspaceHomePage
-                addresses={addresses}
-                currentWorkspace={currentWorkspace}
-                currentRole={currentRole}
-                isLoading={isLoadingWorkspace}
-                observedTransfers={observedTransfers}
-                onAddExceptionNote={handleAddExceptionNote}
-                onAddRequestNote={handleAddRequestNote}
-                onApplyExceptionAction={handleApplyExceptionAction}
-                onApplyApprovalDecision={handleApprovalDecision}
-                onCreateExecutionRecord={handleCreateExecutionRecord}
-                onChangeReconciliationFilter={setReconciliationFilter}
-                onDownloadAuditExport={handleDownloadAuditExport}
-                onSelectObservedTransfer={handleSelectObservedTransfer}
-                onSelectReconciliation={(row) => void handleSelectReconciliation(row)}
-                onTransitionRequest={handleTransitionRequest}
-                onUpdateExecutionRecord={handleUpdateExecutionRecord}
-                reconciliationFilter={reconciliationFilter}
-                reconciliationRows={reconciliationRows}
-                selectedReconciliationDetail={selectedReconciliationDetail}
-                selectedObservedTransfer={selectedObservedTransfer}
-                transferRequests={transferRequests}
-                isLoadingReconciliationDetail={isLoadingReconciliationDetail}
-              />
+            {(route.name === 'workspaceHome' || route.name === 'workspaceCommandCenter') && currentWorkspace ? (
+              <div className="request-detail-page">
+                <div className="request-main-panel request-detail-surface">
+                  <WorkspaceHomePage
+                    addresses={addresses}
+                    currentWorkspace={currentWorkspace}
+                    currentRole={currentRole}
+                    isLoading={isLoadingWorkspace}
+                    paymentOrders={paymentOrders}
+                    paymentRuns={paymentRuns}
+                    exceptions={exceptions}
+                    observedTransfers={observedTransfers}
+                    onAddExceptionNote={handleAddExceptionNote}
+                    onAddRequestNote={handleAddRequestNote}
+                    onApplyExceptionAction={handleApplyExceptionAction}
+                    onApplyApprovalDecision={handleApprovalDecision}
+                    onCreateExecutionRecord={handleCreateExecutionRecord}
+                    onChangeReconciliationFilter={setReconciliationFilter}
+                    onDownloadAuditExport={handleDownloadAuditExport}
+                    onSelectObservedTransfer={handleSelectObservedTransfer}
+                    onSelectReconciliation={(row) => void handleSelectReconciliation(row)}
+                    onTransitionRequest={handleTransitionRequest}
+                    onUpdateExecutionRecord={handleUpdateExecutionRecord}
+                    onOpenApprovals={() => handleOpenWorkspaceApprovals(currentWorkspace.workspaceId)}
+                    onOpenExecution={() => handleOpenWorkspaceExecution(currentWorkspace.workspaceId)}
+                    onOpenExceptions={() => handleOpenWorkspaceExceptions(currentWorkspace.workspaceId)}
+                    onOpenPayments={() => handleOpenWorkspaceRequests(currentWorkspace.workspaceId)}
+                    reconciliationFilter={reconciliationFilter}
+                    reconciliationRows={reconciliationRows}
+                    selectedReconciliationDetail={selectedReconciliationDetail}
+                    selectedObservedTransfer={selectedObservedTransfer}
+                    transferRequests={transferRequests}
+                    isLoadingReconciliationDetail={isLoadingReconciliationDetail}
+                    surface="command"
+                  />
+                </div>
+              </div>
+            ) : null}
+
+            {route.name === 'workspaceSettlement' && currentWorkspace ? (
+              <div className="request-detail-page">
+                <div className="request-main-panel request-detail-surface">
+                  <WorkspaceSettlementPage
+                    currentWorkspace={currentWorkspace}
+                    exceptions={exceptions}
+                    reconciliationRows={reconciliationRows}
+                    observedTransfers={observedTransfers}
+                  />
+                </div>
+              </div>
             ) : null}
 
             {route.name === 'workspaceRegistry' && currentWorkspace ? (
-              <WorkspaceRegistryPage
-                addresses={addresses}
-                canManage={canManageCurrentOrg}
-                counterparties={counterparties}
-                currentWorkspace={currentWorkspace}
-                destinations={destinations}
-                onCreateAddress={handleCreateAddress}
-                onCreateCounterparty={handleCreateCounterparty}
-                onCreateDestination={handleCreateDestination}
-                onUpdateAddress={handleUpdateAddress}
-                onUpdateCounterparty={handleUpdateCounterparty}
-                onUpdateDestination={handleUpdateDestination}
-              />
+              <div className="request-detail-page">
+                <div className="request-main-panel request-detail-surface">
+                  <WorkspaceRegistryPage
+                    addresses={addresses}
+                    canManage={canManageCurrentOrg}
+                    counterparties={counterparties}
+                    currentWorkspace={currentWorkspace}
+                    destinations={destinations}
+                    payees={payees}
+                    onCreateAddress={handleCreateAddress}
+                    onCreateCounterparty={handleCreateCounterparty}
+                    onCreateDestination={handleCreateDestination}
+                    onCreatePayee={handleCreatePayee}
+                    onUpdateAddress={handleUpdateAddress}
+                    onUpdateCounterparty={handleUpdateCounterparty}
+                    onUpdateDestination={handleUpdateDestination}
+                  />
+                </div>
+              </div>
             ) : null}
 
             {route.name === 'workspacePolicy' && currentWorkspace ? (
-              <WorkspacePolicyPage
-                approvalPolicy={approvalPolicy}
-                canManage={canManageCurrentOrg}
-                currentWorkspace={currentWorkspace}
-                onUpdateApprovalPolicy={handleUpdateApprovalPolicy}
-              />
+              <div className="request-detail-page">
+                <div className="request-main-panel request-detail-surface">
+                  <WorkspacePolicyPage
+                    approvalPolicy={approvalPolicy}
+                    canManage={canManageCurrentOrg}
+                    destinations={destinations}
+                    paymentOrders={paymentOrders}
+                    onUpdateApprovalPolicy={handleUpdateApprovalPolicy}
+                  />
+                </div>
+              </div>
             ) : null}
 
-            {route.name === 'workspaceRequests' && currentWorkspace ? (
+            {(route.name === 'workspaceRequests'
+              || route.name === 'workspacePayments'
+              || route.name === 'workspacePaymentDetail'
+              || route.name === 'workspaceRuns'
+              || route.name === 'workspaceRunDetail'
+              || route.name === 'workspaceApprovals'
+              || route.name === 'workspaceExecution') && currentWorkspace ? (
               <WorkspaceRequestsPage
                 addresses={addresses}
                 canManage={canManageCurrentOrg}
@@ -1725,6 +1703,7 @@ export function App() {
                 destinations={destinations}
                 onAttachPaymentOrderSignature={handleAttachPaymentOrderSignature}
                 onCancelPaymentOrder={handleCancelPaymentOrder}
+                onDeletePaymentRun={handleDeletePaymentRun}
                 onCreatePaymentOrder={handleCreatePaymentOrder}
                 onCreatePaymentOrderExecution={handleCreatePaymentOrderExecution}
                 onDownloadPaymentOrderAuditExport={handleDownloadPaymentOrderAuditExport}
@@ -1740,33 +1719,71 @@ export function App() {
                 paymentRequests={paymentRequests}
                 paymentRuns={paymentRuns}
                 reconciliationRows={reconciliationRows}
+                focusedPaymentOrderId={route.name === 'workspacePaymentDetail' ? route.paymentOrderId : undefined}
+                focusedPaymentRunId={route.name === 'workspaceRunDetail' ? route.paymentRunId : undefined}
+                onOpenPaymentDetail={(paymentOrderId) => handleOpenPaymentDetail(currentWorkspace.workspaceId, paymentOrderId)}
+                onOpenRunDetail={(paymentRunId) => handleOpenRunDetail(currentWorkspace.workspaceId, paymentRunId)}
+                onExitDetail={() => handleOpenWorkspaceRequests(currentWorkspace.workspaceId)}
+                mode={
+                  route.name === 'workspaceRuns' || route.name === 'workspaceRunDetail'
+                    ? 'runs'
+                    : route.name === 'workspaceApprovals'
+                      ? 'approvals'
+                      : route.name === 'workspaceExecution'
+                        ? 'execution'
+                        : 'payments'
+                }
               />
             ) : null}
 
             {route.name === 'workspaceExceptions' && currentWorkspace ? (
-              <WorkspaceExceptionsPage
-                currentWorkspace={currentWorkspace}
-                exceptions={exceptions}
-                members={workspaceMembers}
-                onAddExceptionNote={handleAddExceptionNote}
-                onApplyExceptionAction={handleApplyExceptionAction}
-                onDownloadExceptionsExport={handleDownloadExceptionsExport}
-                onUpdateExceptionMetadata={handleUpdateExceptionMetadata}
-                reconciliationRows={reconciliationRows}
-              />
+              <div className="request-detail-page">
+                <div className="request-main-panel request-detail-surface">
+                  <WorkspaceExceptionsPage
+                    currentWorkspace={currentWorkspace}
+                    exceptions={exceptions}
+                    members={workspaceMembers}
+                    onAddExceptionNote={handleAddExceptionNote}
+                    onApplyExceptionAction={handleApplyExceptionAction}
+                    onDownloadExceptionsExport={handleDownloadExceptionsExport}
+                    onUpdateExceptionMetadata={handleUpdateExceptionMetadata}
+                    reconciliationRows={reconciliationRows}
+                  />
+                </div>
+              </div>
             ) : null}
 
             {route.name === 'workspaceOps' && currentWorkspace ? (
-              <WorkspaceOpsPage
-                currentWorkspace={currentWorkspace}
-                exportJobs={exportJobs}
-                onDownloadExceptionsExport={handleDownloadExceptionsExport}
-                onDownloadReconciliationExport={handleDownloadReconciliationExport}
-                opsHealth={opsHealth}
-              />
+              <div className="request-detail-page">
+                <div className="request-main-panel request-detail-surface">
+                  <WorkspaceOpsPage
+                    currentWorkspace={currentWorkspace}
+                    exportJobs={exportJobs}
+                    paymentOrders={paymentOrders}
+                    paymentRuns={paymentRuns}
+                    onDownloadExceptionsExport={handleDownloadExceptionsExport}
+                    onDownloadReconciliationExport={handleDownloadReconciliationExport}
+                    opsHealth={opsHealth}
+                    surface="ops"
+                  />
+                </div>
+              </div>
             ) : null}
-          </main>
-        </div>
+
+            {route.name === 'workspaceProofs' && currentWorkspace ? (
+              <div className="request-detail-page">
+                <div className="request-main-panel request-detail-surface">
+                  <WorkspaceProofsPage
+                    paymentOrders={paymentOrders}
+                    paymentRuns={paymentRuns}
+                    onDownloadPaymentOrderProof={handleDownloadPaymentOrderProof}
+                    onDownloadPaymentRunProof={handleDownloadPaymentRunProof}
+                  />
+                </div>
+              </div>
+            ) : null}
+          </section>
+        </main>
       </div>
     </div>
   );
