@@ -1546,7 +1546,9 @@ export function App() {
           executionQueueCount={executionQueueCount}
           onWorkspaceSwitch={handleOpenWorkspace}
           onOpenSection={(section) => {
-            const workspaceId = currentWorkspaceId ?? sidebarWorkspace?.workspaceId;
+            const workspaceId = currentWorkspaceId
+              ?? sidebarWorkspace?.workspaceId
+              ?? workspaceContexts[0]?.workspace.workspaceId;
             if (!workspaceId) return;
             if (section === 'command') handleOpenWorkspace(workspaceId);
             if (section === 'payments') handleOpenWorkspaceRequests(workspaceId);

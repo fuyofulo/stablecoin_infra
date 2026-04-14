@@ -121,6 +121,28 @@ const icons = {
       />
     </Icon>
   ),
+  user: (
+    <Icon>
+      <path
+        d="M5.121 17.804A9 9 0 1118.88 17.8M15 11a3 3 0 11-6 0 3 3 0 016 0z"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </Icon>
+  ),
+  signOut: (
+    <Icon>
+      <path
+        d="M16 17l5-5-5-5M21 12H9m4 9H6a2 2 0 01-2-2V5a2 2 0 012-2h7"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </Icon>
+  ),
 } as const;
 
 function SidebarLink({
@@ -128,18 +150,20 @@ function SidebarLink({
   label,
   isActive,
   badgeCount,
+  isDanger = false,
   onClick,
 }: {
   icon: ReactNode;
   label: string;
   isActive: boolean;
   badgeCount?: number;
+  isDanger?: boolean;
   onClick: () => void;
 }) {
   return (
     <button
       type="button"
-      className={`sidebar-link${isActive ? ' sidebar-link-active' : ''}`}
+      className={`sidebar-link${isActive ? ' sidebar-link-active' : ''}${isDanger ? ' sidebar-link-danger' : ''}`}
       onClick={onClick}
     >
       <span className="sidebar-link-icon-wrap">{icon}</span>
@@ -151,13 +175,6 @@ function SidebarLink({
       ) : null}
     </button>
   );
-}
-
-function initialsFromEmail(email: string) {
-  const local = email.split('@')[0] ?? '?';
-  const parts = local.split(/[._-]+/).filter(Boolean);
-  if (parts.length >= 2) return (parts[0]![0]! + parts[1]![0]!).toUpperCase();
-  return local.slice(0, 2).toUpperCase();
 }
 
 function isRouteActive(route: Route, section: string) {
@@ -264,26 +281,26 @@ export function AppSidebar({
                 <SidebarLink icon={icons.policy} label="Policy" isActive={isRouteActive(route, 'policy')} onClick={() => onOpenSection('policy')} />
               </div>
             </div>
+
           </div>
         ) : null}
       </nav>
-
-      <div className="sidebar-footer">
-        <div className="sidebar-user">
-          <span className="sidebar-user-avatar" aria-hidden>
-            {initialsFromEmail(session.user.email)}
-          </span>
-          <div className="sidebar-user-meta">
-            <span className="sidebar-user-email" title={session.user.email}>
-              {session.user.email}
-            </span>
-            <button className="sidebar-profile-link" type="button" onClick={onOpenProfile}>
-              Profile
-            </button>
-            <button className="sidebar-sign-out" onClick={() => void onLogout()} type="button">
-              Sign out
-            </button>
-          </div>
+      <div className="sidebar-footer sidebar-personal">
+        <p className="sidebar-section-label">Personal</p>
+        <div className="sidebar-link-list" role="list">
+          <SidebarLink
+            icon={icons.user}
+            label={session.user.email}
+            isActive={route.name === 'profile'}
+            onClick={onOpenProfile}
+          />
+          <SidebarLink
+            icon={icons.signOut}
+            label="Sign out"
+            isActive={false}
+            isDanger
+            onClick={() => void onLogout()}
+          />
         </div>
       </div>
     </aside>
