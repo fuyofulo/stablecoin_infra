@@ -3,7 +3,7 @@ SHELL := /bin/zsh
 POSTGRES_URL ?= postgresql://usdc_ops:usdc_ops@127.0.0.1:54329/usdc_ops?schema=public
 PSQL_QUIET := PGOPTIONS='-c client_min_messages=warning' psql -v ON_ERROR_STOP=1 -q
 
-.PHONY: infra-up infra-down dev dev2 test test-api test-worker test-web test-web-v2 sync-postgres-schema sync-clickhouse-schema reset-data latest-slot latency-report
+.PHONY: infra-up infra-down dev dev2 test test-api test-worker test-web-v2 sync-postgres-schema sync-clickhouse-schema reset-data latest-slot latency-report
 
 infra-up:
 	set -euo pipefail && docker compose up -d postgres clickhouse && $(MAKE) sync-postgres-schema && $(MAKE) sync-clickhouse-schema
@@ -103,45 +103,6 @@ dev:
 	typeset -a pids && \
 	(cd api && exec npm run dev) & \
 	pids+=($$!) && \
-	(cd web && exec npm run dev) & \
-	pids+=($$!) && \
-	if [[ -n "$${YELLOWSTONE_ENDPOINT:-}" ]]; then \
-	  for _ in {1..60}; do \
-	    if curl -fsS "$${CONTROL_PLANE_API_URL}/health" >/dev/null 2>&1 && curl -fsS "$${CLICKHOUSE_URL}/ping" >/dev/null 2>&1; then \
-	      break; \
-	    fi; \
-	    sleep 1; \
-	  done; \
-	  (cd yellowstone && exec cargo run) & \
-	  pids+=($$!); \
-	else \
-	  echo "Skipping Yellowstone worker because YELLOWSTONE_ENDPOINT is not set."; \
-	fi && \
-	trap 'trap - INT TERM EXIT; for pid in "$${pids[@]:-}"; do kill -TERM "$$pid" 2>/dev/null || true; done; sleep 0.5; for pid in "$${pids[@]:-}"; do kill -KILL "$$pid" 2>/dev/null || true; done; wait "$${pids[@]}" 2>/dev/null || true; exit 130' INT TERM && \
-	trap 'for pid in "$${pids[@]:-}"; do kill -TERM "$$pid" 2>/dev/null || true; done; sleep 0.5; for pid in "$${pids[@]:-}"; do kill -KILL "$$pid" 2>/dev/null || true; done; wait "$${pids[@]}" 2>/dev/null || true' EXIT && \
-	wait "$${pids[@]}" || true
-
-dev2:
-	set -euo pipefail && \
-	export DATABASE_URL="$${DATABASE_URL:-$(POSTGRES_URL)}" && \
-	export CONTROL_PLANE_API_URL="$${CONTROL_PLANE_API_URL:-http://127.0.0.1:3100}" && \
-	export CLICKHOUSE_URL="$${CLICKHOUSE_URL:-http://127.0.0.1:8123}" && \
-	if [[ -f yellowstone/.env ]]; then set -a && source yellowstone/.env && set +a; fi && \
-	docker compose up -d postgres clickhouse && \
-	docker compose exec -T postgres sh -lc "$(PSQL_QUIET) -U usdc_ops -d usdc_ops -f /docker-entrypoint-initdb.d/001-control-plane.sql" >/dev/null && \
-	docker compose exec -T clickhouse sh -lc 'clickhouse-client --multiquery < /docker-entrypoint-initdb.d/001-bootstrap.sql >/dev/null && clickhouse-client --multiquery < /docker-entrypoint-initdb.d/002-schema.sql >/dev/null' && \
-	for _ in {1..60}; do \
-	  if docker compose exec -T postgres pg_isready -U usdc_ops -d usdc_ops >/dev/null 2>&1; then \
-	    if curl -fsS "$${CLICKHOUSE_URL}/ping" >/dev/null 2>&1; then \
-	      break; \
-	    fi; \
-	  fi; \
-	  sleep 1; \
-	done && \
-	(cd api && npm run prisma:generate >/dev/null) && \
-	typeset -a pids && \
-	(cd api && exec npm run dev) & \
-	pids+=($$!) && \
 	(cd web-v2 && exec npm run dev) & \
 	pids+=($$!) && \
 	if [[ -n "$${YELLOWSTONE_ENDPOINT:-}" ]]; then \
@@ -160,7 +121,9 @@ dev2:
 	trap 'for pid in "$${pids[@]:-}"; do kill -TERM "$$pid" 2>/dev/null || true; done; sleep 0.5; for pid in "$${pids[@]:-}"; do kill -KILL "$$pid" 2>/dev/null || true; done; wait "$${pids[@]}" 2>/dev/null || true' EXIT && \
 	wait "$${pids[@]}" || true
 
-test: test-api test-worker test-web test-web-v2
+dev2: dev
+
+test: test-api test-worker test-web-v2
 
 test-api:
 	set -euo pipefail && \
@@ -179,11 +142,6 @@ test-worker:
 	docker compose exec -T clickhouse sh -lc 'clickhouse-client --multiquery < /docker-entrypoint-initdb.d/001-bootstrap.sql >/dev/null && clickhouse-client --multiquery < /docker-entrypoint-initdb.d/002-schema.sql >/dev/null' && \
 	cd yellowstone && \
 	cargo test -- --test-threads=1
-
-test-web:
-	set -euo pipefail && \
-	cd web && \
-	npm run build
 
 test-web-v2:
 	set -euo pipefail && \

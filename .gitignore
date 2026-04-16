@@ -1,16 +1,14 @@
 .DS_Store
+.env
+node_modules/
+*.jsonl
+*.jsonl.gz
+*.tsbuildinfo
 .playwright-mcp/
 
 api/node_modules/
 api/dist/
 api/.env
-
-web/node_modules/
-web/dist/
-web/.env
-web/*.tsbuildinfo
-web/vite.config.js
-web/vite.config.d.ts
 
 web-v2/node_modules/
 web-v2/dist/
