@@ -3,10 +3,13 @@ SHELL := /bin/zsh
 POSTGRES_URL ?= postgresql://usdc_ops:usdc_ops@127.0.0.1:54329/usdc_ops?schema=public
 PSQL_QUIET := PGOPTIONS='-c client_min_messages=warning' psql -v ON_ERROR_STOP=1 -q
 
-.PHONY: infra-up infra-down dev test test-api test-worker test-frontend sync-postgres-schema sync-clickhouse-schema reset-data latest-slot latency-report
+.PHONY: infra-up infra-down grafana-up dev test test-api test-worker test-frontend sync-postgres-schema sync-clickhouse-schema reset-data latest-slot latency-report
 
 infra-up:
 	set -euo pipefail && docker compose up -d postgres clickhouse && $(MAKE) sync-postgres-schema && $(MAKE) sync-clickhouse-schema
+
+grafana-up:
+	set -euo pipefail && docker compose up -d postgres clickhouse grafana && $(MAKE) sync-postgres-schema && $(MAKE) sync-clickhouse-schema && echo "Grafana: http://127.0.0.1:3001 (admin/admin unless overridden)"
 
 sync-postgres-schema:
 	set -euo pipefail && \

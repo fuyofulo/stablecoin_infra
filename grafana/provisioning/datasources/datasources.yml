@@ -1,0 +1,39 @@
+apiVersion: 1
+
+datasources:
+  - name: Axoria ClickHouse
+    uid: axoria-clickhouse
+    type: grafana-clickhouse-datasource
+    access: proxy
+    isDefault: true
+    editable: true
+    jsonData:
+      host: clickhouse
+      port: 8123
+      protocol: http
+      username: default
+      defaultDatabase: usdc_ops
+      tlsSkipVerify: false
+      dialTimeout: 10
+      queryTimeout: 60
+      validateSql: false
+      logs:
+        defaultDatabase: usdc_ops
+      secure: false
+    secureJsonData:
+      password: ""
+
+  - name: Axoria Postgres
+    uid: axoria-postgres
+    type: postgres
+    access: proxy
+    editable: true
+    url: postgres:5432
+    user: usdc_ops
+    database: usdc_ops
+    secureJsonData:
+      password: usdc_ops
+    jsonData:
+      sslmode: disable
+      postgresVersion: 1600
+      timescaledb: false

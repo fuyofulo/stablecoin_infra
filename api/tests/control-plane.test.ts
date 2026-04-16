@@ -12,6 +12,7 @@ import { deriveUsdcAtaForWallet } from '../src/solana.js';
 const TRUNCATE_SQL = `
 TRUNCATE TABLE
   auth_sessions,
+  api_keys,
   organization_memberships,
   approval_decisions,
   approval_policies,
@@ -2511,6 +2512,129 @@ test('internal matching index updates when execution evidence attaches a submitt
       request.transferRequestId === transferRequestId,
   );
   assert.equal(requestSnapshot.latestExecution.submittedSignature, signature);
+});
+
+test('workspace API keys authenticate scoped agent clients and can be revoked', async () => {
+  const setup = await createOrganizationWorkspace();
+
+  const createdKey = await post(
+    `/workspaces/${setup.workspace.workspaceId}/api-keys`,
+    {
+      label: 'reconciliation agent',
+      scopes: ['workspace:read', 'payments:write', 'reconciliation:read'],
+    },
+    setup.sessionToken,
+  );
+
+  assert.equal(createdKey.label, 'reconciliation agent');
+  assert.equal(createdKey.status, 'active');
+  assert.ok(createdKey.token.startsWith('axoria_live_'));
+  assert.equal(createdKey.tokenWarning.includes('only returns'), true);
+
+  const listKeysResponse = await fetch(`${baseUrl}/workspaces/${setup.workspace.workspaceId}/api-keys`, {
+    headers: authHeaders(setup.sessionToken),
+  });
+  assert.equal(listKeysResponse.status, 200);
+  const listedKeys = await listKeysResponse.json();
+  assert.equal(listedKeys.items.length, 1);
+  assert.equal(listedKeys.items[0].apiKeyId, createdKey.apiKeyId);
+  assert.equal(Object.hasOwn(listedKeys.items[0], 'token'), false);
+
+  const agentSessionResponse = await fetch(`${baseUrl}/auth/session`, {
+    headers: authHeaders(createdKey.token),
+  });
+  assert.equal(agentSessionResponse.status, 200);
+  const agentSession = await agentSessionResponse.json();
+  assert.equal(agentSession.authType, 'api_key');
+  assert.equal(agentSession.actor.workspaceId, setup.workspace.workspaceId);
+  assert.deepEqual(agentSession.actor.scopes, ['workspace:read', 'payments:write', 'reconciliation:read']);
+
+  const createdAddress = await post(
+    `/workspaces/${setup.workspace.workspaceId}/addresses`,
+    {
+      chain: 'solana',
+      address: 'So11111111111111111111111111111111111111112',
+      displayName: 'Agent Created Wallet',
+    },
+    createdKey.token,
+  );
+  assert.equal(createdAddress.displayName, 'Agent Created Wallet');
+
+  const secondWorkspace = await post(
+    `/organizations/${setup.organization.organizationId}/workspaces`,
+    {
+      workspaceName: 'Second Workspace',
+    },
+    setup.sessionToken,
+  );
+
+  const crossWorkspaceResponse = await fetch(`${baseUrl}/workspaces/${secondWorkspace.workspaceId}/addresses`, {
+    headers: authHeaders(createdKey.token),
+  });
+  assert.equal(crossWorkspaceResponse.status, 403);
+  assert.match((await crossWorkspaceResponse.json()).message, /scoped to one workspace/i);
+
+  const agentKeyManagementResponse = await fetch(`${baseUrl}/workspaces/${setup.workspace.workspaceId}/api-keys`, {
+    headers: authHeaders(createdKey.token),
+  });
+  assert.equal(agentKeyManagementResponse.status, 400);
+  assert.match((await agentKeyManagementResponse.json()).message, /Human workspace admin session required/i);
+
+  const revokeResponse = await fetch(
+    `${baseUrl}/workspaces/${setup.workspace.workspaceId}/api-keys/${createdKey.apiKeyId}/revoke`,
+    {
+      method: 'POST',
+      headers: authHeaders(setup.sessionToken),
+    },
+  );
+  assert.equal(revokeResponse.status, 200);
+  assert.equal((await revokeResponse.json()).status, 'revoked');
+
+  const revokedSessionResponse = await fetch(`${baseUrl}/auth/session`, {
+    headers: authHeaders(createdKey.token),
+  });
+  assert.equal(revokedSessionResponse.status, 401);
+});
+
+test('agent tasks expose actionable reconciliation work without frontend assumptions', async () => {
+  const setup = await createOrganizationWorkspace();
+  const key = await post(
+    `/workspaces/${setup.workspace.workspaceId}/api-keys`,
+    { label: 'ops agent' },
+    setup.sessionToken,
+  );
+  const address = await post(
+    `/workspaces/${setup.workspace.workspaceId}/addresses`,
+    {
+      chain: 'solana',
+      address: 'So11111111111111111111111111111111111111112',
+      displayName: 'Approval Review Wallet',
+    },
+    setup.sessionToken,
+  );
+
+  const request = await post(
+    `/workspaces/${setup.workspace.workspaceId}/transfer-requests`,
+    {
+      destinationWorkspaceAddressId: address.workspaceAddressId,
+      requestType: 'wallet_transfer',
+      amountRaw: '10000',
+      status: 'submitted',
+    },
+    setup.sessionToken,
+  );
+  assert.equal(request.status, 'pending_approval');
+
+  const tasksResponse = await fetch(`${baseUrl}/workspaces/${setup.workspace.workspaceId}/agent/tasks`, {
+    headers: authHeaders(key.token),
+  });
+  assert.equal(tasksResponse.status, 200);
+  const tasks = await tasksResponse.json();
+  const approvalTask = tasks.items.find((item: { taskId: string }) => item.taskId === `approval:${request.transferRequestId}`);
+  assert.ok(approvalTask);
+  assert.equal(approvalTask.kind, 'approval_review');
+  assert.equal(approvalTask.resource.type, 'transfer_request');
+  assert.ok(approvalTask.availableActions.some((action: { id: string }) => action.id === 'approve'));
 });
 
 test('address label endpoints support create, search, and patch flows directly', async () => {

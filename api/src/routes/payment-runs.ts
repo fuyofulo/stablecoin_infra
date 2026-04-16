@@ -41,7 +41,7 @@ const attachPaymentRunSignatureSchema = z.object({
 paymentRunsRouter.get('/workspaces/:workspaceId/payment-runs', async (req, res, next) => {
   try {
     const { workspaceId } = workspaceParamsSchema.parse(req.params);
-    await assertWorkspaceAccess(workspaceId, req.auth!.userId);
+    await assertWorkspaceAccess(workspaceId, req.auth!);
     res.json({ servedAt: new Date().toISOString(), ...(await listPaymentRuns(workspaceId)) });
   } catch (error) {
     next(error);
@@ -51,7 +51,7 @@ paymentRunsRouter.get('/workspaces/:workspaceId/payment-runs', async (req, res, 
 paymentRunsRouter.post('/workspaces/:workspaceId/payment-runs/import-csv', async (req, res, next) => {
   try {
     const { workspaceId } = workspaceParamsSchema.parse(req.params);
-    await assertWorkspaceAdmin(workspaceId, req.auth!.userId);
+    await assertWorkspaceAdmin(workspaceId, req.auth!);
     const input = importPaymentRunCsvSchema.parse(req.body);
     res.status(201).json(await importPaymentRunFromCsv({
       workspaceId,
@@ -69,7 +69,7 @@ paymentRunsRouter.post('/workspaces/:workspaceId/payment-runs/import-csv', async
 paymentRunsRouter.get('/workspaces/:workspaceId/payment-runs/:paymentRunId', async (req, res, next) => {
   try {
     const { workspaceId, paymentRunId } = paymentRunParamsSchema.parse(req.params);
-    await assertWorkspaceAccess(workspaceId, req.auth!.userId);
+    await assertWorkspaceAccess(workspaceId, req.auth!);
     res.json(await getPaymentRunDetail(workspaceId, paymentRunId));
   } catch (error) {
     next(error);
@@ -79,7 +79,7 @@ paymentRunsRouter.get('/workspaces/:workspaceId/payment-runs/:paymentRunId', asy
 paymentRunsRouter.delete('/workspaces/:workspaceId/payment-runs/:paymentRunId', async (req, res, next) => {
   try {
     const { workspaceId, paymentRunId } = paymentRunParamsSchema.parse(req.params);
-    await assertWorkspaceAdmin(workspaceId, req.auth!.userId);
+    await assertWorkspaceAdmin(workspaceId, req.auth!);
     res.json(await deletePaymentRun(workspaceId, paymentRunId));
   } catch (error) {
     next(error);
@@ -89,7 +89,7 @@ paymentRunsRouter.delete('/workspaces/:workspaceId/payment-runs/:paymentRunId', 
 paymentRunsRouter.post('/workspaces/:workspaceId/payment-runs/:paymentRunId/prepare-execution', async (req, res, next) => {
   try {
     const { workspaceId, paymentRunId } = paymentRunParamsSchema.parse(req.params);
-    await assertWorkspaceAdmin(workspaceId, req.auth!.userId);
+    await assertWorkspaceAdmin(workspaceId, req.auth!);
     const input = preparePaymentRunExecutionSchema.parse(req.body);
     res.status(201).json(await preparePaymentRunExecution({
       workspaceId,
@@ -105,7 +105,7 @@ paymentRunsRouter.post('/workspaces/:workspaceId/payment-runs/:paymentRunId/prep
 paymentRunsRouter.post('/workspaces/:workspaceId/payment-runs/:paymentRunId/attach-signature', async (req, res, next) => {
   try {
     const { workspaceId, paymentRunId } = paymentRunParamsSchema.parse(req.params);
-    await assertWorkspaceAdmin(workspaceId, req.auth!.userId);
+    await assertWorkspaceAdmin(workspaceId, req.auth!);
     const input = attachPaymentRunSignatureSchema.parse(req.body);
     res.status(201).json(await attachPaymentRunSignature({
       workspaceId,
@@ -122,7 +122,7 @@ paymentRunsRouter.post('/workspaces/:workspaceId/payment-runs/:paymentRunId/atta
 paymentRunsRouter.get('/workspaces/:workspaceId/payment-runs/:paymentRunId/proof', async (req, res, next) => {
   try {
     const { workspaceId, paymentRunId } = paymentRunParamsSchema.parse(req.params);
-    await assertWorkspaceAccess(workspaceId, req.auth!.userId);
+    await assertWorkspaceAccess(workspaceId, req.auth!);
     res.json(await buildPaymentRunProofPacket(workspaceId, paymentRunId));
   } catch (error) {
     next(error);

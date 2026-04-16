@@ -42,10 +42,30 @@ authRouter.post('/auth/login', async (req, res, next) => {
 authRouter.get('/auth/session', requireAuth(), async (req, res, next) => {
   try {
     const auth = req.auth!;
+    if (auth.authType === 'api_key') {
+      res.json({
+        authenticated: true,
+        authType: auth.authType,
+        actor: {
+          type: 'api_key',
+          apiKeyId: auth.apiKeyId,
+          label: auth.apiKeyLabel,
+          keyPrefix: auth.apiKeyPrefix,
+          workspaceId: auth.workspaceId,
+          organizationId: auth.organizationId,
+          role: auth.role,
+          scopes: auth.scopes,
+        },
+        organizations: [],
+      });
+      return;
+    }
+
     const organizations = await listUserOrganizations(auth.userId);
 
     res.json({
       authenticated: true,
+      authType: auth.authType,
       user: {
         userId: auth.userId,
         email: auth.userEmail,
@@ -60,6 +80,14 @@ authRouter.get('/auth/session', requireAuth(), async (req, res, next) => {
 
 authRouter.post('/auth/logout', requireAuth(), async (req, res, next) => {
   try {
+    if (req.auth!.authType !== 'user_session') {
+      res.status(400).json({
+        error: 'InvalidAuthType',
+        message: 'API keys cannot log out. Revoke the key from workspace settings instead.',
+      });
+      return;
+    }
+
     await prisma.authSession.deleteMany({
       where: { sessionToken: req.auth!.sessionToken },
     });

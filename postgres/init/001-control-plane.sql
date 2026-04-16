@@ -60,6 +60,26 @@ CREATE TABLE IF NOT EXISTS workspaces
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS api_keys
+(
+  api_key_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  workspace_id UUID NOT NULL REFERENCES workspaces(workspace_id) ON DELETE CASCADE,
+  organization_id UUID NOT NULL REFERENCES organizations(organization_id) ON DELETE CASCADE,
+  created_by_user_id UUID REFERENCES users(user_id) ON DELETE SET NULL,
+  key_prefix TEXT NOT NULL,
+  key_hash TEXT NOT NULL UNIQUE,
+  label TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'active',
+  role TEXT NOT NULL DEFAULT 'agent_operator',
+  scopes JSONB NOT NULL DEFAULT '[]'::jsonb,
+  last_used_at TIMESTAMPTZ,
+  expires_at TIMESTAMPTZ,
+  revoked_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (workspace_id, label)
+);
+
 CREATE TABLE IF NOT EXISTS workspace_addresses
 (
   workspace_address_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -564,7 +584,31 @@ ALTER TABLE payment_order_events
 
 ALTER TABLE payment_order_events
   ADD CONSTRAINT chk_payment_order_events_actor_type CHECK (
-    actor_type IN ('user', 'system', 'worker')
+    actor_type IN ('user', 'system', 'worker', 'api_key')
+  );
+
+ALTER TABLE transfer_request_events
+  DROP CONSTRAINT IF EXISTS chk_transfer_request_events_actor_type;
+
+ALTER TABLE transfer_request_events
+  ADD CONSTRAINT chk_transfer_request_events_actor_type CHECK (
+    actor_type IN ('user', 'system', 'worker', 'api_key')
+  );
+
+ALTER TABLE transfer_request_events
+  DROP CONSTRAINT IF EXISTS chk_transfer_request_events_event_source;
+
+ALTER TABLE transfer_request_events
+  ADD CONSTRAINT chk_transfer_request_events_event_source CHECK (
+    event_source IN ('user', 'system', 'worker', 'api_key')
+  );
+
+ALTER TABLE approval_decisions
+  DROP CONSTRAINT IF EXISTS chk_approval_decisions_actor_type;
+
+ALTER TABLE approval_decisions
+  ADD CONSTRAINT chk_approval_decisions_actor_type CHECK (
+    actor_type IN ('user', 'system', 'api_key')
   );
 
 ALTER TABLE exception_states
@@ -593,6 +637,10 @@ CREATE INDEX IF NOT EXISTS idx_memberships_organization_id ON organization_membe
 CREATE INDEX IF NOT EXISTS idx_memberships_user_id ON organization_memberships(user_id);
 CREATE INDEX IF NOT EXISTS idx_auth_sessions_user_id ON auth_sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_auth_sessions_organization_id ON auth_sessions(organization_id);
+CREATE INDEX IF NOT EXISTS idx_api_keys_workspace_status_created_at
+  ON api_keys(workspace_id, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_api_keys_organization_created_at
+  ON api_keys(organization_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_workspaces_organization_id ON workspaces(organization_id);
 CREATE INDEX IF NOT EXISTS idx_workspace_addresses_workspace_id ON workspace_addresses(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_workspace_addresses_address ON workspace_addresses(address);
@@ -706,6 +754,11 @@ FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 DROP TRIGGER IF EXISTS trg_workspaces_updated_at ON workspaces;
 CREATE TRIGGER trg_workspaces_updated_at
 BEFORE UPDATE ON workspaces
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+DROP TRIGGER IF EXISTS trg_api_keys_updated_at ON api_keys;
+CREATE TRIGGER trg_api_keys_updated_at
+BEFORE UPDATE ON api_keys
 FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 DROP TRIGGER IF EXISTS trg_workspace_addresses_updated_at ON workspace_addresses;

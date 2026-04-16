@@ -13,6 +13,7 @@ model Organization {
   status           String                   @default("active")
   createdAt        DateTime                 @default(now()) @db.Timestamptz(6) @map("created_at")
   updatedAt        DateTime                 @updatedAt @db.Timestamptz(6) @map("updated_at")
+  apiKeys          ApiKey[]
   memberships      OrganizationMembership[]
   sessions         AuthSession[]
   workspaces       Workspace[]
@@ -36,6 +37,7 @@ model User {
   exceptionStatesUpdated    ExceptionState[]
   exceptionStatesAssigned   ExceptionState[] @relation("ExceptionStateAssignee")
   approvalDecisions         ApprovalDecision[]
+  apiKeysCreated            ApiKey[]           @relation("ApiKeyCreatedByUser")
   executionRecords          ExecutionRecord[] @relation("ExecutionRecordExecutorUser")
   exportJobs                ExportJob[]
   paymentOrdersCreated      PaymentOrder[]    @relation("PaymentOrderCreatedByUser")
@@ -98,8 +100,35 @@ model Workspace {
   paymentOrderEvents   PaymentOrderEvent[]
   paymentRequests      PaymentRequest[]
   payees               Payee[]
+  apiKeys              ApiKey[]
 
   @@map("workspaces")
+}
+
+model ApiKey {
+  apiKeyId        String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid @map("api_key_id")
+  workspaceId     String        @db.Uuid @map("workspace_id")
+  organizationId  String        @db.Uuid @map("organization_id")
+  createdByUserId String?       @db.Uuid @map("created_by_user_id")
+  keyPrefix       String        @map("key_prefix")
+  keyHash         String        @unique @map("key_hash")
+  label           String
+  status          String        @default("active")
+  role            String        @default("agent_operator")
+  scopes          Json          @default("[]")
+  lastUsedAt      DateTime?     @db.Timestamptz(6) @map("last_used_at")
+  expiresAt       DateTime?     @db.Timestamptz(6) @map("expires_at")
+  revokedAt       DateTime?     @db.Timestamptz(6) @map("revoked_at")
+  createdAt       DateTime      @default(now()) @db.Timestamptz(6) @map("created_at")
+  updatedAt       DateTime      @updatedAt @db.Timestamptz(6) @map("updated_at")
+  workspace       Workspace     @relation(fields: [workspaceId], references: [workspaceId], onDelete: Cascade)
+  organization    Organization  @relation(fields: [organizationId], references: [organizationId], onDelete: Cascade)
+  createdByUser   User?         @relation("ApiKeyCreatedByUser", fields: [createdByUserId], references: [userId], onDelete: SetNull)
+
+  @@unique([workspaceId, label])
+  @@index([workspaceId, status, createdAt(sort: Desc)])
+  @@index([organizationId, createdAt(sort: Desc)])
+  @@map("api_keys")
 }
 
 model WorkspaceAddress {

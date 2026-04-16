@@ -65,7 +65,7 @@ async function assertWalletNameAvailable(
 addressesRouter.get('/workspaces/:workspaceId/addresses', async (req, res, next) => {
   try {
     const { workspaceId } = workspaceParamsSchema.parse(req.params);
-    await assertWorkspaceAccess(workspaceId, req.auth!.userId);
+    await assertWorkspaceAccess(workspaceId, req.auth!);
     const items = await prisma.workspaceAddress.findMany({
       where: { workspaceId },
       orderBy: { createdAt: 'desc' },
@@ -79,7 +79,7 @@ addressesRouter.get('/workspaces/:workspaceId/addresses', async (req, res, next)
 addressesRouter.post('/workspaces/:workspaceId/addresses', async (req, res, next) => {
   try {
     const { workspaceId } = workspaceParamsSchema.parse(req.params);
-    await assertWorkspaceAdmin(workspaceId, req.auth!.userId);
+    await assertWorkspaceAdmin(workspaceId, req.auth!);
     const input = createAddressSchema.parse(req.body);
     const displayName = input.displayName?.trim() || null;
     if (displayName) {
@@ -118,7 +118,7 @@ addressesRouter.patch(
   async (req, res, next) => {
     try {
       const { workspaceId, workspaceAddressId } = workspaceAddressParamsSchema.parse(req.params);
-      await assertWorkspaceAdmin(workspaceId, req.auth!.userId);
+      await assertWorkspaceAdmin(workspaceId, req.auth!);
       const input = updateAddressSchema.parse(req.body);
 
       const current = await prisma.workspaceAddress.findFirstOrThrow({

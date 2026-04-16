@@ -61,7 +61,7 @@ paymentRequestsRouter.get('/workspaces/:workspaceId/payment-requests', async (re
   try {
     const { workspaceId } = workspaceParamsSchema.parse(req.params);
     const query = listPaymentRequestsQuerySchema.parse(req.query);
-    await assertWorkspaceAccess(workspaceId, req.auth!.userId);
+    await assertWorkspaceAccess(workspaceId, req.auth!);
 
     const result = await listPaymentRequests(workspaceId, {
       limit: query.limit,
@@ -76,7 +76,7 @@ paymentRequestsRouter.get('/workspaces/:workspaceId/payment-requests', async (re
 paymentRequestsRouter.post('/workspaces/:workspaceId/payment-requests', async (req, res, next) => {
   try {
     const { workspaceId } = workspaceParamsSchema.parse(req.params);
-    await assertWorkspaceAdmin(workspaceId, req.auth!.userId);
+    await assertWorkspaceAdmin(workspaceId, req.auth!);
     const input = createPaymentRequestSchema.parse(req.body);
 
     const detail = await createPaymentRequest({
@@ -104,7 +104,7 @@ paymentRequestsRouter.post('/workspaces/:workspaceId/payment-requests', async (r
 paymentRequestsRouter.post('/workspaces/:workspaceId/payment-requests/import-csv', async (req, res, next) => {
   try {
     const { workspaceId } = workspaceParamsSchema.parse(req.params);
-    await assertWorkspaceAdmin(workspaceId, req.auth!.userId);
+    await assertWorkspaceAdmin(workspaceId, req.auth!);
     const input = importPaymentRequestsCsvSchema.parse(req.body);
 
     res.status(201).json(await importPaymentRequestsFromCsv({
@@ -123,7 +123,7 @@ paymentRequestsRouter.post('/workspaces/:workspaceId/payment-requests/import-csv
 paymentRequestsRouter.get('/workspaces/:workspaceId/payment-requests/:paymentRequestId', async (req, res, next) => {
   try {
     const { workspaceId, paymentRequestId } = paymentRequestParamsSchema.parse(req.params);
-    await assertWorkspaceAccess(workspaceId, req.auth!.userId);
+    await assertWorkspaceAccess(workspaceId, req.auth!);
 
     res.json(await getPaymentRequestDetail(workspaceId, paymentRequestId));
   } catch (error) {
@@ -136,7 +136,7 @@ paymentRequestsRouter.post(
   async (req, res, next) => {
     try {
       const { workspaceId, paymentRequestId } = paymentRequestParamsSchema.parse(req.params);
-      await assertWorkspaceAdmin(workspaceId, req.auth!.userId);
+      await assertWorkspaceAdmin(workspaceId, req.auth!);
       const input = promotePaymentRequestSchema.parse(req.body);
 
       res.status(201).json(await promotePaymentRequestToOrder({
@@ -157,7 +157,7 @@ paymentRequestsRouter.post(
   async (req, res, next) => {
     try {
       const { workspaceId, paymentRequestId } = paymentRequestParamsSchema.parse(req.params);
-      await assertWorkspaceAdmin(workspaceId, req.auth!.userId);
+      await assertWorkspaceAdmin(workspaceId, req.auth!);
 
       res.json(await cancelPaymentRequest({
         workspaceId,

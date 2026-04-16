@@ -92,7 +92,7 @@ paymentOrdersRouter.get('/workspaces/:workspaceId/payment-orders', async (req, r
   try {
     const { workspaceId } = workspaceParamsSchema.parse(req.params);
     const query = listPaymentOrdersQuerySchema.parse(req.query);
-    await assertWorkspaceAccess(workspaceId, req.auth!.userId);
+    await assertWorkspaceAccess(workspaceId, req.auth!);
 
     const result = await listPaymentOrders(workspaceId, {
       limit: query.limit,
@@ -108,7 +108,7 @@ paymentOrdersRouter.get('/workspaces/:workspaceId/payment-orders', async (req, r
 paymentOrdersRouter.post('/workspaces/:workspaceId/payment-orders', async (req, res, next) => {
   try {
     const { workspaceId } = workspaceParamsSchema.parse(req.params);
-    await assertWorkspaceAdmin(workspaceId, req.auth!.userId);
+    await assertWorkspaceAdmin(workspaceId, req.auth!);
     const input = createPaymentOrderSchema.parse(req.body);
 
     const detail = await createPaymentOrder({
@@ -138,7 +138,7 @@ paymentOrdersRouter.post('/workspaces/:workspaceId/payment-orders', async (req, 
 paymentOrdersRouter.get('/workspaces/:workspaceId/payment-orders/:paymentOrderId', async (req, res, next) => {
   try {
     const { workspaceId, paymentOrderId } = paymentOrderParamsSchema.parse(req.params);
-    await assertWorkspaceAccess(workspaceId, req.auth!.userId);
+    await assertWorkspaceAccess(workspaceId, req.auth!);
     res.json(await getPaymentOrderDetail(workspaceId, paymentOrderId));
   } catch (error) {
     next(error);
@@ -148,7 +148,7 @@ paymentOrdersRouter.get('/workspaces/:workspaceId/payment-orders/:paymentOrderId
 paymentOrdersRouter.patch('/workspaces/:workspaceId/payment-orders/:paymentOrderId', async (req, res, next) => {
   try {
     const { workspaceId, paymentOrderId } = paymentOrderParamsSchema.parse(req.params);
-    await assertWorkspaceAdmin(workspaceId, req.auth!.userId);
+    await assertWorkspaceAdmin(workspaceId, req.auth!);
     const input = updatePaymentOrderSchema.parse(req.body);
 
     res.json(await updatePaymentOrder({
@@ -168,7 +168,7 @@ paymentOrdersRouter.patch('/workspaces/:workspaceId/payment-orders/:paymentOrder
 paymentOrdersRouter.post('/workspaces/:workspaceId/payment-orders/:paymentOrderId/submit', async (req, res, next) => {
   try {
     const { workspaceId, paymentOrderId } = paymentOrderParamsSchema.parse(req.params);
-    await assertWorkspaceAdmin(workspaceId, req.auth!.userId);
+    await assertWorkspaceAdmin(workspaceId, req.auth!);
 
     res.json(await submitPaymentOrder({
       workspaceId,
@@ -183,7 +183,7 @@ paymentOrdersRouter.post('/workspaces/:workspaceId/payment-orders/:paymentOrderI
 paymentOrdersRouter.post('/workspaces/:workspaceId/payment-orders/:paymentOrderId/cancel', async (req, res, next) => {
   try {
     const { workspaceId, paymentOrderId } = paymentOrderParamsSchema.parse(req.params);
-    await assertWorkspaceAdmin(workspaceId, req.auth!.userId);
+    await assertWorkspaceAdmin(workspaceId, req.auth!);
 
     res.json(await cancelPaymentOrder({
       workspaceId,
@@ -200,7 +200,7 @@ paymentOrdersRouter.post(
   async (req, res, next) => {
     try {
       const { workspaceId, paymentOrderId } = paymentOrderParamsSchema.parse(req.params);
-      await assertWorkspaceAdmin(workspaceId, req.auth!.userId);
+      await assertWorkspaceAdmin(workspaceId, req.auth!);
       const input = prepareExecutionSchema.parse(req.body);
 
       const prepared = await preparePaymentOrderExecution({
@@ -222,7 +222,7 @@ paymentOrdersRouter.post(
   async (req, res, next) => {
     try {
       const { workspaceId, paymentOrderId } = paymentOrderParamsSchema.parse(req.params);
-      await assertWorkspaceAdmin(workspaceId, req.auth!.userId);
+      await assertWorkspaceAdmin(workspaceId, req.auth!);
       const input = createExecutionSchema.parse(req.body);
 
       const executionRecord = await createPaymentOrderExecution({
@@ -246,7 +246,7 @@ paymentOrdersRouter.post(
   async (req, res, next) => {
     try {
       const { workspaceId, paymentOrderId } = paymentOrderParamsSchema.parse(req.params);
-      await assertWorkspaceAdmin(workspaceId, req.auth!.userId);
+      await assertWorkspaceAdmin(workspaceId, req.auth!);
       const input = attachSignatureSchema.parse(req.body);
 
       const executionRecord = await attachPaymentOrderSignature({
@@ -271,7 +271,7 @@ paymentOrdersRouter.get(
   async (req, res, next) => {
     try {
       const { workspaceId, paymentOrderId } = paymentOrderParamsSchema.parse(req.params);
-      await assertWorkspaceAccess(workspaceId, req.auth!.userId);
+      await assertWorkspaceAccess(workspaceId, req.auth!);
 
       res.json(await buildPaymentOrderProofPacket(workspaceId, paymentOrderId));
     } catch (error) {
@@ -286,7 +286,7 @@ paymentOrdersRouter.get(
     try {
       const { workspaceId, paymentOrderId } = paymentOrderParamsSchema.parse(req.params);
       const query = auditExportQuerySchema.parse(req.query);
-      await assertWorkspaceAccess(workspaceId, req.auth!.userId);
+      await assertWorkspaceAccess(workspaceId, req.auth!);
       const rows = await buildPaymentOrderAuditRows(workspaceId, paymentOrderId);
 
       if (query.format === 'json') {

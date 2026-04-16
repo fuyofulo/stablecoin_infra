@@ -9,9 +9,22 @@ capabilitiesRouter.get('/capabilities', (_req, res) => {
     generatedAt: new Date().toISOString(),
     auth: {
       user: 'Authorization: Bearer <sessionToken>',
+      agent: 'Authorization: Bearer <axoria_live_api_key>',
       internalWorker: 'x-service-token: <CONTROL_PLANE_SERVICE_TOKEN>',
     },
     workflows: [
+      {
+        id: 'agent_reconciliation_loop',
+        summary: 'Discover actionable work, inspect linked resources, take scoped actions, then produce proof packets.',
+        steps: [
+          'GET /capabilities',
+          'GET /auth/session',
+          'GET /workspaces/:workspaceId/agent/tasks',
+          'GET task.resource.href',
+          'Call one task.availableActions[] route with the suggested body',
+          'GET /workspaces/:workspaceId/payment-orders/:paymentOrderId/proof',
+        ],
+      },
       {
         id: 'csv_to_payment_run',
         summary: 'Import CSV rows, create payment requests and orders, prepare one batch USDC transaction, attach signature, then reconcile.',
@@ -54,6 +67,9 @@ capabilitiesRouter.get('/capabilities', (_req, res) => {
           'GET /organizations',
           'POST /organizations',
           'POST /organizations/:organizationId/demo-workspace',
+          'GET /workspaces/:workspaceId/api-keys',
+          'POST /workspaces/:workspaceId/api-keys',
+          'POST /workspaces/:workspaceId/api-keys/:apiKeyId/revoke',
           'GET /workspaces/:workspaceId/addresses',
           'GET /workspaces/:workspaceId/destinations',
           'GET /workspaces/:workspaceId/payees',
@@ -84,6 +100,7 @@ capabilitiesRouter.get('/capabilities', (_req, res) => {
       {
         group: 'verification_and_proof',
         routes: [
+          'GET /workspaces/:workspaceId/agent/tasks',
           'GET /workspaces/:workspaceId/reconciliation',
           'GET /workspaces/:workspaceId/reconciliation-queue/:transferRequestId',
           'GET /workspaces/:workspaceId/transfers',
@@ -105,6 +122,8 @@ capabilitiesRouter.get('/capabilities', (_req, res) => {
     ],
     safetyNotes: [
       'The API never accepts or stores private keys.',
+      'Workspace API keys are hashed at rest, returned only once, and scoped to one workspace.',
+      'Agent keys can operate payment/reconciliation workflows but cannot create or revoke API keys.',
       'Prepared execution packets require an external signer or wallet adapter to add a recent blockhash, sign, and submit.',
       'Submitted signatures are validated for Solana base58 signature shape before being stored as execution evidence.',
       'Internal worker routes require CONTROL_PLANE_SERVICE_TOKEN in production.',

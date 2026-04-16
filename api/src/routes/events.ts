@@ -90,7 +90,7 @@ eventsRouter.get('/workspaces/:workspaceId/transfers', async (req, res, next) =>
   try {
     const { workspaceId } = workspaceParamsSchema.parse(req.params);
     const query = listQuerySchema.parse(req.query);
-    await assertWorkspaceAccess(workspaceId, req.auth!.userId);
+    await assertWorkspaceAccess(workspaceId, req.auth!);
 
     const addresses = await prisma.workspaceAddress.findMany({
       where: { workspaceId, isActive: true },
@@ -187,7 +187,7 @@ eventsRouter.get('/workspaces/:workspaceId/reconciliation', async (req, res, nex
   try {
     const { workspaceId } = workspaceParamsSchema.parse(req.params);
     const query = reconciliationQueueQuerySchema.parse(req.query);
-    await assertWorkspaceAccess(workspaceId, req.auth!.userId);
+    await assertWorkspaceAccess(workspaceId, req.auth!);
 
     const items = await listReconciliationQueue(workspaceId, {
       limit: query.limit,
@@ -208,7 +208,7 @@ eventsRouter.get('/workspaces/:workspaceId/reconciliation-queue', async (req, re
   try {
     const { workspaceId } = workspaceParamsSchema.parse(req.params);
     const query = reconciliationQueueQuerySchema.parse(req.query);
-    await assertWorkspaceAccess(workspaceId, req.auth!.userId);
+    await assertWorkspaceAccess(workspaceId, req.auth!);
 
     const items = await listReconciliationQueue(workspaceId, {
       limit: query.limit,
@@ -230,7 +230,7 @@ eventsRouter.get(
   async (req, res, next) => {
     try {
       const { workspaceId, transferRequestId } = transferRequestParamsSchema.parse(req.params);
-      await assertWorkspaceAccess(workspaceId, req.auth!.userId);
+      await assertWorkspaceAccess(workspaceId, req.auth!);
       const detail = await getReconciliationDetail(workspaceId, transferRequestId);
       res.json(detail);
     } catch (error) {
@@ -243,7 +243,7 @@ eventsRouter.get('/workspaces/:workspaceId/exceptions', async (req, res, next) =
   try {
     const { workspaceId } = workspaceParamsSchema.parse(req.params);
     const query = exceptionsQuerySchema.parse(req.query);
-    await assertWorkspaceAccess(workspaceId, req.auth!.userId);
+    await assertWorkspaceAccess(workspaceId, req.auth!);
 
     const items = await listWorkspaceExceptions({
       workspaceId,
@@ -267,7 +267,7 @@ eventsRouter.patch('/workspaces/:workspaceId/exceptions/:exceptionId', async (re
   try {
     const { workspaceId, exceptionId } = exceptionParamsSchema.parse(req.params);
     const input = exceptionMetadataSchema.parse(req.body);
-    const access = await assertWorkspaceAccess(workspaceId, req.auth!.userId);
+    const access = await assertWorkspaceAccess(workspaceId, req.auth!);
 
     if (input.assignedToUserId) {
       const membership = await prisma.organizationMembership.findUnique({
@@ -307,7 +307,7 @@ eventsRouter.patch('/workspaces/:workspaceId/exceptions/:exceptionId', async (re
 eventsRouter.get('/workspaces/:workspaceId/exceptions/:exceptionId', async (req, res, next) => {
   try {
     const { workspaceId, exceptionId } = exceptionParamsSchema.parse(req.params);
-    await assertWorkspaceAccess(workspaceId, req.auth!.userId);
+    await assertWorkspaceAccess(workspaceId, req.auth!);
     const detail = await getExceptionDetail(workspaceId, exceptionId);
     res.json(detail);
   } catch (error) {
@@ -318,7 +318,7 @@ eventsRouter.get('/workspaces/:workspaceId/exceptions/:exceptionId', async (req,
 eventsRouter.post('/workspaces/:workspaceId/exceptions/:exceptionId/actions', async (req, res, next) => {
   try {
     const { workspaceId, exceptionId } = exceptionParamsSchema.parse(req.params);
-    await assertWorkspaceAccess(workspaceId, req.auth!.userId);
+    await assertWorkspaceAccess(workspaceId, req.auth!);
     const input = exceptionActionSchema.parse(req.body);
 
     const updated = await applyExceptionAction({
@@ -338,7 +338,7 @@ eventsRouter.post('/workspaces/:workspaceId/exceptions/:exceptionId/actions', as
 eventsRouter.post('/workspaces/:workspaceId/exceptions/:exceptionId/notes', async (req, res, next) => {
   try {
     const { workspaceId, exceptionId } = exceptionParamsSchema.parse(req.params);
-    await assertWorkspaceAccess(workspaceId, req.auth!.userId);
+    await assertWorkspaceAccess(workspaceId, req.auth!);
     const input = exceptionNoteSchema.parse(req.body);
 
     const note = await addExceptionNote({

@@ -116,7 +116,7 @@ async function assertDestinationLabelAvailable(
 destinationsRouter.get('/workspaces/:workspaceId/counterparties', async (req, res, next) => {
   try {
     const { workspaceId } = workspaceParamsSchema.parse(req.params);
-    await assertWorkspaceAccess(workspaceId, req.auth!.userId);
+    await assertWorkspaceAccess(workspaceId, req.auth!);
     const workspace = await prisma.workspace.findUniqueOrThrow({
       where: { workspaceId },
       select: { organizationId: true },
@@ -136,7 +136,7 @@ destinationsRouter.get('/workspaces/:workspaceId/counterparties', async (req, re
 destinationsRouter.post('/workspaces/:workspaceId/counterparties', async (req, res, next) => {
   try {
     const { workspaceId } = workspaceParamsSchema.parse(req.params);
-    await assertWorkspaceAdmin(workspaceId, req.auth!.userId);
+    await assertWorkspaceAdmin(workspaceId, req.auth!);
     const input = createCounterpartySchema.parse(req.body);
     const workspace = await prisma.workspace.findUniqueOrThrow({
       where: { workspaceId },
@@ -167,7 +167,7 @@ destinationsRouter.patch('/workspaces/:workspaceId/counterparties/:counterpartyI
       workspaceId: z.string().uuid(),
       counterpartyId: z.string().uuid(),
     }).parse(req.params);
-    await assertWorkspaceAdmin(workspaceId, req.auth!.userId);
+    await assertWorkspaceAdmin(workspaceId, req.auth!);
     const input = updateCounterpartySchema.parse(req.body);
     const workspace = await prisma.workspace.findUniqueOrThrow({
       where: { workspaceId },
@@ -207,7 +207,7 @@ destinationsRouter.patch('/workspaces/:workspaceId/counterparties/:counterpartyI
 destinationsRouter.get('/workspaces/:workspaceId/destinations', async (req, res, next) => {
   try {
     const { workspaceId } = workspaceParamsSchema.parse(req.params);
-    await assertWorkspaceAccess(workspaceId, req.auth!.userId);
+    await assertWorkspaceAccess(workspaceId, req.auth!);
 
     const items = await prisma.destination.findMany({
       where: { workspaceId },
@@ -227,7 +227,7 @@ destinationsRouter.get('/workspaces/:workspaceId/destinations', async (req, res,
 destinationsRouter.post('/workspaces/:workspaceId/destinations', async (req, res, next) => {
   try {
     const { workspaceId } = workspaceParamsSchema.parse(req.params);
-    await assertWorkspaceAdmin(workspaceId, req.auth!.userId);
+    await assertWorkspaceAdmin(workspaceId, req.auth!);
     const input = createDestinationSchema.parse(req.body);
 
     const [workspace, linkedWorkspaceAddress] = await Promise.all([
@@ -295,7 +295,7 @@ destinationsRouter.post('/workspaces/:workspaceId/destinations', async (req, res
 destinationsRouter.patch('/workspaces/:workspaceId/destinations/:destinationId', async (req, res, next) => {
   try {
     const { workspaceId, destinationId } = destinationParamsSchema.parse(req.params);
-    await assertWorkspaceAdmin(workspaceId, req.auth!.userId);
+    await assertWorkspaceAdmin(workspaceId, req.auth!);
     const input = updateDestinationSchema.parse(req.body);
 
     const [workspace, current] = await Promise.all([

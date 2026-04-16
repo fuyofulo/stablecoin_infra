@@ -87,7 +87,7 @@ const updateExecutionRecordSchema = z.object({
 transferRequestsRouter.get('/workspaces/:workspaceId/transfer-requests', async (req, res, next) => {
   try {
     const { workspaceId } = workspaceParamsSchema.parse(req.params);
-    await assertWorkspaceAccess(workspaceId, req.auth!.userId);
+    await assertWorkspaceAccess(workspaceId, req.auth!);
 
     const items = await prisma.transferRequest.findMany({
       where: { workspaceId },
@@ -120,7 +120,7 @@ transferRequestsRouter.get(
   async (req, res, next) => {
     try {
       const { workspaceId, transferRequestId } = transferRequestParamsSchema.parse(req.params);
-      await assertWorkspaceAccess(workspaceId, req.auth!.userId);
+      await assertWorkspaceAccess(workspaceId, req.auth!);
       const detail = await getReconciliationDetail(workspaceId, transferRequestId);
       res.json(detail);
     } catch (error) {
@@ -132,7 +132,7 @@ transferRequestsRouter.get(
 transferRequestsRouter.post('/workspaces/:workspaceId/transfer-requests', async (req, res, next) => {
   try {
     const { workspaceId } = workspaceParamsSchema.parse(req.params);
-    await assertWorkspaceAdmin(workspaceId, req.auth!.userId);
+    await assertWorkspaceAdmin(workspaceId, req.auth!);
     const input = createTransferRequestSchema.parse(req.body);
 
     const [sourceWorkspaceAddress, destinationWorkspaceAddress, destination] = await Promise.all([
@@ -326,7 +326,7 @@ transferRequestsRouter.post(
   async (req, res, next) => {
     try {
       const { workspaceId, transferRequestId } = transferRequestParamsSchema.parse(req.params);
-      await assertWorkspaceAccess(workspaceId, req.auth!.userId);
+      await assertWorkspaceAccess(workspaceId, req.auth!);
       const input = requestNoteSchema.parse(req.body);
 
       await ensureTransferRequestExists(workspaceId, transferRequestId);
@@ -368,7 +368,7 @@ transferRequestsRouter.post(
   async (req, res, next) => {
     try {
       const { workspaceId, transferRequestId } = transferRequestParamsSchema.parse(req.params);
-      await assertWorkspaceAdmin(workspaceId, req.auth!.userId);
+      await assertWorkspaceAdmin(workspaceId, req.auth!);
       const input = transitionTransferRequestSchema.parse(req.body);
 
       const current = await prisma.transferRequest.findFirstOrThrow({
@@ -526,7 +526,7 @@ transferRequestsRouter.post(
   async (req, res, next) => {
     try {
       const { workspaceId, transferRequestId } = transferRequestParamsSchema.parse(req.params);
-      await assertWorkspaceAdmin(workspaceId, req.auth!.userId);
+      await assertWorkspaceAdmin(workspaceId, req.auth!);
       const input = createExecutionRecordSchema.parse(req.body);
 
       const current = await prisma.transferRequest.findFirstOrThrow({
@@ -599,7 +599,7 @@ transferRequestsRouter.patch(
   async (req, res, next) => {
     try {
       const { workspaceId, executionRecordId } = executionRecordParamsSchema.parse(req.params);
-      await assertWorkspaceAdmin(workspaceId, req.auth!.userId);
+      await assertWorkspaceAdmin(workspaceId, req.auth!);
       const input = updateExecutionRecordSchema.parse(req.body);
 
       if (!input.submittedSignature && !input.state && !Object.keys(input.metadataJson).length && !input.submittedAt) {

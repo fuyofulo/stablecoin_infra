@@ -181,7 +181,7 @@ organizationsRouter.post('/organizations/:organizationId/join', async (req, res,
 organizationsRouter.get('/organizations/:organizationId/workspaces', async (req, res, next) => {
   try {
     const { organizationId } = orgParamsSchema.parse(req.params);
-    await assertOrganizationAccess(organizationId, req.auth!.userId);
+    await assertOrganizationAccess(organizationId, req.auth!);
 
     const items = await prisma.workspace.findMany({
       where: { organizationId },
@@ -197,7 +197,7 @@ organizationsRouter.get('/organizations/:organizationId/workspaces', async (req,
 organizationsRouter.post('/organizations/:organizationId/workspaces', async (req, res, next) => {
   try {
     const { organizationId } = orgParamsSchema.parse(req.params);
-    await assertOrganizationAdmin(organizationId, req.auth!.userId);
+    await assertOrganizationAdmin(organizationId, req.auth!);
     const input = createWorkspaceSchema.parse(req.body);
     const workspaceName = input.workspaceName.trim();
     await assertWorkspaceNameAvailable(organizationId, workspaceName);
@@ -219,7 +219,7 @@ organizationsRouter.post('/organizations/:organizationId/workspaces', async (req
 organizationsRouter.post('/organizations/:organizationId/demo-workspace', async (req, res, next) => {
   try {
     const { organizationId } = orgParamsSchema.parse(req.params);
-    await assertOrganizationAdmin(organizationId, req.auth!.userId);
+    await assertOrganizationAdmin(organizationId, req.auth!);
 
     const suffix = crypto.randomUUID().slice(0, 8);
     const now = new Date();

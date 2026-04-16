@@ -57,7 +57,7 @@ type MatchHealthRow = {
 opsRouter.get('/workspaces/:workspaceId/members', async (req, res, next) => {
   try {
     const { workspaceId } = workspaceParamsSchema.parse(req.params);
-    const access = await assertWorkspaceAccess(workspaceId, req.auth!.userId);
+    const access = await assertWorkspaceAccess(workspaceId, req.auth!);
 
     const items = await prisma.organizationMembership.findMany({
       where: {
@@ -96,7 +96,7 @@ opsRouter.get('/workspaces/:workspaceId/export-jobs', async (req, res, next) => 
   try {
     const { workspaceId } = workspaceParamsSchema.parse(req.params);
     const { limit } = historyQuerySchema.parse(req.query);
-    await assertWorkspaceAccess(workspaceId, req.auth!.userId);
+    await assertWorkspaceAccess(workspaceId, req.auth!);
 
     const items = await prisma.exportJob.findMany({
       where: { workspaceId },
@@ -137,7 +137,7 @@ opsRouter.get('/workspaces/:workspaceId/exports/reconciliation', async (req, res
   try {
     const { workspaceId } = workspaceParamsSchema.parse(req.params);
     const query = exportQuerySchema.parse(req.query);
-    await assertWorkspaceAccess(workspaceId, req.auth!.userId);
+    await assertWorkspaceAccess(workspaceId, req.auth!);
 
     const items = await listReconciliationQueue(workspaceId, {
       limit: 5000,
@@ -188,7 +188,7 @@ opsRouter.get('/workspaces/:workspaceId/exports/exceptions', async (req, res, ne
   try {
     const { workspaceId } = workspaceParamsSchema.parse(req.params);
     const query = exportQuerySchema.parse(req.query);
-    await assertWorkspaceAccess(workspaceId, req.auth!.userId);
+    await assertWorkspaceAccess(workspaceId, req.auth!);
 
     const items = await listWorkspaceExceptions({
       workspaceId,
@@ -243,7 +243,7 @@ opsRouter.get('/workspaces/:workspaceId/exports/audit/:transferRequestId', async
   try {
     const { workspaceId, transferRequestId } = auditParamsSchema.parse(req.params);
     const query = exportQuerySchema.parse(req.query);
-    await assertWorkspaceAccess(workspaceId, req.auth!.userId);
+    await assertWorkspaceAccess(workspaceId, req.auth!);
 
     const detail = await getReconciliationDetail(workspaceId, transferRequestId);
     const rows = detail.timeline.map((item) => ({
@@ -281,7 +281,7 @@ opsRouter.get('/workspaces/:workspaceId/exports/audit/:transferRequestId', async
 opsRouter.get('/workspaces/:workspaceId/ops-health', async (req, res, next) => {
   try {
     const { workspaceId } = workspaceParamsSchema.parse(req.params);
-    await assertWorkspaceAccess(workspaceId, req.auth!.userId);
+    await assertWorkspaceAccess(workspaceId, req.auth!);
 
     await prisma.$queryRaw`SELECT 1`;
 

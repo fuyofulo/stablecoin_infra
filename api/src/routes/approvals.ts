@@ -46,7 +46,7 @@ const approvalDecisionSchema = z.object({
 approvalsRouter.get('/workspaces/:workspaceId/approval-policy', async (req, res, next) => {
   try {
     const { workspaceId } = workspaceParamsSchema.parse(req.params);
-    await assertWorkspaceAccess(workspaceId, req.auth!.userId);
+    await assertWorkspaceAccess(workspaceId, req.auth!);
     const policy = await getOrCreateWorkspaceApprovalPolicy(workspaceId);
     res.json(serializeApprovalPolicy(policy));
   } catch (error) {
@@ -57,7 +57,7 @@ approvalsRouter.get('/workspaces/:workspaceId/approval-policy', async (req, res,
 approvalsRouter.patch('/workspaces/:workspaceId/approval-policy', async (req, res, next) => {
   try {
     const { workspaceId } = workspaceParamsSchema.parse(req.params);
-    await assertWorkspaceAdmin(workspaceId, req.auth!.userId);
+    await assertWorkspaceAdmin(workspaceId, req.auth!);
     const input = approvalPolicyUpdateSchema.parse(req.body);
     const existing = await getOrCreateWorkspaceApprovalPolicy(workspaceId);
     const existingRules = (
@@ -89,7 +89,7 @@ approvalsRouter.get('/workspaces/:workspaceId/approval-inbox', async (req, res, 
   try {
     const { workspaceId } = workspaceParamsSchema.parse(req.params);
     const query = approvalInboxQuerySchema.parse(req.query);
-    await assertWorkspaceAccess(workspaceId, req.auth!.userId);
+    await assertWorkspaceAccess(workspaceId, req.auth!);
 
     const result = await listApprovalInbox({
       workspaceId,
@@ -117,7 +117,7 @@ approvalsRouter.post(
   async (req, res, next) => {
     try {
       const { workspaceId, transferRequestId } = transferRequestParamsSchema.parse(req.params);
-      await assertWorkspaceAdmin(workspaceId, req.auth!.userId);
+      await assertWorkspaceAdmin(workspaceId, req.auth!);
       const input = approvalDecisionSchema.parse(req.body);
 
       const current = await prisma.transferRequest.findFirstOrThrow({

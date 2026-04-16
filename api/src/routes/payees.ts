@@ -33,7 +33,7 @@ payeesRouter.get('/workspaces/:workspaceId/payees', async (req, res, next) => {
   try {
     const { workspaceId } = workspaceParamsSchema.parse(req.params);
     const query = listPayeesQuerySchema.parse(req.query);
-    await assertWorkspaceAccess(workspaceId, req.auth!.userId);
+    await assertWorkspaceAccess(workspaceId, req.auth!);
 
     res.json({ servedAt: new Date().toISOString(), ...(await listPayees(workspaceId, query)) });
   } catch (error) {
@@ -45,7 +45,7 @@ payeesRouter.post('/workspaces/:workspaceId/payees', async (req, res, next) => {
   try {
     const { workspaceId } = workspaceParamsSchema.parse(req.params);
     const input = payeeBodySchema.parse(req.body);
-    await assertWorkspaceAdmin(workspaceId, req.auth!.userId);
+    await assertWorkspaceAdmin(workspaceId, req.auth!);
 
     res.status(201).json(await createPayee({
       workspaceId,
@@ -64,7 +64,7 @@ payeesRouter.post('/workspaces/:workspaceId/payees', async (req, res, next) => {
 payeesRouter.get('/workspaces/:workspaceId/payees/:payeeId', async (req, res, next) => {
   try {
     const { workspaceId, payeeId } = payeeParamsSchema.parse(req.params);
-    await assertWorkspaceAccess(workspaceId, req.auth!.userId);
+    await assertWorkspaceAccess(workspaceId, req.auth!);
 
     res.json(await getPayeeDetail(workspaceId, payeeId));
   } catch (error) {
@@ -76,7 +76,7 @@ payeesRouter.patch('/workspaces/:workspaceId/payees/:payeeId', async (req, res, 
   try {
     const { workspaceId, payeeId } = payeeParamsSchema.parse(req.params);
     const input = updatePayeeBodySchema.parse(req.body);
-    await assertWorkspaceAdmin(workspaceId, req.auth!.userId);
+    await assertWorkspaceAdmin(workspaceId, req.auth!);
 
     res.json(await updatePayee({
       workspaceId,

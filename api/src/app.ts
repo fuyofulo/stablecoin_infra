@@ -3,6 +3,8 @@ import { ZodError } from 'zod';
 import { requireAuth } from './auth.js';
 import { addressLabelsRouter } from './routes/address-labels.js';
 import { addressesRouter } from './routes/addresses.js';
+import { agentRouter } from './routes/agent.js';
+import { apiKeysRouter } from './routes/api-keys.js';
 import { capabilitiesRouter } from './routes/capabilities.js';
 import { config } from './config.js';
 import { approvalsRouter } from './routes/approvals.js';
@@ -63,6 +65,8 @@ export function createApp() {
   app.use(internalRouter);
   app.use(requireAuth());
   app.use(addressLabelsRouter);
+  app.use(agentRouter);
+  app.use(apiKeysRouter);
   app.use(organizationsRouter);
   app.use(opsRouter);
   app.use(addressesRouter);
