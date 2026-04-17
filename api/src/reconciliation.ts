@@ -1503,7 +1503,17 @@ function buildReconciliationEdgeCases(
   detail: ReconciliationDetail,
   activeExceptions: ReconciliationException[],
 ) {
-  const edgeCases = activeExceptions.map((exception) => ({
+  const edgeCases: Array<{
+    code: string;
+    severity: string;
+    status: string;
+    summary: string;
+    evidence: {
+      exceptionId: string | null;
+      signature: string | null;
+      observedTransferId: string | null;
+    };
+  }> = activeExceptions.map((exception) => ({
     code: exception.reasonCode,
     severity: exception.severity,
     status: exception.status,

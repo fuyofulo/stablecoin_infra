@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { createPayee, getPayeeDetail, listPayees, updatePayee } from '../payees.js';
 import { assertWorkspaceAccess, assertWorkspaceAdmin } from '../workspace-access.js';
+import { asyncRoute, sendCreated, sendJson, sendList, unwrapItems } from '../route-helpers.js';
 
 export const payeesRouter = Router();
 
@@ -29,25 +30,20 @@ const listPayeesQuerySchema = z.object({
   status: z.enum(['active', 'inactive']).optional(),
 });
 
-payeesRouter.get('/workspaces/:workspaceId/payees', async (req, res, next) => {
-  try {
+payeesRouter.get('/workspaces/:workspaceId/payees', asyncRoute(async (req, res) => {
     const { workspaceId } = workspaceParamsSchema.parse(req.params);
     const query = listPayeesQuerySchema.parse(req.query);
     await assertWorkspaceAccess(workspaceId, req.auth!);
 
-    res.json({ servedAt: new Date().toISOString(), ...(await listPayees(workspaceId, query)) });
-  } catch (error) {
-    next(error);
-  }
-});
+    sendList(res, unwrapItems(await listPayees(workspaceId, query)), { limit: query.limit });
+}));
 
-payeesRouter.post('/workspaces/:workspaceId/payees', async (req, res, next) => {
-  try {
+payeesRouter.post('/workspaces/:workspaceId/payees', asyncRoute(async (req, res) => {
     const { workspaceId } = workspaceParamsSchema.parse(req.params);
     const input = payeeBodySchema.parse(req.body);
     await assertWorkspaceAdmin(workspaceId, req.auth!);
 
-    res.status(201).json(await createPayee({
+    sendCreated(res, await createPayee({
       workspaceId,
       name: input.name,
       defaultDestinationId: input.defaultDestinationId,
@@ -56,34 +52,23 @@ payeesRouter.post('/workspaces/:workspaceId/payees', async (req, res, next) => {
       notes: input.notes,
       metadataJson: input.metadataJson,
     }));
-  } catch (error) {
-    next(error);
-  }
-});
+}));
 
-payeesRouter.get('/workspaces/:workspaceId/payees/:payeeId', async (req, res, next) => {
-  try {
+payeesRouter.get('/workspaces/:workspaceId/payees/:payeeId', asyncRoute(async (req, res) => {
     const { workspaceId, payeeId } = payeeParamsSchema.parse(req.params);
     await assertWorkspaceAccess(workspaceId, req.auth!);
 
-    res.json(await getPayeeDetail(workspaceId, payeeId));
-  } catch (error) {
-    next(error);
-  }
-});
+    sendJson(res, await getPayeeDetail(workspaceId, payeeId));
+}));
 
-payeesRouter.patch('/workspaces/:workspaceId/payees/:payeeId', async (req, res, next) => {
-  try {
+payeesRouter.patch('/workspaces/:workspaceId/payees/:payeeId', asyncRoute(async (req, res) => {
     const { workspaceId, payeeId } = payeeParamsSchema.parse(req.params);
     const input = updatePayeeBodySchema.parse(req.body);
     await assertWorkspaceAdmin(workspaceId, req.auth!);
 
-    res.json(await updatePayee({
+    sendJson(res, await updatePayee({
       workspaceId,
       payeeId,
       input,
     }));
-  } catch (error) {
-    next(error);
-  }
-});
+}));

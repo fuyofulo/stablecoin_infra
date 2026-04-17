@@ -7,9 +7,11 @@ import {
   importPaymentRequestsFromCsv,
   isPaymentRequestState,
   listPaymentRequests,
+  previewPaymentRequestsCsv,
   promotePaymentRequestToOrder,
 } from '../payment-requests.js';
 import { assertWorkspaceAccess, assertWorkspaceAdmin } from '../workspace-access.js';
+import { asyncRoute, sendCreated, sendJson, sendList, unwrapItems } from '../route-helpers.js';
 
 export const paymentRequestsRouter = Router();
 
@@ -57,8 +59,7 @@ const promotePaymentRequestSchema = z.object({
   submitNow: z.boolean().default(false),
 });
 
-paymentRequestsRouter.get('/workspaces/:workspaceId/payment-requests', async (req, res, next) => {
-  try {
+paymentRequestsRouter.get('/workspaces/:workspaceId/payment-requests', asyncRoute(async (req, res) => {
     const { workspaceId } = workspaceParamsSchema.parse(req.params);
     const query = listPaymentRequestsQuerySchema.parse(req.query);
     await assertWorkspaceAccess(workspaceId, req.auth!);
@@ -67,14 +68,10 @@ paymentRequestsRouter.get('/workspaces/:workspaceId/payment-requests', async (re
       limit: query.limit,
       state: query.state,
     });
-    res.json({ servedAt: new Date().toISOString(), ...result });
-  } catch (error) {
-    next(error);
-  }
-});
+    sendList(res, unwrapItems(result), { limit: query.limit, state: query.state ?? null });
+}));
 
-paymentRequestsRouter.post('/workspaces/:workspaceId/payment-requests', async (req, res, next) => {
-  try {
+paymentRequestsRouter.post('/workspaces/:workspaceId/payment-requests', asyncRoute(async (req, res) => {
     const { workspaceId } = workspaceParamsSchema.parse(req.params);
     await assertWorkspaceAdmin(workspaceId, req.auth!);
     const input = createPaymentRequestSchema.parse(req.body);
@@ -95,19 +92,15 @@ paymentRequestsRouter.post('/workspaces/:workspaceId/payment-requests', async (r
       submitOrderNow: input.submitOrderNow,
     });
 
-    res.status(201).json(detail);
-  } catch (error) {
-    next(error);
-  }
-});
+    sendCreated(res, detail);
+}));
 
-paymentRequestsRouter.post('/workspaces/:workspaceId/payment-requests/import-csv', async (req, res, next) => {
-  try {
+paymentRequestsRouter.post('/workspaces/:workspaceId/payment-requests/import-csv', asyncRoute(async (req, res) => {
     const { workspaceId } = workspaceParamsSchema.parse(req.params);
     await assertWorkspaceAdmin(workspaceId, req.auth!);
     const input = importPaymentRequestsCsvSchema.parse(req.body);
 
-    res.status(201).json(await importPaymentRequestsFromCsv({
+    sendCreated(res, await importPaymentRequestsFromCsv({
       workspaceId,
       actorUserId: req.auth!.userId,
       csv: input.csv,
@@ -115,56 +108,52 @@ paymentRequestsRouter.post('/workspaces/:workspaceId/payment-requests/import-csv
       sourceWorkspaceAddressId: input.sourceWorkspaceAddressId,
       submitOrderNow: input.submitOrderNow,
     }));
-  } catch (error) {
-    next(error);
-  }
-});
+}));
 
-paymentRequestsRouter.get('/workspaces/:workspaceId/payment-requests/:paymentRequestId', async (req, res, next) => {
-  try {
+paymentRequestsRouter.post('/workspaces/:workspaceId/payment-requests/import-csv/preview', asyncRoute(async (req, res) => {
+    const { workspaceId } = workspaceParamsSchema.parse(req.params);
+    await assertWorkspaceAccess(workspaceId, req.auth!);
+    const input = z.object({ csv: z.string().min(1) }).parse(req.body);
+
+    sendJson(res, await previewPaymentRequestsCsv({
+      workspaceId,
+      csv: input.csv,
+    }));
+}));
+
+paymentRequestsRouter.get('/workspaces/:workspaceId/payment-requests/:paymentRequestId', asyncRoute(async (req, res) => {
     const { workspaceId, paymentRequestId } = paymentRequestParamsSchema.parse(req.params);
     await assertWorkspaceAccess(workspaceId, req.auth!);
 
-    res.json(await getPaymentRequestDetail(workspaceId, paymentRequestId));
-  } catch (error) {
-    next(error);
-  }
-});
+    sendJson(res, await getPaymentRequestDetail(workspaceId, paymentRequestId));
+}));
 
 paymentRequestsRouter.post(
   '/workspaces/:workspaceId/payment-requests/:paymentRequestId/promote',
-  async (req, res, next) => {
-    try {
+  asyncRoute(async (req, res) => {
       const { workspaceId, paymentRequestId } = paymentRequestParamsSchema.parse(req.params);
       await assertWorkspaceAdmin(workspaceId, req.auth!);
       const input = promotePaymentRequestSchema.parse(req.body);
 
-      res.status(201).json(await promotePaymentRequestToOrder({
+      sendCreated(res, await promotePaymentRequestToOrder({
         workspaceId,
         paymentRequestId,
         actorUserId: req.auth!.userId,
         sourceWorkspaceAddressId: input.sourceWorkspaceAddressId,
         submitNow: input.submitNow,
       }));
-    } catch (error) {
-      next(error);
-    }
-  },
+  }),
 );
 
 paymentRequestsRouter.post(
   '/workspaces/:workspaceId/payment-requests/:paymentRequestId/cancel',
-  async (req, res, next) => {
-    try {
+  asyncRoute(async (req, res) => {
       const { workspaceId, paymentRequestId } = paymentRequestParamsSchema.parse(req.params);
       await assertWorkspaceAdmin(workspaceId, req.auth!);
 
-      res.json(await cancelPaymentRequest({
+      sendJson(res, await cancelPaymentRequest({
         workspaceId,
         paymentRequestId,
       }));
-    } catch (error) {
-      next(error);
-    }
-  },
+  }),
 );

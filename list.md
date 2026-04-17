@@ -5,7 +5,7 @@
 - [x] Granular API key scopes enforced per route, not just stored.
 - [x] Idempotency keys for all mutating endpoints.
 - [x] Agent audit identity cleanup so events/notes/approvals clearly show user, api_key, system, or worker.
-- [ ] OpenAPI spec for the full backend.
+- [x] OpenAPI spec for the full backend.
 - [ ] MCP server wrapper for agent tools.
 - [x] Rate limiting and abuse protection for public/API-key routes.
 - [x] Request correlation IDs and structured error codes.
@@ -31,16 +31,17 @@
 
 ## Payment Runs And Input Layer
 
-- [ ] Payment run workflow hardening.
+- [x] Payment run workflow hardening.
 - [ ] Batch transaction signing UX improvement.
 - [ ] Batch payment partial failure handling.
 - [x] Payment run proof packet.
 - [x] Payment run reconciliation summary.
-- [ ] Payment run cancellation/close lifecycle.
-- [ ] Payment run idempotent CSV import.
-- [ ] CSV validation preview before committing rows.
+- [x] Compact/default payment run proof mode with optional full embedded order proofs.
+- [x] Payment run cancellation/close lifecycle.
+- [x] Payment run idempotent CSV import.
+- [x] CSV validation preview before committing rows.
 - [x] CSV import error report with row numbers and reasons.
-- [ ] Duplicate payee/destination/reference detection during import.
+- [x] Duplicate payee/destination/reference detection during import.
 - [ ] Payee merge/edit/archive flows.
 - [ ] Destination trust review workflow.
 
@@ -61,7 +62,7 @@
 ## Proof And Audit
 
 - [x] Proof and audit improvements.
-- [ ] Human-readable payment proof packet.
+- [x] Human-readable payment proof packet.
 - [x] JSON proof packet for agents.
 - [x] CSV/PDF export polish.
 - [x] Cryptographic proof bundle or signed audit manifest.
@@ -100,15 +101,15 @@
 
 ## Backend Architecture Cleanup
 
-- [ ] Split route handlers from service logic consistently.
+- [ ] Split route handlers from service logic consistently. Remaining direct-DB route modules: auth, organizations, approvals, legacy transfer requests, ops/internal.
 - [x] Normalize actor handling across all services.
-- [ ] Normalize state transitions into explicit service modules.
-- [ ] Add domain-level tests separate from route tests.
-- [ ] Add contract tests for agent/API clients.
-- [ ] Add OpenAPI-generated client or typed SDK.
+- [x] Normalize state transitions into explicit service modules.
+- [x] Add domain-level tests separate from route tests.
+- [x] Add contract tests for agent/API clients.
+- [x] Add OpenAPI-generated client or typed SDK.
 - [x] Remove remaining frontend-shaped response assumptions.
-- [ ] Standardize pagination, filters, sorting, and error responses.
-- [ ] Standardize date/time and amount formatting at API boundaries.
+- [x] Standardize pagination, filters, sorting, and error responses.
+- [x] Standardize date/time and amount formatting at API boundaries.
 
 ## Security Hardening
 

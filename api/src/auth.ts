@@ -139,7 +139,7 @@ export function requireAuth() {
       const requiredScope = auth.authType === 'api_key'
         ? getRequiredApiKeyScope(req.method, req.path, auth.workspaceId)
         : null;
-      if (requiredScope && !auth.scopes.includes(requiredScope)) {
+      if (requiredScope && auth.authType === 'api_key' && !auth.scopes.includes(requiredScope)) {
         res.status(403).json({
           error: 'Forbidden',
           code: 'forbidden',
@@ -196,6 +196,10 @@ function getRequiredApiKeyScope(method: string, path: string, workspaceId: strin
 
   if (path.includes('/proof') || path.includes('/audit-export') || path.includes('/audit-log') || path.includes('/exports')) {
     return 'proofs:read';
+  }
+
+  if (path.includes('/import-csv/preview')) {
+    return 'workspace:read';
   }
 
   if (path.includes('/reconciliation') || path.includes('/transfers') || path.includes('/ops-health')) {

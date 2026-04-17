@@ -12,10 +12,12 @@ import {
   submitPaymentOrder,
 } from '../payment-orders.js';
 import { buildPaymentOrderAuditRows, buildPaymentOrderProofPacket } from '../payment-order-proof.js';
+import { renderPaymentOrderProofMarkdown } from '../payment-proof-markdown.js';
 import { isPaymentOrderState } from '../payment-order-state.js';
 import { isSolanaSignatureLike } from '../solana.js';
 import { assertWorkspaceAccess, assertWorkspaceAdmin } from '../workspace-access.js';
 import { actorFromAuth } from '../actor.js';
+import { asyncRoute, sendCreated, sendJson, sendList, unwrapItems } from '../route-helpers.js';
 
 export const paymentOrdersRouter = Router();
 
@@ -85,12 +87,15 @@ const attachSignatureSchema = z.object({
   'A submitted signature, external execution reference, or metadata is required',
 );
 
+const proofQuerySchema = z.object({
+  format: z.enum(['json', 'markdown']).default('json'),
+});
+
 const auditExportQuerySchema = z.object({
   format: z.enum(['csv', 'json']).default('csv'),
 });
 
-paymentOrdersRouter.get('/workspaces/:workspaceId/payment-orders', async (req, res, next) => {
-  try {
+paymentOrdersRouter.get('/workspaces/:workspaceId/payment-orders', asyncRoute(async (req, res) => {
     const { workspaceId } = workspaceParamsSchema.parse(req.params);
     const query = listPaymentOrdersQuerySchema.parse(req.query);
     await assertWorkspaceAccess(workspaceId, req.auth!);
@@ -100,14 +105,14 @@ paymentOrdersRouter.get('/workspaces/:workspaceId/payment-orders', async (req, r
       state: query.state,
       paymentRunId: query.paymentRunId,
     });
-    res.json({ servedAt: new Date().toISOString(), ...result });
-  } catch (error) {
-    next(error);
-  }
-});
+    sendList(res, unwrapItems(result), {
+      limit: query.limit,
+      state: query.state ?? null,
+      paymentRunId: query.paymentRunId ?? null,
+    });
+}));
 
-paymentOrdersRouter.post('/workspaces/:workspaceId/payment-orders', async (req, res, next) => {
-  try {
+paymentOrdersRouter.post('/workspaces/:workspaceId/payment-orders', asyncRoute(async (req, res) => {
     const { workspaceId } = workspaceParamsSchema.parse(req.params);
     await assertWorkspaceAdmin(workspaceId, req.auth!);
     const input = createPaymentOrderSchema.parse(req.body);
@@ -131,21 +136,14 @@ paymentOrdersRouter.post('/workspaces/:workspaceId/payment-orders', async (req, 
       submitNow: input.submitNow,
     });
 
-    res.status(201).json(detail);
-  } catch (error) {
-    next(error);
-  }
-});
+    sendCreated(res, detail);
+}));
 
-paymentOrdersRouter.get('/workspaces/:workspaceId/payment-orders/:paymentOrderId', async (req, res, next) => {
-  try {
+paymentOrdersRouter.get('/workspaces/:workspaceId/payment-orders/:paymentOrderId', asyncRoute(async (req, res) => {
     const { workspaceId, paymentOrderId } = paymentOrderParamsSchema.parse(req.params);
     await assertWorkspaceAccess(workspaceId, req.auth!);
-    res.json(await getPaymentOrderDetail(workspaceId, paymentOrderId));
-  } catch (error) {
-    next(error);
-  }
-});
+    sendJson(res, await getPaymentOrderDetail(workspaceId, paymentOrderId));
+}));
 
 paymentOrdersRouter.patch('/workspaces/:workspaceId/payment-orders/:paymentOrderId', async (req, res, next) => {
   try {
@@ -279,9 +277,17 @@ paymentOrdersRouter.get(
   async (req, res, next) => {
     try {
       const { workspaceId, paymentOrderId } = paymentOrderParamsSchema.parse(req.params);
+      const query = proofQuerySchema.parse(req.query);
       await assertWorkspaceAccess(workspaceId, req.auth!);
+      const proof = await buildPaymentOrderProofPacket(workspaceId, paymentOrderId);
+      if (query.format === 'markdown') {
+        res.setHeader('content-type', 'text/markdown; charset=utf-8');
+        res.setHeader('content-disposition', `attachment; filename="payment-order-${paymentOrderId}-proof.md"`);
+        res.send(renderPaymentOrderProofMarkdown(proof));
+        return;
+      }
 
-      res.json(await buildPaymentOrderProofPacket(workspaceId, paymentOrderId));
+      sendJson(res, proof);
     } catch (error) {
       next(error);
     }
@@ -298,7 +304,7 @@ paymentOrdersRouter.get(
       const rows = await buildPaymentOrderAuditRows(workspaceId, paymentOrderId);
 
       if (query.format === 'json') {
-        res.json({ items: rows });
+        sendList(res, rows);
         return;
       }
 

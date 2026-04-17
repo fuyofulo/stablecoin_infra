@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { prisma } from '../prisma.js';
 import { insertClickHouseRows } from '../clickhouse.js';
 import { assertOrganizationAccess, assertOrganizationAdmin } from '../workspace-access.js';
+import { listResponse } from '../api-format.js';
 
 export const organizationsRouter = Router();
 
@@ -188,7 +189,7 @@ organizationsRouter.get('/organizations/:organizationId/workspaces', async (req,
       orderBy: { createdAt: 'asc' },
     });
 
-    res.json({ items });
+    res.json(listResponse(items));
   } catch (error) {
     next(error);
   }

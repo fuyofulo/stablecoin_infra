@@ -10,6 +10,7 @@ import { listApprovalInbox } from '../reconciliation.js';
 import { prisma } from '../prisma.js';
 import { createTransferRequestEvent } from '../transfer-request-events.js';
 import { assertWorkspaceAccess, assertWorkspaceAdmin } from '../workspace-access.js';
+import { sendList } from '../route-helpers.js';
 
 export const approvalsRouter = Router();
 
@@ -102,10 +103,10 @@ approvalsRouter.get('/workspaces/:workspaceId/approval-inbox', async (req, res, 
             : ['pending_approval', 'escalated'],
     });
 
-    res.json({
-      servedAt: new Date().toISOString(),
+    sendList(res, result.items, {
+      limit: query.limit,
+      status: query.status ?? null,
       approvalPolicy: result.approvalPolicy,
-      items: result.items,
     });
   } catch (error) {
     next(error);

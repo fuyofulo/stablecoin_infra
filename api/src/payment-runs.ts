@@ -6,9 +6,15 @@ import type {
   User,
   WorkspaceAddress,
 } from '@prisma/client';
+import { createHash } from 'node:crypto';
 import { serializeExecutionRecord } from './execution-records.js';
 import { listPaymentOrders, submitPaymentOrder } from './payment-orders.js';
-import { importPaymentRequestsFromCsv } from './payment-requests.js';
+import { importPaymentRequestsFromCsv, previewPaymentRequestsCsv } from './payment-requests.js';
+import {
+  canCancelPaymentRun,
+  canClosePaymentRun,
+  derivePaymentRunStateFromRows,
+} from './payment-run-state.js';
 import { prisma } from './prisma.js';
 import {
   buildUsdcTransferInstructions,
@@ -101,6 +107,20 @@ export async function deletePaymentRun(workspaceId: string, paymentRunId: string
   return { deleted: true, paymentRunId };
 }
 
+export async function previewPaymentRunCsv(args: {
+  workspaceId: string;
+  csv: string;
+}) {
+  const preview = await previewPaymentRequestsCsv({
+    workspaceId: args.workspaceId,
+    csv: args.csv,
+  });
+  return {
+    csvFingerprint: buildCsvFingerprint(args.csv),
+    ...preview,
+  };
+}
+
 export async function importPaymentRunFromCsv(args: {
   workspaceId: string;
   actorUserId: string;
@@ -108,7 +128,40 @@ export async function importPaymentRunFromCsv(args: {
   runName?: string | null;
   sourceWorkspaceAddressId?: string | null;
   submitOrderNow?: boolean;
+  importKey?: string | null;
 }) {
+  const csvFingerprint = buildCsvFingerprint(args.csv);
+  const importKey = normalizeOptionalText(args.importKey);
+  const existingRun = await findExistingImportedPaymentRun({
+    workspaceId: args.workspaceId,
+    importKey,
+    csvFingerprint,
+  });
+  if (existingRun) {
+    return {
+      paymentRun: await getPaymentRunDetail(args.workspaceId, existingRun.paymentRunId),
+      importResult: {
+        idempotentReplay: true,
+        imported: 0,
+        failed: 0,
+        items: [],
+      },
+    };
+  }
+
+  const preview = await previewPaymentRunCsv({
+    workspaceId: args.workspaceId,
+    csv: args.csv,
+  });
+  const failedRows = preview.items.filter((item) => item.status === 'failed');
+  if (failedRows.length) {
+    const detail = failedRows
+      .slice(0, 3)
+      .map((item) => `row ${item.rowNumber}: ${'error' in item ? item.error : 'Invalid row'}`)
+      .join(' | ');
+    throw new Error(`CSV import preview failed. Fix ${failedRows.length} row(s) before creating a payment run. ${detail}`);
+  }
+
   const run = await prisma.paymentRun.create({
     data: {
       workspaceId: args.workspaceId,
@@ -118,6 +171,8 @@ export async function importPaymentRunFromCsv(args: {
       state: 'draft',
       metadataJson: {
         inputSource: 'csv_import',
+        csvFingerprint,
+        importKey,
       },
       createdByUserId: args.actorUserId,
     },
@@ -151,6 +206,152 @@ export async function importPaymentRunFromCsv(args: {
     paymentRun: await getPaymentRunDetail(args.workspaceId, run.paymentRunId),
     importResult,
   };
+}
+
+export async function cancelPaymentRun(args: {
+  workspaceId: string;
+  paymentRunId: string;
+  actorUserId: string;
+}) {
+  const detail = await getPaymentRunDetail(args.workspaceId, args.paymentRunId);
+  if (detail.state === 'cancelled') {
+    return detail;
+  }
+  const cancelCheck = canCancelPaymentRun({
+    storedState: detail.state,
+    derivedState: detail.derivedState,
+    orders: detail.paymentOrders.map((order) => ({
+      derivedState: order.derivedState,
+      hasExecutionEvidence: Boolean(order.reconciliationDetail?.latestExecution?.submittedSignature),
+    })),
+  });
+  if (!cancelCheck.allowed) {
+    throw new Error(cancelCheck.reason ?? 'Payment run cannot be cancelled');
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await tx.paymentRun.update({
+      where: { paymentRunId: args.paymentRunId },
+      data: {
+        state: 'cancelled',
+        metadataJson: mergeJsonObject(detail.metadataJson, {
+          cancelledAt: new Date().toISOString(),
+          cancelledByUserId: args.actorUserId,
+        }),
+      },
+    });
+
+    for (const order of detail.paymentOrders) {
+      if (order.derivedState === 'cancelled') {
+        continue;
+      }
+      await tx.paymentOrder.update({
+        where: { paymentOrderId: order.paymentOrderId },
+        data: { state: 'cancelled' },
+      });
+      await tx.paymentOrderEvent.create({
+        data: {
+          paymentOrderId: order.paymentOrderId,
+          workspaceId: args.workspaceId,
+          eventType: 'payment_run_row_cancelled',
+          actorType: 'user',
+          actorId: args.actorUserId,
+          beforeState: order.state,
+          afterState: 'cancelled',
+          linkedTransferRequestId: order.transferRequestId ?? null,
+          payloadJson: {
+            paymentRunId: args.paymentRunId,
+          },
+        },
+      });
+      for (const request of order.transferRequests) {
+        if (['submitted_onchain', 'observed', 'matched', 'closed', 'rejected'].includes(request.status)) {
+          continue;
+        }
+        await tx.transferRequest.update({
+          where: { transferRequestId: request.transferRequestId },
+          data: { status: 'rejected' },
+        });
+      }
+      if (order.paymentRequestId) {
+        await tx.paymentRequest.updateMany({
+          where: {
+            paymentRequestId: order.paymentRequestId,
+            state: { not: 'cancelled' },
+          },
+          data: { state: 'cancelled' },
+        });
+      }
+    }
+  });
+
+  return getPaymentRunDetail(args.workspaceId, args.paymentRunId);
+}
+
+export async function closePaymentRun(args: {
+  workspaceId: string;
+  paymentRunId: string;
+  actorUserId: string;
+}) {
+  const detail = await getPaymentRunDetail(args.workspaceId, args.paymentRunId);
+  if (detail.state === 'closed') {
+    return detail;
+  }
+  const actionableOrders = detail.paymentOrders.filter((order) => order.derivedState !== 'cancelled');
+  const closeCheck = canClosePaymentRun({
+    derivedState: detail.derivedState,
+    orders: detail.paymentOrders.map((order) => ({ derivedState: order.derivedState })),
+  });
+  if (!closeCheck.allowed) {
+    throw new Error(closeCheck.reason ?? 'Payment run cannot be closed');
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await tx.paymentRun.update({
+      where: { paymentRunId: args.paymentRunId },
+      data: {
+        state: 'closed',
+        metadataJson: mergeJsonObject(detail.metadataJson, {
+          closedAt: new Date().toISOString(),
+          closedByUserId: args.actorUserId,
+        }),
+      },
+    });
+
+    for (const order of actionableOrders) {
+      if (order.state !== 'closed') {
+        await tx.paymentOrder.update({
+          where: { paymentOrderId: order.paymentOrderId },
+          data: { state: 'closed' },
+        });
+        await tx.paymentOrderEvent.create({
+          data: {
+            paymentOrderId: order.paymentOrderId,
+            workspaceId: args.workspaceId,
+            eventType: 'payment_run_row_closed',
+            actorType: 'user',
+            actorId: args.actorUserId,
+            beforeState: order.state,
+            afterState: 'closed',
+            linkedTransferRequestId: order.transferRequestId ?? null,
+            payloadJson: {
+              paymentRunId: args.paymentRunId,
+            },
+          },
+        });
+      }
+      for (const request of order.transferRequests) {
+        if (request.status !== 'closed') {
+          await tx.transferRequest.update({
+            where: { transferRequestId: request.transferRequestId },
+            data: { status: 'closed' },
+          });
+        }
+      }
+    }
+  });
+
+  return getPaymentRunDetail(args.workspaceId, args.paymentRunId);
 }
 
 export async function preparePaymentRunExecution(args: {
@@ -613,38 +814,7 @@ function isSettlementCountKey(value: string): value is 'pending' | 'matched' | '
 }
 
 function derivePaymentRunState(storedState: string, orders: Array<{ derivedState: string }>) {
-  if (storedState === 'cancelled' || storedState === 'closed') {
-    return storedState;
-  }
-  if (!orders.length) {
-    return storedState;
-  }
-  const actionableOrders = orders.filter((order) => order.derivedState !== 'cancelled');
-  if (!actionableOrders.length) {
-    return storedState;
-  }
-  if (actionableOrders.some((order) => order.derivedState === 'exception')) {
-    return 'exception';
-  }
-  if (actionableOrders.every((order) => ['settled', 'closed'].includes(order.derivedState))) {
-    return 'settled';
-  }
-  if (actionableOrders.some((order) => order.derivedState === 'partially_settled')) {
-    return 'partially_settled';
-  }
-  if (storedState === 'submitted_onchain') {
-    return 'submitted_onchain';
-  }
-  if (actionableOrders.some((order) => order.derivedState === 'execution_recorded')) {
-    return 'execution_recorded';
-  }
-  if (actionableOrders.some((order) => order.derivedState === 'pending_approval')) {
-    return 'pending_approval';
-  }
-  if (actionableOrders.every((order) => ['approved', 'ready_for_execution'].includes(order.derivedState))) {
-    return 'ready_for_execution';
-  }
-  return storedState;
+  return derivePaymentRunStateFromRows(storedState, orders);
 }
 
 async function refreshPersistedRunState(workspaceId: string, paymentRunId: string) {
@@ -828,6 +998,53 @@ function serializeWorkspaceAddress(address: WorkspaceAddress) {
 function normalizeOptionalText(value: string | null | undefined) {
   const trimmed = value?.trim();
   return trimmed ? trimmed : null;
+}
+
+function buildCsvFingerprint(csv: string) {
+  return createHash('sha256')
+    .update(csv.replaceAll(/\r\n/g, '\n').trim())
+    .digest('hex');
+}
+
+async function findExistingImportedPaymentRun(args: {
+  workspaceId: string;
+  importKey: string | null;
+  csvFingerprint: string;
+}) {
+  const metadataMatchers: Prisma.PaymentRunWhereInput[] = [
+    {
+      metadataJson: {
+        path: ['csvFingerprint'],
+        equals: args.csvFingerprint,
+      },
+    },
+  ];
+  if (args.importKey) {
+    metadataMatchers.unshift({
+      metadataJson: {
+        path: ['importKey'],
+        equals: args.importKey,
+      },
+    });
+  }
+
+  return prisma.paymentRun.findFirst({
+    where: {
+      workspaceId: args.workspaceId,
+      inputSource: 'csv_import',
+      state: { not: 'cancelled' },
+      OR: metadataMatchers,
+    },
+    orderBy: { createdAt: 'desc' },
+    select: { paymentRunId: true },
+  });
+}
+
+function mergeJsonObject(current: unknown, patch: Record<string, unknown>): Prisma.InputJsonObject {
+  return {
+    ...(isRecordLike(current) ? current : {}),
+    ...patch,
+  } as Prisma.InputJsonObject;
 }
 
 function isRecordLike(value: unknown): value is Record<string, unknown> {

@@ -2,6 +2,11 @@ import { getPaymentOrderDetail, type PaymentOrderState } from './payment-orders.
 import { buildCanonicalDigest } from './proof-packet.js';
 import { getReconciliationExplanation } from './reconciliation.js';
 
+type PaymentOrderDetail = Awaited<ReturnType<typeof getPaymentOrderDetail>>;
+type LatestExecution = NonNullable<PaymentOrderDetail['reconciliationDetail']> extends { latestExecution: infer Latest }
+  ? Latest
+  : null;
+
 export async function buildPaymentOrderAuditRows(workspaceId: string, paymentOrderId: string) {
   const detail = await getPaymentOrderDetail(workspaceId, paymentOrderId);
   const rows = [
@@ -243,11 +248,7 @@ function deriveProofReadiness(args: {
   proofStatus: ReturnType<typeof deriveProofStatus>;
   approvalState: string;
   derivedState: PaymentOrderState;
-  latestExecution: Awaited<ReturnType<typeof getPaymentOrderDetail>>['reconciliationDetail'] extends infer Detail
-    ? Detail extends null
-      ? null
-      : NonNullable<Detail>['latestExecution']
-    : never;
+  latestExecution: LatestExecution;
   reconciliationExplanation: Awaited<ReturnType<typeof getReconciliationExplanation>> | null;
   exceptionCount: number;
 }) {

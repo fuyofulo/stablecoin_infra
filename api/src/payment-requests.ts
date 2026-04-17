@@ -220,28 +220,25 @@ export async function importPaymentRequestsFromCsv(args: {
   const headers = rows[0].map((header) => normalizeHeader(header));
   const dataRows = rows.slice(1).filter((row) => row.some((cell) => normalizeOptionalText(cell)));
   const items = [];
+  const seenImportKeys = new Map<string, number>();
 
   for (const [index, row] of dataRows.entries()) {
     const rowNumber = index + 2;
     const record = Object.fromEntries(headers.map((header, cellIndex) => [header, row[cellIndex]?.trim() ?? '']));
 
     try {
-      const payeeName = normalizeOptionalText(record.payee ?? record.payee_name ?? record.vendor ?? record.name);
-      const destinationInput = normalizeOptionalText(record.destination ?? record.destination_id ?? record.wallet ?? record.wallet_address);
-      const amountRaw = record.amount_raw ? BigInt(record.amount_raw).toString() : parseUsdcAmountToRaw(record.amount ?? record.amount_usdc);
-      const externalReference = normalizeOptionalText(record.reference ?? record.invoice ?? record.invoice_number ?? record.external_reference);
-      const reason = normalizeOptionalText(record.reason ?? record.memo)
-        ?? [payeeName ? `Pay ${payeeName}` : 'Payment request', externalReference].filter(Boolean).join(' ');
-      const dueAt = parseOptionalDate(record.due_date ?? record.due_at);
-
-      if (!payeeName && !destinationInput) {
-        throw new Error('Provide payee or destination');
+      const parsed = parsePaymentRequestCsvRecord(record);
+      const importKey = buildCsvImportRowKey(parsed);
+      const firstSeenRow = seenImportKeys.get(importKey);
+      if (firstSeenRow) {
+        throw new Error(`Duplicate CSV row. Same destination/payee, amount, and reference already appeared on row ${firstSeenRow}`);
       }
+      seenImportKeys.set(importKey, rowNumber);
 
       const { payee, destination } = await resolveCsvPayeeDestination({
         workspaceId: args.workspaceId,
-        payeeName,
-        destinationInput,
+        payeeName: parsed.payeeName,
+        destinationInput: parsed.destinationInput,
         rowNumber,
       });
 
@@ -251,11 +248,11 @@ export async function importPaymentRequestsFromCsv(args: {
         paymentRunId: args.paymentRunId,
         payeeId: payee?.payeeId,
         destinationId: destination.destinationId,
-        amountRaw,
-        asset: normalizeOptionalText(record.asset) ?? 'usdc',
-        reason,
-        externalReference,
-        dueAt,
+        amountRaw: parsed.amountRaw,
+        asset: parsed.asset,
+        reason: parsed.reason,
+        externalReference: parsed.externalReference,
+        dueAt: parsed.dueAt,
         createOrderNow: args.createOrderNow ?? true,
         submitOrderNow: args.submitOrderNow ?? false,
         sourceWorkspaceAddressId: args.sourceWorkspaceAddressId,
@@ -263,7 +260,7 @@ export async function importPaymentRequestsFromCsv(args: {
           inputSource: 'csv_import',
           csvRowNumber: rowNumber,
           paymentRunId: args.paymentRunId ?? null,
-          payeeName,
+          payeeName: parsed.payeeName,
         },
       });
 
@@ -285,6 +282,86 @@ export async function importPaymentRequestsFromCsv(args: {
   return {
     imported: items.filter((item) => item.status === 'imported').length,
     failed: items.filter((item) => item.status === 'failed').length,
+    items,
+  };
+}
+
+export async function previewPaymentRequestsCsv(args: {
+  workspaceId: string;
+  csv: string;
+}) {
+  const rows = parseCsv(args.csv);
+  if (!rows.length) {
+    throw new Error('CSV import is empty');
+  }
+
+  const headers = rows[0].map((header) => normalizeHeader(header));
+  const dataRows = rows.slice(1).filter((row) => row.some((cell) => normalizeOptionalText(cell)));
+  const seenImportKeys = new Map<string, number>();
+  const items = [];
+
+  for (const [index, row] of dataRows.entries()) {
+    const rowNumber = index + 2;
+    const record = Object.fromEntries(headers.map((header, cellIndex) => [header, row[cellIndex]?.trim() ?? '']));
+
+    try {
+      const parsed = parsePaymentRequestCsvRecord(record);
+      const importKey = buildCsvImportRowKey(parsed);
+      const duplicateRowNumber = seenImportKeys.get(importKey) ?? null;
+      seenImportKeys.set(importKey, duplicateRowNumber ?? rowNumber);
+
+      const resolution = await previewCsvPayeeDestination({
+        workspaceId: args.workspaceId,
+        payeeName: parsed.payeeName,
+        destinationInput: parsed.destinationInput,
+        rowNumber,
+      });
+      const duplicate = resolution.destination
+        ? await findActivePaymentDuplicate({
+            workspaceId: args.workspaceId,
+            destinationId: resolution.destination.destinationId,
+            amountRaw: parsed.amountRaw,
+            externalReference: parsed.externalReference,
+          })
+        : null;
+      const warnings = [
+        duplicateRowNumber ? `Duplicate CSV row. Same destination/payee, amount, and reference already appeared on row ${duplicateRowNumber}` : null,
+        duplicate ? `Active ${duplicate.kind} with this destination, amount, and reference already exists` : null,
+        resolution.wouldCreateDestination ? 'Destination wallet will be created as unreviewed and may require approval before execution' : null,
+        resolution.wouldCreatePayee ? 'Payee will be created from CSV input' : null,
+      ].filter((warning): warning is string => Boolean(warning));
+
+      items.push({
+        rowNumber,
+        status: warnings.length ? 'warning' : 'ready',
+        warnings,
+        parsed: {
+          payeeName: parsed.payeeName,
+          destinationInput: parsed.destinationInput,
+          amountRaw: parsed.amountRaw,
+          asset: parsed.asset,
+          externalReference: parsed.externalReference,
+          reason: parsed.reason,
+          dueAt: parsed.dueAt,
+        },
+        resolution,
+        duplicate,
+      });
+    } catch (error) {
+      items.push({
+        rowNumber,
+        status: 'failed',
+        error: error instanceof Error ? error.message : 'CSV row is invalid',
+      });
+    }
+  }
+
+  return {
+    totalRows: items.length,
+    ready: items.filter((item) => item.status === 'ready').length,
+    warnings: items.filter((item) => item.status === 'warning').length,
+    failed: items.filter((item) => item.status === 'failed').length,
+    canImport: items.every((item) => item.status !== 'failed'),
     items,
   };
 }
@@ -380,6 +457,61 @@ async function resolveCsvPayeeDestination(args: {
   return { payee, destination: resolvedDestination };
 }
 
+async function previewCsvPayeeDestination(args: {
+  workspaceId: string;
+  payeeName: string | null;
+  destinationInput: string | null;
+  rowNumber: number;
+}) {
+  const payee = args.payeeName
+    ? await prisma.payee.findFirst({
+        where: {
+          workspaceId: args.workspaceId,
+          name: { equals: args.payeeName, mode: 'insensitive' },
+          status: 'active',
+        },
+        include: { defaultDestination: true },
+      })
+    : null;
+  const destination = args.destinationInput
+    ? await findDestinationForCsv(args.workspaceId, args.destinationInput)
+    : payee?.defaultDestination ?? null;
+
+  if (destination) {
+    return {
+      payee: payee ? serializePayee(payee) : null,
+      destination: serializeDestination({
+        ...destination,
+        counterparty: null,
+      }),
+      wouldCreatePayee: Boolean(args.payeeName && !payee),
+      wouldCreateDestination: false,
+      walletAddress: destination.walletAddress,
+      tokenAccountAddress: destination.tokenAccountAddress,
+    };
+  }
+
+  if (!args.destinationInput) {
+    throw new Error(`Row ${args.rowNumber}: destination not found`);
+  }
+
+  let tokenAccountAddress: string;
+  try {
+    tokenAccountAddress = deriveUsdcAtaForWallet(args.destinationInput);
+  } catch {
+    throw new Error(`Row ${args.rowNumber}: destination not found and "${args.destinationInput}" is not a valid Solana wallet address`);
+  }
+
+  return {
+    payee: payee ? serializePayee(payee) : null,
+    destination: null,
+    wouldCreatePayee: Boolean(args.payeeName && !payee),
+    wouldCreateDestination: true,
+    walletAddress: args.destinationInput,
+    tokenAccountAddress,
+  };
+}
+
 async function findDestinationForCsv(workspaceId: string, value: string) {
   const alternatives: Prisma.DestinationWhereInput[] = [
     { label: { equals: value, mode: 'insensitive' } },
@@ -398,6 +530,102 @@ async function findDestinationForCsv(workspaceId: string, value: string) {
       OR: alternatives,
     },
   });
+}
+
+function parsePaymentRequestCsvRecord(record: Record<string, string>) {
+  const payeeName = normalizeOptionalText(record.payee ?? record.payee_name ?? record.vendor ?? record.name);
+  const destinationInput = normalizeOptionalText(record.destination ?? record.destination_id ?? record.wallet ?? record.wallet_address);
+  const amountRaw = record.amount_raw ? BigInt(record.amount_raw).toString() : parseUsdcAmountToRaw(record.amount ?? record.amount_usdc);
+  const externalReference = normalizeOptionalText(record.reference ?? record.invoice ?? record.invoice_number ?? record.external_reference);
+  const reason = normalizeOptionalText(record.reason ?? record.memo)
+    ?? [payeeName ? `Pay ${payeeName}` : 'Payment request', externalReference].filter(Boolean).join(' ');
+  const dueAt = parseOptionalDate(record.due_date ?? record.due_at);
+
+  if (!payeeName && !destinationInput) {
+    throw new Error('Provide payee or destination');
+  }
+
+  return {
+    payeeName,
+    destinationInput,
+    amountRaw,
+    asset: normalizeOptionalText(record.asset) ?? 'usdc',
+    externalReference,
+    reason,
+    dueAt,
+  };
+}
+
+function buildCsvImportRowKey(parsed: ReturnType<typeof parsePaymentRequestCsvRecord>) {
+  return [
+    parsed.destinationInput?.toLowerCase() ?? '',
+    parsed.payeeName?.toLowerCase() ?? '',
+    parsed.amountRaw,
+    parsed.externalReference?.toLowerCase() ?? '',
+  ].join('|');
+}
+
+async function findActivePaymentDuplicate(args: {
+  workspaceId: string;
+  destinationId: string;
+  amountRaw: string | bigint;
+  externalReference: string | null;
+}) {
+  if (!args.externalReference) {
+    return null;
+  }
+
+  const paymentRequest = await prisma.paymentRequest.findFirst({
+    where: {
+      workspaceId: args.workspaceId,
+      destinationId: args.destinationId,
+      amountRaw: BigInt(args.amountRaw),
+      externalReference: {
+        equals: args.externalReference,
+        mode: 'insensitive',
+      },
+      state: 'submitted',
+    },
+    select: {
+      paymentRequestId: true,
+      state: true,
+    },
+  });
+  if (paymentRequest) {
+    return {
+      kind: 'payment_request',
+      id: paymentRequest.paymentRequestId,
+      state: paymentRequest.state,
+    };
+  }
+
+  const paymentOrder = await prisma.paymentOrder.findFirst({
+    where: {
+      workspaceId: args.workspaceId,
+      destinationId: args.destinationId,
+      amountRaw: BigInt(args.amountRaw),
+      state: {
+        notIn: ['closed', 'cancelled'],
+      },
+      OR: [
+        { externalReference: { equals: args.externalReference, mode: 'insensitive' } },
+        { invoiceNumber: { equals: args.externalReference, mode: 'insensitive' } },
+      ],
+    },
+    select: {
+      paymentOrderId: true,
+      state: true,
+    },
+  });
+  if (paymentOrder) {
+    return {
+      kind: 'payment_order',
+      id: paymentOrder.paymentOrderId,
+      state: paymentOrder.state,
+    };
+  }
+
+  return null;
 }
 
 async function createCsvDestinationFromWallet(args: {

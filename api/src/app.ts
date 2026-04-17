@@ -1,6 +1,7 @@
 import express from 'express';
 import crypto from 'node:crypto';
 import { ZodError } from 'zod';
+import { mapKnownError, normalizeErrorCode } from './api-errors.js';
 import { requireAuth } from './auth.js';
 import { notifyAgentTasksChanged } from './agent-task-events.js';
 import { addressLabelsRouter } from './routes/address-labels.js';
@@ -17,6 +18,7 @@ import { healthRouter } from './routes/health.js';
 import { idempotencyMiddleware } from './idempotency.js';
 import { internalRouter } from './routes/internal.js';
 import { notifyMatchingIndexChanged, shouldInvalidateMatchingIndex } from './matching-index-events.js';
+import { openApiRouter } from './routes/openapi.js';
 import { organizationsRouter } from './routes/organizations.js';
 import { opsRouter } from './routes/ops.js';
 import { payeesRouter } from './routes/payees.js';
@@ -44,7 +46,7 @@ export function createApp() {
         : config.corsOrigin;
 
     res.setHeader('Access-Control-Allow-Origin', allowOrigin);
-    res.setHeader('Access-Control-Allow-Headers', 'content-type,authorization');
+    res.setHeader('Access-Control-Allow-Headers', 'content-type,authorization,idempotency-key,x-request-id');
     res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PATCH,DELETE,OPTIONS');
 
     if (req.method === 'OPTIONS') {
@@ -74,6 +76,7 @@ export function createApp() {
 
   app.use(healthRouter);
   app.use(capabilitiesRouter);
+  app.use(openApiRouter);
   app.use(authRouter);
   app.use(internalRouter);
   app.use(requireAuth());
@@ -106,6 +109,18 @@ export function createApp() {
           code: issue.code,
           message: issue.message,
         })),
+      });
+      return;
+    }
+
+    const mappedError = mapKnownError(error);
+    if (mappedError) {
+      res.status(mappedError.statusCode).json({
+        error: mappedError.name,
+        code: mappedError.code,
+        message: mappedError.message,
+        requestId: _req.requestId,
+        ...(mappedError.details === undefined ? {} : { details: mappedError.details }),
       });
       return;
     }
@@ -150,11 +165,4 @@ declare global {
 function normalizeRequestId(value?: string | null) {
   const trimmed = value?.trim();
   return trimmed && /^[a-zA-Z0-9._:-]{1,120}$/.test(trimmed) ? trimmed : null;
-}
-
-function normalizeErrorCode(errorName: string) {
-  return errorName
-    .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
-    .replace(/[^a-zA-Z0-9_]+/g, '_')
-    .toLowerCase();
 }

@@ -330,14 +330,181 @@ test('payment runs import CSV rows and prepare one batch execution packet', asyn
     setup.sessionToken,
   );
   assert.equal(runProof.packetType, 'stablecoin_payment_run_proof');
+  assert.equal(runProof.detailLevel, 'summary');
   assert.match(runProof.proofId, /^axoria_payment_run_proof_/);
   assert.match(runProof.canonicalDigest, /^[a-f0-9]{64}$/);
-  assert.equal(runProof.orderProofs.length, 2);
+  assert.equal(runProof.orderProofs.length, 0);
   assert.equal(runProof.readiness.counts.total, 2);
   assert.equal(runProof.reconciliationSummary.requestedAmountRaw, '30000');
   assert.equal(runProof.reconciliationSummary.settlementCounts.pending, 2);
   assert.equal(runProof.agentSummary.canTreatAsFinal, false);
-  assert.equal(runProof.orders[0].proofId, runProof.orderProofs[0].proofId);
+  assert.match(runProof.orders[0].proofId, /^axoria_payment_proof_/);
+  assert.match(runProof.orders[0].proofDigest, /^[a-f0-9]{64}$/);
+  assert.match(runProof.orders[0].fullProofEndpoint, /\/payment-orders\/.+\/proof$/);
+  assert.equal(runProof.orders[0].latestExecution, undefined);
+  assert.equal(runProof.orders[0].match, undefined);
+  assert.equal(runProof.orders[0].exceptions, undefined);
+
+  const summaryRunProof = await get(
+    `/workspaces/${setup.workspace.workspaceId}/payment-runs/${imported.paymentRun.paymentRunId}/proof?detail=summary`,
+    setup.sessionToken,
+  );
+  assert.equal(summaryRunProof.detailLevel, 'summary');
+  assert.equal(summaryRunProof.orderProofs.length, 0);
+  assert.equal(summaryRunProof.orders.length, 2);
+
+  const compactRunProof = await get(
+    `/workspaces/${setup.workspace.workspaceId}/payment-runs/${imported.paymentRun.paymentRunId}/proof?detail=compact`,
+    setup.sessionToken,
+  );
+  assert.equal(compactRunProof.detailLevel, 'compact');
+  assert.equal(compactRunProof.orderProofs.length, 2);
+  assert.equal(compactRunProof.orders[0].proofId, compactRunProof.orderProofs[0].proofId);
+  assert.equal(compactRunProof.orders[0].proofDigest, compactRunProof.orderProofs[0].canonicalDigest);
+  assert.equal(compactRunProof.orderProofs[0].sourceArtifacts, undefined);
+  assert.equal(compactRunProof.orderProofs[0].auditTrail, undefined);
+  assert.match(compactRunProof.orderProofs[0].fullProofEndpoint, /\/payment-orders\/.+\/proof$/);
+
+  const fullRunProof = await get(
+    `/workspaces/${setup.workspace.workspaceId}/payment-runs/${imported.paymentRun.paymentRunId}/proof?detail=full`,
+    setup.sessionToken,
+  );
+  assert.equal(fullRunProof.detailLevel, 'full');
+  assert.equal(fullRunProof.orderProofs.length, 2);
+  assert.ok(fullRunProof.orderProofs[0].sourceArtifacts);
+  assert.ok(Array.isArray(fullRunProof.orderProofs[0].auditTrail));
+
+  const runProofMarkdown = await getText(
+    `/workspaces/${setup.workspace.workspaceId}/payment-runs/${imported.paymentRun.paymentRunId}/proof?format=markdown`,
+    setup.sessionToken,
+  );
+  assert.match(runProofMarkdown, /^# Payment Run Proof/);
+  assert.match(runProofMarkdown, /April payroll run/);
+  assert.match(runProofMarkdown, /Total amount: 0.03 USDC/);
+});
+
+test('payment run CSV preview detects duplicate rows and import is idempotent by key', async () => {
+  const setup = await createPaymentOrderSetup();
+  const csv = [
+    'payee,destination,amount,reference,due_date',
+    `Acme Corp,${setup.destination.label},0.01,RUN-IDEMP-1,2026-04-15`,
+  ].join('\n');
+  const duplicateCsv = [
+    'payee,destination,amount,reference,due_date',
+    `Acme Corp,${setup.destination.label},0.01,RUN-DUP-1,2026-04-15`,
+    `Acme Corp,${setup.destination.label},0.01,RUN-DUP-1,2026-04-15`,
+  ].join('\n');
+
+  const preview = await post(
+    `/workspaces/${setup.workspace.workspaceId}/payment-runs/import-csv/preview`,
+    { csv: duplicateCsv },
+    setup.sessionToken,
+  );
+  assert.equal(preview.totalRows, 2);
+  assert.equal(preview.ready, 0);
+  assert.equal(preview.warnings, 2);
+  assert.equal(preview.failed, 0);
+  assert.equal(preview.canImport, true);
+  assert.match(preview.csvFingerprint, /^[a-f0-9]{64}$/);
+  assert.match(preview.items[1].warnings[0], /Duplicate CSV row/i);
+
+  const imported = await post(
+    `/workspaces/${setup.workspace.workspaceId}/payment-runs/import-csv`,
+    {
+      runName: 'Idempotent run',
+      csv,
+      importKey: 'idem-run-1',
+      sourceWorkspaceAddressId: setup.sourceAddress.workspaceAddressId,
+      submitOrderNow: true,
+    },
+    setup.sessionToken,
+  );
+  const replay = await post(
+    `/workspaces/${setup.workspace.workspaceId}/payment-runs/import-csv`,
+    {
+      runName: 'Should not create another run',
+      csv,
+      importKey: 'idem-run-1',
+      sourceWorkspaceAddressId: setup.sourceAddress.workspaceAddressId,
+      submitOrderNow: true,
+    },
+    setup.sessionToken,
+  );
+
+  assert.equal(imported.paymentRun.paymentRunId, replay.paymentRun.paymentRunId);
+  assert.equal(replay.importResult.idempotentReplay, true);
+  assert.equal(replay.paymentRun.totals.orderCount, 1);
+
+  const runCount = await prisma.paymentRun.count({
+    where: { workspaceId: setup.workspace.workspaceId },
+  });
+  assert.equal(runCount, 1);
+});
+
+test('payment run cancellation and close are explicit lifecycle actions', async () => {
+  const setup = await createPaymentOrderSetup();
+  const cancellableCsv = [
+    'payee,destination,amount,reference,due_date',
+    `Cancel Corp,${setup.destination.label},0.01,RUN-CANCEL-1,2026-04-15`,
+  ].join('\n');
+  const cancellable = await post(
+    `/workspaces/${setup.workspace.workspaceId}/payment-runs/import-csv`,
+    {
+      runName: 'Cancellable run',
+      csv: cancellableCsv,
+      sourceWorkspaceAddressId: setup.sourceAddress.workspaceAddressId,
+      submitOrderNow: false,
+    },
+    setup.sessionToken,
+  );
+
+  const cancelled = await post(
+    `/workspaces/${setup.workspace.workspaceId}/payment-runs/${cancellable.paymentRun.paymentRunId}/cancel`,
+    {},
+    setup.sessionToken,
+  );
+  assert.equal(cancelled.state, 'cancelled');
+  assert.equal(cancelled.derivedState, 'cancelled');
+  assert.equal(cancelled.paymentOrders[0].state, 'cancelled');
+  assert.equal(cancelled.paymentOrders[0].derivedState, 'cancelled');
+
+  const closableCsv = [
+    'payee,destination,amount,reference,due_date',
+    `Close Corp,${setup.destination.label},0.01,RUN-CLOSE-1,2026-04-15`,
+  ].join('\n');
+  const closable = await post(
+    `/workspaces/${setup.workspace.workspaceId}/payment-runs/import-csv`,
+    {
+      runName: 'Closable run',
+      csv: closableCsv,
+      sourceWorkspaceAddressId: setup.sourceAddress.workspaceAddressId,
+      submitOrderNow: true,
+    },
+    setup.sessionToken,
+  );
+  const order = closable.paymentRun.paymentOrders[0];
+  await seedExactSettlement({
+    workspaceId: setup.workspace.workspaceId,
+    transferRequestId: order.transferRequestId,
+    destinationWallet: setup.destinationAddress.address,
+    destinationTokenAccount: setup.destinationAddress.usdcAtaAddress,
+    amountRaw: '10000',
+  });
+
+  const closed = await post(
+    `/workspaces/${setup.workspace.workspaceId}/payment-runs/${closable.paymentRun.paymentRunId}/close`,
+    {},
+    setup.sessionToken,
+  );
+  assert.equal(closed.state, 'closed');
+  assert.equal(closed.derivedState, 'closed');
+  assert.equal(closed.paymentOrders[0].state, 'closed');
+  assert.equal(closed.paymentOrders[0].derivedState, 'closed');
+
+  const transferRequest = await prisma.transferRequest.findUniqueOrThrow({
+    where: { transferRequestId: order.transferRequestId },
+  });
+  assert.equal(transferRequest.status, 'closed');
 });
 
 test('payment order duplicate references and unsafe source wallets are rejected', async () => {
@@ -613,6 +780,14 @@ test('payment orders derive settled and exception states from existing reconcili
   assert.equal(proof.settlement.reconciliationOutcome, 'matched_exact');
   assert.equal(proof.agentSummary.canTreatAsFinal, false);
   assert.equal(proof.verification.reconciliation.outcome, 'matched_exact');
+
+  const proofMarkdown = await getText(
+    `/workspaces/${setup.workspace.workspaceId}/payment-orders/${paymentOrder.paymentOrderId}/proof?format=markdown`,
+    setup.sessionToken,
+  );
+  assert.match(proofMarkdown, /^# Payment Proof/);
+  assert.match(proofMarkdown, /Amount: 0.01 USDC/);
+  assert.match(proofMarkdown, /Match status: matched_exact/);
 
   const partialOrder = await createSubmittedPaymentOrder(setup, 'MATCH-PARTIAL');
   await seedPartialSettlement({
@@ -944,6 +1119,15 @@ async function get(path: string, sessionToken: string) {
   const text = await response.text();
   assert.equal(response.status, 200, text);
   return JSON.parse(text);
+}
+
+async function getText(path: string, sessionToken: string) {
+  const response = await fetch(`${baseUrl}${path}`, {
+    headers: authHeaders(sessionToken),
+  });
+  const text = await response.text();
+  assert.equal(response.status, 200, text);
+  return text;
 }
 
 function authHeaders(sessionToken: string) {
