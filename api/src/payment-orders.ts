@@ -1,14 +1,13 @@
 import type {
   Counterparty,
   Destination,
-  Payee,
   PaymentOrder,
   PaymentOrderEvent,
   PaymentRequest,
   Prisma,
   TransferRequest,
   User,
-  WorkspaceAddress,
+  TreasuryWallet,
 } from '@prisma/client';
 import { buildApprovalEvaluationSummary, getOrCreateWorkspaceApprovalPolicy } from './approval-policy.js';
 import { serializeExecutionRecord } from './execution-records.js';
@@ -21,25 +20,21 @@ import {
   USDC_MINT,
 } from './solana.js';
 import { createTransferRequestEvent } from './transfer-request-events.js';
-import { serializePayee } from './payees.js';
 export { PAYMENT_ORDER_STATES, isPaymentOrderState, type PaymentOrderState } from './payment-order-state.js';
 import type { PaymentOrderState } from './payment-order-state.js';
 
 export type PaymentOrderWithRelations = PaymentOrder & {
   workspace?: unknown;
   paymentRequest: (PaymentRequest & { requestedByUser: Pick<User, 'userId' | 'email' | 'displayName'> | null }) | null;
-  payee: (Payee & { defaultDestination: Destination | null }) | null;
   destination: Destination & {
     counterparty: Counterparty | null;
-    linkedWorkspaceAddress: WorkspaceAddress | null;
   };
   counterparty: Counterparty | null;
-  sourceWorkspaceAddress: WorkspaceAddress | null;
+  sourceTreasuryWallet: TreasuryWallet | null;
   createdByUser: Pick<User, 'userId' | 'email' | 'displayName'> | null;
   transferRequests: Array<
     TransferRequest & {
-      sourceWorkspaceAddress: WorkspaceAddress | null;
-      destinationWorkspaceAddress: WorkspaceAddress | null;
+      sourceTreasuryWallet: TreasuryWallet | null;
       destination: (Destination & { counterparty: Counterparty | null }) | null;
     }
   >;
@@ -57,7 +52,7 @@ export async function createPaymentOrder(
   args: PaymentActorInput & {
     workspaceId: string;
     destinationId: string;
-    sourceWorkspaceAddressId?: string | null;
+    sourceTreasuryWalletId?: string | null;
     amountRaw: string | bigint;
     asset?: string;
     memo?: string | null;
@@ -69,11 +64,10 @@ export async function createPaymentOrder(
     metadataJson?: Prisma.InputJsonValue;
     paymentRequestId?: string | null;
     paymentRunId?: string | null;
-    payeeId?: string | null;
     submitNow?: boolean;
   },
 ) {
-  const [destination, sourceWorkspaceAddress] = await Promise.all([
+  const [destination, sourceTreasuryWallet] = await Promise.all([
     prisma.destination.findFirst({
       where: {
         workspaceId: args.workspaceId,
@@ -82,14 +76,13 @@ export async function createPaymentOrder(
       },
       include: {
         counterparty: true,
-        linkedWorkspaceAddress: true,
       },
     }),
-    args.sourceWorkspaceAddressId
-      ? prisma.workspaceAddress.findFirst({
+    args.sourceTreasuryWalletId
+      ? prisma.treasuryWallet.findFirst({
           where: {
             workspaceId: args.workspaceId,
-            workspaceAddressId: args.sourceWorkspaceAddressId,
+            treasuryWalletId: args.sourceTreasuryWalletId,
             isActive: true,
           },
         })
@@ -100,25 +93,12 @@ export async function createPaymentOrder(
     throw new Error('Destination not found');
   }
 
-  if (args.payeeId) {
-    const payee = await prisma.payee.findFirst({
-      where: {
-        workspaceId: args.workspaceId,
-        payeeId: args.payeeId,
-        status: 'active',
-      },
-    });
-    if (!payee) {
-      throw new Error('Payee not found');
-    }
-  }
-
-  if (args.sourceWorkspaceAddressId && !sourceWorkspaceAddress) {
+  if (args.sourceTreasuryWalletId && !sourceTreasuryWallet) {
     throw new Error('Source wallet not found');
   }
 
   validateSourceAndDestination({
-    sourceWorkspaceAddress,
+    sourceTreasuryWallet,
     destination,
   });
 
@@ -135,10 +115,9 @@ export async function createPaymentOrder(
         workspaceId: args.workspaceId,
         paymentRequestId: args.paymentRequestId ?? null,
         paymentRunId: args.paymentRunId ?? null,
-        payeeId: args.payeeId ?? null,
         destinationId: destination.destinationId,
         counterpartyId: destination.counterpartyId,
-        sourceWorkspaceAddressId: sourceWorkspaceAddress?.workspaceAddressId,
+        sourceTreasuryWalletId: sourceTreasuryWallet?.treasuryWalletId,
         amountRaw: BigInt(args.amountRaw),
         asset: args.asset ?? 'usdc',
         memo: normalizeOptionalText(args.memo),
@@ -162,12 +141,11 @@ export async function createPaymentOrder(
       afterState: paymentOrder.state,
       payloadJson: {
         destinationId: paymentOrder.destinationId,
-        sourceWorkspaceAddressId: paymentOrder.sourceWorkspaceAddressId,
+        sourceTreasuryWalletId: paymentOrder.sourceTreasuryWalletId,
         amountRaw: paymentOrder.amountRaw.toString(),
         asset: paymentOrder.asset,
         paymentRequestId: paymentOrder.paymentRequestId,
         paymentRunId: paymentOrder.paymentRunId,
-        payeeId: paymentOrder.payeeId,
       },
     });
 
@@ -224,7 +202,7 @@ export async function updatePaymentOrder(
     workspaceId: string;
     paymentOrderId: string;
     input: {
-      sourceWorkspaceAddressId?: string | null;
+      sourceTreasuryWalletId?: string | null;
       memo?: string | null;
       externalReference?: string | null;
       invoiceNumber?: string | null;
@@ -247,24 +225,24 @@ export async function updatePaymentOrder(
     throw new Error(`Payment order ${current.state} cannot be edited`);
   }
 
-  const sourceWorkspaceAddress = args.input.sourceWorkspaceAddressId
-    ? await prisma.workspaceAddress.findFirst({
+  const sourceTreasuryWallet = args.input.sourceTreasuryWalletId
+    ? await prisma.treasuryWallet.findFirst({
         where: {
           workspaceId: args.workspaceId,
-          workspaceAddressId: args.input.sourceWorkspaceAddressId,
+          treasuryWalletId: args.input.sourceTreasuryWalletId,
           isActive: true,
         },
       })
-    : args.input.sourceWorkspaceAddressId === null
+    : args.input.sourceTreasuryWalletId === null
       ? null
-      : current.sourceWorkspaceAddress;
+      : current.sourceTreasuryWallet;
 
-  if (args.input.sourceWorkspaceAddressId && !sourceWorkspaceAddress) {
+  if (args.input.sourceTreasuryWalletId && !sourceTreasuryWallet) {
     throw new Error('Source wallet not found');
   }
 
   validateSourceAndDestination({
-    sourceWorkspaceAddress,
+    sourceTreasuryWallet,
     destination: current.destination,
   });
 
@@ -292,10 +270,10 @@ export async function updatePaymentOrder(
     await tx.paymentOrder.update({
       where: { paymentOrderId: current.paymentOrderId },
       data: {
-        sourceWorkspaceAddressId:
-          args.input.sourceWorkspaceAddressId === undefined
+        sourceTreasuryWalletId:
+          args.input.sourceTreasuryWalletId === undefined
             ? undefined
-            : sourceWorkspaceAddress?.workspaceAddressId ?? null,
+            : sourceTreasuryWallet?.treasuryWalletId ?? null,
         memo: args.input.memo === undefined ? undefined : normalizeOptionalText(args.input.memo),
         externalReference:
           args.input.externalReference === undefined ? undefined : normalizeOptionalText(args.input.externalReference),
@@ -352,7 +330,7 @@ export async function submitPaymentOrder(
 
   validateDestinationForPaymentOrder(current.destination);
   validateSourceAndDestination({
-    sourceWorkspaceAddress: current.sourceWorkspaceAddress,
+    sourceTreasuryWallet: current.sourceTreasuryWallet,
     destination: current.destination,
   });
 
@@ -374,8 +352,7 @@ export async function submitPaymentOrder(
       data: {
         workspaceId: args.workspaceId,
         paymentOrderId: current.paymentOrderId,
-        sourceWorkspaceAddressId: current.sourceWorkspaceAddressId,
-        destinationWorkspaceAddressId: requireLinkedDestinationAddress(current.destination),
+        sourceTreasuryWalletId: current.sourceTreasuryWalletId,
         destinationId: current.destinationId,
         requestType: 'payment_order',
         asset: current.asset,
@@ -388,7 +365,6 @@ export async function submitPaymentOrder(
         propertiesJson: {
           paymentOrderId: current.paymentOrderId,
           paymentRunId: current.paymentRunId,
-          payeeId: current.payeeId,
           invoiceNumber: current.invoiceNumber,
           attachmentUrl: current.attachmentUrl,
         },
@@ -591,41 +567,41 @@ export async function createPaymentOrderExecution(args: PaymentActorInput & {
 export async function preparePaymentOrderExecution(args: PaymentActorInput & {
   workspaceId: string;
   paymentOrderId: string;
-  sourceWorkspaceAddressId?: string | null;
+  sourceTreasuryWalletId?: string | null;
 }) {
   let current = await prisma.paymentOrder.findFirstOrThrow({
     where: { workspaceId: args.workspaceId, paymentOrderId: args.paymentOrderId },
     include: paymentOrderInclude,
   });
 
-  if (args.sourceWorkspaceAddressId && args.sourceWorkspaceAddressId !== current.sourceWorkspaceAddressId) {
-    const sourceWorkspaceAddress = await prisma.workspaceAddress.findFirst({
+  if (args.sourceTreasuryWalletId && args.sourceTreasuryWalletId !== current.sourceTreasuryWalletId) {
+    const sourceTreasuryWallet = await prisma.treasuryWallet.findFirst({
       where: {
         workspaceId: args.workspaceId,
-        workspaceAddressId: args.sourceWorkspaceAddressId,
+        treasuryWalletId: args.sourceTreasuryWalletId,
         isActive: true,
       },
     });
 
-    if (!sourceWorkspaceAddress) {
+    if (!sourceTreasuryWallet) {
       throw new Error('Source wallet not found');
     }
 
     validateSourceAndDestination({
-      sourceWorkspaceAddress,
+      sourceTreasuryWallet,
       destination: current.destination,
     });
 
     await prisma.$transaction(async (tx) => {
       await tx.paymentOrder.update({
         where: { paymentOrderId: current.paymentOrderId },
-        data: { sourceWorkspaceAddressId: sourceWorkspaceAddress.workspaceAddressId },
+        data: { sourceTreasuryWalletId: sourceTreasuryWallet.treasuryWalletId },
       });
 
       for (const request of current.transferRequests) {
         await tx.transferRequest.update({
           where: { transferRequestId: request.transferRequestId },
-          data: { sourceWorkspaceAddressId: sourceWorkspaceAddress.workspaceAddressId },
+          data: { sourceTreasuryWalletId: sourceTreasuryWallet.treasuryWalletId },
         });
       }
 
@@ -637,7 +613,7 @@ export async function preparePaymentOrderExecution(args: PaymentActorInput & {
         beforeState: current.state,
         afterState: current.state,
         payloadJson: {
-          sourceWorkspaceAddressId: sourceWorkspaceAddress.workspaceAddressId,
+          sourceTreasuryWalletId: sourceTreasuryWallet.treasuryWalletId,
         },
       });
     });
@@ -648,7 +624,7 @@ export async function preparePaymentOrderExecution(args: PaymentActorInput & {
     });
   }
 
-  if (!current.sourceWorkspaceAddress) {
+  if (!current.sourceTreasuryWallet) {
     throw new Error('Choose a source wallet before preparing execution');
   }
 
@@ -700,7 +676,7 @@ export async function preparePaymentOrderExecution(args: PaymentActorInput & {
   if (
     reusableExecutionRecord
     && reusableExecutionPacket
-    && preparedExecutionPacketUsesSource(reusableExecutionPacket, current.sourceWorkspaceAddress)
+    && preparedExecutionPacketUsesSource(reusableExecutionPacket, current.sourceTreasuryWallet)
   ) {
     return {
       executionRecord: serializeExecutionRecord(reusableExecutionRecord),
@@ -992,10 +968,9 @@ async function buildPaymentOrderReadModel(order: PaymentOrderWithRelations) {
     workspaceId: order.workspaceId,
     paymentRequestId: order.paymentRequestId,
     paymentRunId: order.paymentRunId,
-    payeeId: order.payeeId,
     destinationId: order.destinationId,
     counterpartyId: order.counterpartyId,
-    sourceWorkspaceAddressId: order.sourceWorkspaceAddressId,
+    sourceTreasuryWalletId: order.sourceTreasuryWalletId,
     transferRequestId: primaryTransferRequest?.transferRequestId ?? null,
     amountRaw: order.amountRaw.toString(),
     asset: order.asset,
@@ -1013,9 +988,8 @@ async function buildPaymentOrderReadModel(order: PaymentOrderWithRelations) {
     createdAt: order.createdAt,
     updatedAt: order.updatedAt,
     destination: serializePaymentOrderDestination(order.destination),
-    payee: order.payee ? serializePayee(order.payee) : null,
     counterparty: order.counterparty ? serializeCounterparty(order.counterparty) : null,
-    sourceWorkspaceAddress: order.sourceWorkspaceAddress ? serializeWorkspaceAddress(order.sourceWorkspaceAddress) : null,
+    sourceTreasuryWallet: order.sourceTreasuryWallet ? serializeTreasuryWallet(order.sourceTreasuryWallet) : null,
     createdByUser: serializeUserRef(order.createdByUser),
     paymentRequest: order.paymentRequest ? serializePaymentRequestRef(order.paymentRequest) : null,
     transferRequests: order.transferRequests.map((request) => ({
@@ -1113,14 +1087,13 @@ function buildPaymentExecutionPacketBase(args: {
   current: PaymentOrderWithRelations;
   transferRequestId: string;
 }) {
-  const source = args.current.sourceWorkspaceAddress;
+  const source = args.current.sourceTreasuryWallet;
   if (!source) {
     throw new Error('Choose a source wallet before preparing execution');
   }
 
   const sourceTokenAccount = source.usdcAtaAddress ?? deriveUsdcAtaForWallet(source.address);
   const destinationTokenAccount = args.current.destination.tokenAccountAddress
-    ?? args.current.destination.linkedWorkspaceAddress?.usdcAtaAddress
     ?? deriveUsdcAtaForWallet(args.current.destination.walletAddress);
   const instructions = buildUsdcTransferInstructions({
     sourceWallet: source.address,
@@ -1138,7 +1111,7 @@ function buildPaymentExecutionPacketBase(args: {
     transferRequestId: args.transferRequestId,
     createdAt: new Date().toISOString(),
     source: {
-      workspaceAddressId: source.workspaceAddressId,
+      treasuryWalletId: source.treasuryWalletId,
       walletAddress: source.address,
       tokenAccountAddress: sourceTokenAccount,
       label: source.displayName,
@@ -1204,7 +1177,7 @@ function getPreparedExecutionPacket(metadataJson: unknown) {
   return metadataJson.preparedExecution ?? null;
 }
 
-function preparedExecutionPacketUsesSource(packet: unknown, source: WorkspaceAddress | null) {
+function preparedExecutionPacketUsesSource(packet: unknown, source: TreasuryWallet | null) {
   if (!source || !isRecordLike(packet) || !isRecordLike(packet.source)) {
     return false;
   }
@@ -1234,19 +1207,13 @@ const paymentOrderInclude = {
       },
     },
   },
-  payee: {
-    include: {
-      defaultDestination: true,
-    },
-  },
   destination: {
     include: {
       counterparty: true,
-      linkedWorkspaceAddress: true,
     },
   },
   counterparty: true,
-  sourceWorkspaceAddress: true,
+  sourceTreasuryWallet: true,
   createdByUser: {
     select: {
       userId: true,
@@ -1256,8 +1223,7 @@ const paymentOrderInclude = {
   },
   transferRequests: {
     include: {
-      sourceWorkspaceAddress: true,
-      destinationWorkspaceAddress: true,
+      sourceTreasuryWallet: true,
       destination: {
         include: {
           counterparty: true,
@@ -1286,25 +1252,16 @@ function validateDestinationForPaymentOrder(destination: Pick<Destination, 'labe
 }
 
 function validateSourceAndDestination(args: {
-  sourceWorkspaceAddress: Pick<WorkspaceAddress, 'address'> | null;
+  sourceTreasuryWallet: Pick<TreasuryWallet, 'address'> | null;
   destination: Pick<Destination, 'walletAddress' | 'label'>;
 }) {
-  if (!args.sourceWorkspaceAddress) {
+  if (!args.sourceTreasuryWallet) {
     return;
   }
 
-  if (args.sourceWorkspaceAddress.address === args.destination.walletAddress) {
+  if (args.sourceTreasuryWallet.address === args.destination.walletAddress) {
     throw new Error(`Source wallet cannot be the same as destination "${args.destination.label}"`);
   }
-}
-
-function requireLinkedDestinationAddress(
-  destination: Pick<Destination, 'label' | 'linkedWorkspaceAddressId'>,
-) {
-  if (!destination.linkedWorkspaceAddressId) {
-    throw new Error(`Destination "${destination.label}" must be linked to a saved wallet before creating a payment order transfer`);
-  }
-  return destination.linkedWorkspaceAddressId;
 }
 
 async function enforceDuplicatePaymentOrder(args: {
@@ -1427,7 +1384,6 @@ function serializePaymentRequestRef(
   return {
     paymentRequestId: request.paymentRequestId,
     workspaceId: request.workspaceId,
-    payeeId: request.payeeId,
     destinationId: request.destinationId,
     counterpartyId: request.counterpartyId,
     requestedByUserId: request.requestedByUserId,
@@ -1447,14 +1403,12 @@ function serializePaymentRequestRef(
 function serializePaymentOrderDestination(
   destination: Destination & {
     counterparty: Counterparty | null;
-    linkedWorkspaceAddress: WorkspaceAddress | null;
   },
 ) {
   return {
     destinationId: destination.destinationId,
     workspaceId: destination.workspaceId,
     counterpartyId: destination.counterpartyId,
-    linkedWorkspaceAddressId: destination.linkedWorkspaceAddressId,
     chain: destination.chain,
     asset: destination.asset,
     walletAddress: destination.walletAddress,
@@ -1469,7 +1423,6 @@ function serializePaymentOrderDestination(
     createdAt: destination.createdAt,
     updatedAt: destination.updatedAt,
     counterparty: destination.counterparty ? serializeCounterparty(destination.counterparty) : null,
-    linkedWorkspaceAddress: destination.linkedWorkspaceAddress ? serializeWorkspaceAddress(destination.linkedWorkspaceAddress) : null,
   };
 }
 
@@ -1487,13 +1440,12 @@ function serializeCounterparty(counterparty: Counterparty) {
   };
 }
 
-function serializeWorkspaceAddress(address: WorkspaceAddress) {
+function serializeTreasuryWallet(address: TreasuryWallet) {
   return {
-    workspaceAddressId: address.workspaceAddressId,
+    treasuryWalletId: address.treasuryWalletId,
     workspaceId: address.workspaceId,
     chain: address.chain,
     address: address.address,
-    addressKind: address.addressKind,
     assetScope: address.assetScope,
     usdcAtaAddress: address.usdcAtaAddress,
     isActive: address.isActive,

@@ -16,7 +16,7 @@ export function renderPaymentOrderProofMarkdown(proof: PaymentOrderProofPacket) 
     `Recommended action: ${proof.agentSummary.recommendedAction}`,
     ``,
     `## Intent`,
-    `Payee: ${proof.intent.payee?.name ?? 'Unassigned'}`,
+    `Counterparty: ${proof.parties.counterparty?.displayName ?? proof.parties.destination?.label ?? 'Unassigned'}`,
     `Reference: ${proof.intent.reference ?? 'None'}`,
     `Reason: ${proof.intent.reason ?? 'None'}`,
     `Amount: ${formatUsdcAmount(proof.intent.amountRaw) ?? proof.intent.amountRaw}`,
@@ -99,7 +99,7 @@ export function renderPaymentRunProofMarkdown(proof: PaymentRunProofPacket) {
     `## Orders`,
     ...proof.orders.map((order) => [
       `### ${order.reference ?? order.paymentOrderId}`,
-      `Payee: ${order.payee?.name ?? 'Unassigned'}`,
+      `Counterparty: ${order.destination.label}`,
       `Destination: ${order.destination.label} (${shortenAddress(order.destination.walletAddress)})`,
       `Amount: ${formatUsdcAmount(order.amountRaw) ?? order.amountRaw}`,
       `State: ${order.state}`,

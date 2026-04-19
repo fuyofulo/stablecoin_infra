@@ -34,7 +34,6 @@ const listPaymentRequestsQuerySchema = z.object({
 });
 
 const createPaymentRequestSchema = z.object({
-  payeeId: z.string().uuid().optional(),
   destinationId: z.string().uuid(),
   amountRaw: amountRawSchema,
   asset: z.string().trim().min(1).max(20).default('usdc'),
@@ -43,19 +42,19 @@ const createPaymentRequestSchema = z.object({
   dueAt: z.string().datetime().optional(),
   metadataJson: z.record(z.any()).default({}),
   createOrderNow: z.boolean().default(false),
-  sourceWorkspaceAddressId: z.string().uuid().optional(),
+  sourceTreasuryWalletId: z.string().uuid().optional(),
   submitOrderNow: z.boolean().default(false),
 });
 
 const importPaymentRequestsCsvSchema = z.object({
   csv: z.string().min(1),
   createOrderNow: z.boolean().default(true),
-  sourceWorkspaceAddressId: z.string().uuid().optional(),
+  sourceTreasuryWalletId: z.string().uuid().optional(),
   submitOrderNow: z.boolean().default(false),
 });
 
 const promotePaymentRequestSchema = z.object({
-  sourceWorkspaceAddressId: z.string().uuid().optional(),
+  sourceTreasuryWalletId: z.string().uuid().optional(),
   submitNow: z.boolean().default(false),
 });
 
@@ -79,7 +78,6 @@ paymentRequestsRouter.post('/workspaces/:workspaceId/payment-requests', asyncRou
     const detail = await createPaymentRequest({
       workspaceId,
       actorUserId: req.auth!.userId,
-      payeeId: input.payeeId,
       destinationId: input.destinationId,
       amountRaw: input.amountRaw,
       asset: input.asset,
@@ -88,7 +86,7 @@ paymentRequestsRouter.post('/workspaces/:workspaceId/payment-requests', asyncRou
       dueAt: input.dueAt ? new Date(input.dueAt) : null,
       metadataJson: input.metadataJson,
       createOrderNow: input.createOrderNow,
-      sourceWorkspaceAddressId: input.sourceWorkspaceAddressId,
+      sourceTreasuryWalletId: input.sourceTreasuryWalletId,
       submitOrderNow: input.submitOrderNow,
     });
 
@@ -105,7 +103,7 @@ paymentRequestsRouter.post('/workspaces/:workspaceId/payment-requests/import-csv
       actorUserId: req.auth!.userId,
       csv: input.csv,
       createOrderNow: input.createOrderNow,
-      sourceWorkspaceAddressId: input.sourceWorkspaceAddressId,
+      sourceTreasuryWalletId: input.sourceTreasuryWalletId,
       submitOrderNow: input.submitOrderNow,
     }));
 }));
@@ -139,7 +137,7 @@ paymentRequestsRouter.post(
         workspaceId,
         paymentRequestId,
         actorUserId: req.auth!.userId,
-        sourceWorkspaceAddressId: input.sourceWorkspaceAddressId,
+        sourceTreasuryWalletId: input.sourceTreasuryWalletId,
         submitNow: input.submitNow,
       }));
   }),

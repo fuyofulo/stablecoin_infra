@@ -170,8 +170,8 @@ opsRouter.get('/workspaces/:workspaceId/exports/reconciliation', async (req, res
 
     const rows = items.map((item) => ({
       transfer_request_id: item.transferRequestId,
-      source_wallet: item.sourceWorkspaceAddress?.displayName ?? item.sourceWorkspaceAddress?.address ?? '',
-      destination: item.destination?.label ?? item.destinationWorkspaceAddress?.displayName ?? item.destinationWorkspaceAddress?.address ?? '',
+      source_wallet: item.sourceTreasuryWallet?.displayName ?? item.sourceTreasuryWallet?.address ?? '',
+      destination: item.destination?.label ?? item.destination?.walletAddress ?? '',
       counterparty: item.destination?.counterparty?.displayName ?? '',
       amount_raw: item.amountRaw,
       amount_usdc: formatRawUsdc(item.amountRaw),

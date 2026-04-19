@@ -35,13 +35,13 @@ const paymentRunProofQuerySchema = z.object({
 const importPaymentRunCsvSchema = z.object({
   csv: z.string().min(1),
   runName: z.string().trim().max(200).optional(),
-  sourceWorkspaceAddressId: z.string().uuid().optional(),
+  sourceTreasuryWalletId: z.string().uuid().optional(),
   submitOrderNow: z.boolean().default(false),
   importKey: z.string().trim().max(200).optional(),
 });
 
 const preparePaymentRunExecutionSchema = z.object({
-  sourceWorkspaceAddressId: z.string().uuid().optional(),
+  sourceTreasuryWalletId: z.string().uuid().optional(),
 });
 
 const attachPaymentRunSignatureSchema = z.object({
@@ -64,7 +64,7 @@ paymentRunsRouter.post('/workspaces/:workspaceId/payment-runs/import-csv', async
       actorUserId: req.auth!.userId,
       csv: input.csv,
       runName: input.runName,
-      sourceWorkspaceAddressId: input.sourceWorkspaceAddressId,
+      sourceTreasuryWalletId: input.sourceTreasuryWalletId,
       submitOrderNow: input.submitOrderNow,
       importKey: input.importKey,
     }));
@@ -120,7 +120,7 @@ paymentRunsRouter.post('/workspaces/:workspaceId/payment-runs/:paymentRunId/prep
       workspaceId,
       paymentRunId,
       actorUserId: req.auth!.userId,
-      sourceWorkspaceAddressId: input.sourceWorkspaceAddressId,
+      sourceTreasuryWalletId: input.sourceTreasuryWalletId,
     }));
 }));
 

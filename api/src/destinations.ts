@@ -1,5 +1,6 @@
 import type { Counterparty, Destination, Prisma } from '@prisma/client';
 import { prisma } from './prisma.js';
+import { deriveUsdcAtaForWallet, SOLANA_CHAIN, USDC_ASSET } from './solana.js';
 
 export type CreateCounterpartyInput = {
   displayName: string;
@@ -18,7 +19,10 @@ export type UpdateCounterpartyInput = {
 
 export type CreateDestinationInput = {
   counterpartyId?: string | null;
-  linkedWorkspaceAddressId: string;
+  chain?: 'solana';
+  asset?: 'usdc';
+  walletAddress: string;
+  tokenAccountAddress?: string | null;
   destinationType?: string;
   trustState?: 'unreviewed' | 'trusted' | 'restricted' | 'blocked';
   label: string;
@@ -30,7 +34,8 @@ export type CreateDestinationInput = {
 
 export type UpdateDestinationInput = {
   counterpartyId?: string | null;
-  linkedWorkspaceAddressId?: string;
+  walletAddress?: string;
+  tokenAccountAddress?: string | null;
   destinationType?: string;
   trustState?: 'unreviewed' | 'trusted' | 'restricted' | 'blocked';
   label?: string;
@@ -102,7 +107,6 @@ export async function listDestinations(workspaceId: string, options?: { limit?: 
     where: { workspaceId },
     include: {
       counterparty: true,
-      linkedWorkspaceAddress: true,
     },
     orderBy: { createdAt: 'desc' },
     take: options?.limit ?? 100,
@@ -112,36 +116,24 @@ export async function listDestinations(workspaceId: string, options?: { limit?: 
 }
 
 export async function createDestination(workspaceId: string, input: CreateDestinationInput) {
-  const [workspace, linkedWorkspaceAddress] = await Promise.all([
-    getWorkspaceOrg(workspaceId),
-    prisma.workspaceAddress.findFirst({
-      where: {
-        workspaceId,
-        workspaceAddressId: input.linkedWorkspaceAddressId,
-        isActive: true,
-      },
-    }),
-  ]);
-
-  if (!linkedWorkspaceAddress) {
-    throw new Error('Linked wallet not found');
-  }
+  const workspace = await getWorkspaceOrg(workspaceId);
 
   if (input.counterpartyId) {
     await assertCounterpartyBelongsToOrg(workspace.organizationId, input.counterpartyId);
   }
 
   await assertDestinationLabelAvailable(workspaceId, input.label);
+  await assertDestinationWalletAvailable(workspaceId, input.walletAddress);
+  const tokenAccountAddress = normalizeOptionalText(input.tokenAccountAddress) ?? deriveUsdcAtaForWallet(input.walletAddress);
 
   const destination = await prisma.destination.create({
     data: {
       workspaceId,
       counterpartyId: input.counterpartyId,
-      linkedWorkspaceAddressId: linkedWorkspaceAddress.workspaceAddressId,
-      chain: linkedWorkspaceAddress.chain,
-      asset: linkedWorkspaceAddress.assetScope,
-      walletAddress: linkedWorkspaceAddress.address,
-      tokenAccountAddress: linkedWorkspaceAddress.usdcAtaAddress,
+      chain: input.chain ?? SOLANA_CHAIN,
+      asset: input.asset ?? USDC_ASSET,
+      walletAddress: input.walletAddress,
+      tokenAccountAddress,
       destinationType: input.destinationType ?? 'wallet',
       trustState: input.trustState ?? 'unreviewed',
       label: input.label,
@@ -152,7 +144,6 @@ export async function createDestination(workspaceId: string, input: CreateDestin
     },
     include: {
       counterparty: true,
-      linkedWorkspaceAddress: true,
     },
   });
 
@@ -174,32 +165,22 @@ export async function updateDestination(workspaceId: string, destinationId: stri
   const nextLabel = input.label?.trim() || current.label;
   await assertDestinationLabelAvailable(workspaceId, nextLabel, destinationId);
 
-  const linkedWorkspaceAddress = input.linkedWorkspaceAddressId
-    ? await prisma.workspaceAddress.findFirst({
-        where: {
-          workspaceId,
-          workspaceAddressId: input.linkedWorkspaceAddressId,
-          isActive: true,
-        },
-      })
-    : current.linkedWorkspaceAddressId
-      ? await prisma.workspaceAddress.findFirst({
-          where: {
-            workspaceId,
-            workspaceAddressId: current.linkedWorkspaceAddressId,
-          },
-        })
-      : null;
+  const nextWalletAddress = input.walletAddress?.trim();
+  if (nextWalletAddress && nextWalletAddress !== current.walletAddress) {
+    await assertDestinationWalletAvailable(workspaceId, nextWalletAddress, destinationId);
+  }
+  const shouldUpdateTokenAccount = input.tokenAccountAddress !== undefined || Boolean(nextWalletAddress);
+  const tokenAccountAddress = shouldUpdateTokenAccount
+    ? normalizeOptionalText(input.tokenAccountAddress)
+      ?? deriveUsdcAtaForWallet(nextWalletAddress ?? current.walletAddress)
+    : undefined;
 
   const updated = await prisma.destination.update({
     where: { destinationId },
     data: {
       counterpartyId: input.counterpartyId !== undefined ? input.counterpartyId : undefined,
-      linkedWorkspaceAddressId: input.linkedWorkspaceAddressId ?? undefined,
-      chain: linkedWorkspaceAddress?.chain ?? undefined,
-      asset: linkedWorkspaceAddress?.assetScope ?? undefined,
-      walletAddress: linkedWorkspaceAddress?.address ?? undefined,
-      tokenAccountAddress: linkedWorkspaceAddress?.usdcAtaAddress ?? undefined,
+      walletAddress: nextWalletAddress,
+      tokenAccountAddress,
       destinationType: input.destinationType,
       trustState: input.trustState,
       label: input.label,
@@ -209,7 +190,6 @@ export async function updateDestination(workspaceId: string, destinationId: stri
     },
     include: {
       counterparty: true,
-      linkedWorkspaceAddress: true,
     },
   });
 
@@ -280,6 +260,25 @@ async function assertDestinationLabelAvailable(
   }
 }
 
+async function assertDestinationWalletAvailable(
+  workspaceId: string,
+  walletAddress: string,
+  excludeDestinationId?: string,
+) {
+  const existing = await prisma.destination.findFirst({
+    where: {
+      workspaceId,
+      walletAddress,
+      ...(excludeDestinationId ? { destinationId: { not: excludeDestinationId } } : {}),
+    },
+    select: { destinationId: true },
+  });
+
+  if (existing) {
+    throw new Error(`Destination wallet "${walletAddress}" already exists in this workspace`);
+  }
+}
+
 function serializeCounterparty(counterparty: Counterparty) {
   return {
     counterpartyId: counterparty.counterpartyId,
@@ -296,20 +295,11 @@ function serializeCounterparty(counterparty: Counterparty) {
 
 function serializeDestination(destination: Destination & {
   counterparty?: Counterparty | null;
-  linkedWorkspaceAddress?: {
-    workspaceAddressId: string;
-    address: string;
-    usdcAtaAddress: string | null;
-    addressKind: string;
-    displayName: string | null;
-    notes: string | null;
-  } | null;
 }) {
   return {
     destinationId: destination.destinationId,
     workspaceId: destination.workspaceId,
     counterpartyId: destination.counterpartyId,
-    linkedWorkspaceAddressId: destination.linkedWorkspaceAddressId,
     chain: destination.chain,
     asset: destination.asset,
     walletAddress: destination.walletAddress,
@@ -324,16 +314,6 @@ function serializeDestination(destination: Destination & {
     createdAt: destination.createdAt,
     updatedAt: destination.updatedAt,
     counterparty: destination.counterparty ? serializeCounterparty(destination.counterparty) : null,
-    linkedWorkspaceAddress: destination.linkedWorkspaceAddress
-      ? {
-          workspaceAddressId: destination.linkedWorkspaceAddress.workspaceAddressId,
-          address: destination.linkedWorkspaceAddress.address,
-          usdcAtaAddress: destination.linkedWorkspaceAddress.usdcAtaAddress,
-          addressKind: destination.linkedWorkspaceAddress.addressKind,
-          displayName: destination.linkedWorkspaceAddress.displayName,
-          notes: destination.linkedWorkspaceAddress.notes,
-        }
-      : null,
   };
 }
 

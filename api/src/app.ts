@@ -5,7 +5,6 @@ import { mapKnownError, normalizeErrorCode } from './api-errors.js';
 import { requireAuth } from './auth.js';
 import { notifyAgentTasksChanged } from './agent-task-events.js';
 import { addressLabelsRouter } from './routes/address-labels.js';
-import { addressesRouter } from './routes/addresses.js';
 import { agentRouter } from './routes/agent.js';
 import { apiKeysRouter } from './routes/api-keys.js';
 import { capabilitiesRouter } from './routes/capabilities.js';
@@ -22,11 +21,11 @@ import { recordRouteMetric } from './ops-metrics.js';
 import { openApiRouter } from './routes/openapi.js';
 import { organizationsRouter } from './routes/organizations.js';
 import { opsRouter } from './routes/ops.js';
-import { payeesRouter } from './routes/payees.js';
 import { paymentOrdersRouter } from './routes/payment-orders.js';
 import { paymentRequestsRouter } from './routes/payment-requests.js';
 import { paymentRunsRouter } from './routes/payment-runs.js';
 import { apiKeyRateLimitMiddleware, publicRateLimitMiddleware } from './rate-limit.js';
+import { treasuryWalletsRouter } from './routes/treasury-wallets.js';
 import { transferRequestsRouter } from './routes/transfer-requests.js';
 
 export function createApp() {
@@ -96,10 +95,9 @@ export function createApp() {
   app.use(apiKeysRouter);
   app.use(organizationsRouter);
   app.use(opsRouter);
-  app.use(addressesRouter);
+  app.use(treasuryWalletsRouter);
   app.use(approvalsRouter);
   app.use(destinationsRouter);
-  app.use(payeesRouter);
   app.use(paymentRequestsRouter);
   app.use(paymentRunsRouter);
   app.use(paymentOrdersRouter);

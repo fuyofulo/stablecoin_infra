@@ -1,6 +1,5 @@
-import type { Counterparty, Destination, Payee, PaymentRequest, Prisma, User } from '@prisma/client';
+import type { Counterparty, Destination, PaymentRequest, Prisma, User } from '@prisma/client';
 import { createPaymentOrder, getPaymentOrderDetail } from './payment-orders.js';
-import { serializePayee } from './payees.js';
 import { prisma } from './prisma.js';
 import { deriveUsdcAtaForWallet, SOLANA_CHAIN, USDC_ASSET } from './solana.js';
 
@@ -13,7 +12,6 @@ export const PAYMENT_REQUEST_STATES = [
 export type PaymentRequestState = (typeof PAYMENT_REQUEST_STATES)[number];
 
 type PaymentRequestWithRelations = PaymentRequest & {
-  payee: (Payee & { defaultDestination: Destination | null }) | null;
   destination: Destination & { counterparty: Counterparty | null };
   counterparty: Counterparty | null;
   requestedByUser: Pick<User, 'userId' | 'email' | 'displayName'> | null;
@@ -57,7 +55,6 @@ export async function createPaymentRequest(args: {
   workspaceId: string;
   actorUserId: string;
   paymentRunId?: string | null;
-  payeeId?: string | null;
   destinationId: string;
   amountRaw: string | bigint;
   asset?: string;
@@ -66,7 +63,7 @@ export async function createPaymentRequest(args: {
   dueAt?: Date | null;
   metadataJson?: Prisma.InputJsonValue;
   createOrderNow?: boolean;
-  sourceWorkspaceAddressId?: string | null;
+  sourceTreasuryWalletId?: string | null;
   submitOrderNow?: boolean;
 }) {
   const destination = await prisma.destination.findFirst({
@@ -97,7 +94,6 @@ export async function createPaymentRequest(args: {
     data: {
       workspaceId: args.workspaceId,
       paymentRunId: args.paymentRunId ?? null,
-      payeeId: args.payeeId ?? null,
       destinationId: destination.destinationId,
       counterpartyId: destination.counterpartyId,
       requestedByUserId: args.actorUserId,
@@ -120,7 +116,7 @@ export async function createPaymentRequest(args: {
     paymentRequestId: request.paymentRequestId,
     actorUserId: args.actorUserId,
     paymentRunId: args.paymentRunId,
-    sourceWorkspaceAddressId: args.sourceWorkspaceAddressId,
+    sourceTreasuryWalletId: args.sourceTreasuryWalletId,
     submitNow: args.submitOrderNow ?? false,
   });
 
@@ -132,7 +128,7 @@ export async function promotePaymentRequestToOrder(args: {
   paymentRequestId: string;
   actorUserId: string;
   paymentRunId?: string | null;
-  sourceWorkspaceAddressId?: string | null;
+  sourceTreasuryWalletId?: string | null;
   submitNow?: boolean;
 }) {
   const request = await prisma.paymentRequest.findFirstOrThrow({
@@ -153,8 +149,7 @@ export async function promotePaymentRequestToOrder(args: {
     actorUserId: args.actorUserId,
     destinationId: request.destinationId,
     paymentRunId: args.paymentRunId ?? request.paymentRunId,
-    payeeId: request.payeeId,
-    sourceWorkspaceAddressId: args.sourceWorkspaceAddressId ?? null,
+    sourceTreasuryWalletId: args.sourceTreasuryWalletId ?? null,
     amountRaw: request.amountRaw,
     asset: request.asset,
     memo: request.reason,
@@ -168,7 +163,6 @@ export async function promotePaymentRequestToOrder(args: {
       paymentRequestId: request.paymentRequestId,
       paymentRunId: args.paymentRunId ?? request.paymentRunId,
       inputSource: 'payment_request',
-      payeeId: request.payeeId,
     },
     submitNow: args.submitNow ?? false,
   });
@@ -209,7 +203,7 @@ export async function importPaymentRequestsFromCsv(args: {
   csv: string;
   createOrderNow?: boolean;
   submitOrderNow?: boolean;
-  sourceWorkspaceAddressId?: string | null;
+  sourceTreasuryWalletId?: string | null;
   paymentRunId?: string | null;
 }) {
   const rows = parseCsv(args.csv);
@@ -231,14 +225,14 @@ export async function importPaymentRequestsFromCsv(args: {
       const importKey = buildCsvImportRowKey(parsed);
       const firstSeenRow = seenImportKeys.get(importKey);
       if (firstSeenRow) {
-        throw new Error(`Duplicate CSV row. Same destination/payee, amount, and reference already appeared on row ${firstSeenRow}`);
+        throw new Error(`Duplicate CSV row. Same destination, amount, and reference already appeared on row ${firstSeenRow}`);
       }
       seenImportKeys.set(importKey, rowNumber);
 
-      const { payee, destination } = await resolveCsvPayeeDestination({
+      const destination = await resolveCsvDestination({
         workspaceId: args.workspaceId,
-        payeeName: parsed.payeeName,
         destinationInput: parsed.destinationInput,
+        counterpartyName: parsed.counterpartyName,
         rowNumber,
       });
 
@@ -246,7 +240,6 @@ export async function importPaymentRequestsFromCsv(args: {
         workspaceId: args.workspaceId,
         actorUserId: args.actorUserId,
         paymentRunId: args.paymentRunId,
-        payeeId: payee?.payeeId,
         destinationId: destination.destinationId,
         amountRaw: parsed.amountRaw,
         asset: parsed.asset,
@@ -255,19 +248,18 @@ export async function importPaymentRequestsFromCsv(args: {
         dueAt: parsed.dueAt,
         createOrderNow: args.createOrderNow ?? true,
         submitOrderNow: args.submitOrderNow ?? false,
-        sourceWorkspaceAddressId: args.sourceWorkspaceAddressId,
+        sourceTreasuryWalletId: args.sourceTreasuryWalletId,
         metadataJson: {
           inputSource: 'csv_import',
           csvRowNumber: rowNumber,
           paymentRunId: args.paymentRunId ?? null,
-          payeeName: parsed.payeeName,
+          counterpartyName: parsed.counterpartyName,
         },
       });
 
       items.push({
         rowNumber,
         status: 'imported',
-        payee: payee ? serializePayee(payee) : null,
         paymentRequest,
       });
     } catch (error) {
@@ -310,10 +302,10 @@ export async function previewPaymentRequestsCsv(args: {
       const duplicateRowNumber = seenImportKeys.get(importKey) ?? null;
       seenImportKeys.set(importKey, duplicateRowNumber ?? rowNumber);
 
-      const resolution = await previewCsvPayeeDestination({
+      const resolution = await previewCsvDestination({
         workspaceId: args.workspaceId,
-        payeeName: parsed.payeeName,
         destinationInput: parsed.destinationInput,
+        counterpartyName: parsed.counterpartyName,
         rowNumber,
       });
       const duplicate = resolution.destination
@@ -325,10 +317,9 @@ export async function previewPaymentRequestsCsv(args: {
           })
         : null;
       const warnings = [
-        duplicateRowNumber ? `Duplicate CSV row. Same destination/payee, amount, and reference already appeared on row ${duplicateRowNumber}` : null,
+        duplicateRowNumber ? `Duplicate CSV row. Same destination, amount, and reference already appeared on row ${duplicateRowNumber}` : null,
         duplicate ? `Active ${duplicate.kind} with this destination, amount, and reference already exists` : null,
         resolution.wouldCreateDestination ? 'Destination wallet will be created as unreviewed and may require approval before execution' : null,
-        resolution.wouldCreatePayee ? 'Payee will be created from CSV input' : null,
       ].filter((warning): warning is string => Boolean(warning));
 
       items.push({
@@ -336,7 +327,7 @@ export async function previewPaymentRequestsCsv(args: {
         status: warnings.length ? 'warning' : 'ready',
         warnings,
         parsed: {
-          payeeName: parsed.payeeName,
+          counterpartyName: parsed.counterpartyName,
           destinationInput: parsed.destinationInput,
           amountRaw: parsed.amountRaw,
           asset: parsed.asset,
@@ -367,11 +358,6 @@ export async function previewPaymentRequestsCsv(args: {
 }
 
 const paymentRequestInclude = {
-  payee: {
-    include: {
-      defaultDestination: true,
-    },
-  },
   destination: {
     include: {
       counterparty: true,
@@ -394,105 +380,47 @@ const paymentRequestInclude = {
   },
 } satisfies Prisma.PaymentRequestInclude;
 
-async function resolveCsvPayeeDestination(args: {
+async function resolveCsvDestination(args: {
   workspaceId: string;
-  payeeName: string | null;
   destinationInput: string | null;
+  counterpartyName: string | null;
   rowNumber: number;
 }) {
-  const payee = args.payeeName
-    ? await prisma.payee.findFirst({
-        where: {
-          workspaceId: args.workspaceId,
-          name: { equals: args.payeeName, mode: 'insensitive' },
-          status: 'active',
-        },
-        include: { defaultDestination: true },
-      })
-    : null;
-
-  const destination = args.destinationInput
-    ? await findDestinationForCsv(args.workspaceId, args.destinationInput)
-    : payee?.defaultDestination ?? null;
-
-  const resolvedDestination = destination
-    ?? (args.destinationInput
-      ? await createCsvDestinationFromWallet({
-          workspaceId: args.workspaceId,
-          walletAddress: args.destinationInput,
-          payeeName: args.payeeName,
-          rowNumber: args.rowNumber,
-        })
-      : null);
-
-  if (!resolvedDestination) {
-    throw new Error(`Row ${args.rowNumber}: destination not found`);
+  if (!args.destinationInput) {
+    throw new Error(`Row ${args.rowNumber}: destination wallet address is required`);
   }
 
-  if (!payee && args.payeeName) {
-    const createdPayee = await prisma.payee.create({
-      data: {
-        workspaceId: args.workspaceId,
-        name: args.payeeName,
-        defaultDestinationId: resolvedDestination.destinationId,
-        metadataJson: {
-          inputSource: 'csv_import',
-        },
-      },
-      include: { defaultDestination: true },
-    });
-
-    return { payee: createdPayee, destination: resolvedDestination };
+  const destination = await findDestinationForCsv(args.workspaceId, args.destinationInput);
+  if (destination) {
+    return destination;
   }
 
-  if (payee && !payee.defaultDestinationId && resolvedDestination) {
-    const updatedPayee = await prisma.payee.update({
-      where: { payeeId: payee.payeeId },
-      data: { defaultDestinationId: resolvedDestination.destinationId },
-      include: { defaultDestination: true },
-    });
-    return { payee: updatedPayee, destination: resolvedDestination };
-  }
-
-  return { payee, destination: resolvedDestination };
+  return createCsvDestinationFromWallet({
+    workspaceId: args.workspaceId,
+    walletAddress: args.destinationInput,
+    labelFromCsv: args.counterpartyName,
+    rowNumber: args.rowNumber,
+  });
 }
 
-async function previewCsvPayeeDestination(args: {
+async function previewCsvDestination(args: {
   workspaceId: string;
-  payeeName: string | null;
   destinationInput: string | null;
+  counterpartyName: string | null;
   rowNumber: number;
 }) {
-  const payee = args.payeeName
-    ? await prisma.payee.findFirst({
-        where: {
-          workspaceId: args.workspaceId,
-          name: { equals: args.payeeName, mode: 'insensitive' },
-          status: 'active',
-        },
-        include: { defaultDestination: true },
-      })
-    : null;
-  const destination = args.destinationInput
-    ? await findDestinationForCsv(args.workspaceId, args.destinationInput)
-    : payee?.defaultDestination ?? null;
+  if (!args.destinationInput) {
+    throw new Error(`Row ${args.rowNumber}: destination wallet address is required`);
+  }
 
+  const destination = await findDestinationForCsv(args.workspaceId, args.destinationInput);
   if (destination) {
     return {
-      payee: payee ? serializePayee(payee) : null,
-      destination: serializeDestination({
-        ...destination,
-        counterparty: null,
-      }),
-      wouldCreatePayee: Boolean(args.payeeName && !payee),
+      destination: serializeDestination({ ...destination, counterparty: null }),
       wouldCreateDestination: false,
       walletAddress: destination.walletAddress,
       tokenAccountAddress: destination.tokenAccountAddress,
     };
-  }
-
-  if (!args.destinationInput) {
-    throw new Error(`Row ${args.rowNumber}: destination not found`);
   }
 
   let tokenAccountAddress: string;
@@ -503,9 +431,7 @@ async function previewCsvPayeeDestination(args: {
   }
 
   return {
-    payee: payee ? serializePayee(payee) : null,
     destination: null,
-    wouldCreatePayee: Boolean(args.payeeName && !payee),
     wouldCreateDestination: true,
     walletAddress: args.destinationInput,
     tokenAccountAddress,
@@ -533,20 +459,22 @@ async function findDestinationForCsv(workspaceId: string, value: string) {
 }
 
 function parsePaymentRequestCsvRecord(record: Record<string, string>) {
-  const payeeName = normalizeOptionalText(record.payee ?? record.payee_name ?? record.vendor ?? record.name);
+  const counterpartyName = normalizeOptionalText(
+    record.counterparty ?? record.counterparty_name ?? record.vendor ?? record.name,
+  );
   const destinationInput = normalizeOptionalText(record.destination ?? record.destination_id ?? record.wallet ?? record.wallet_address);
   const amountRaw = record.amount_raw ? BigInt(record.amount_raw).toString() : parseUsdcAmountToRaw(record.amount ?? record.amount_usdc);
   const externalReference = normalizeOptionalText(record.reference ?? record.invoice ?? record.invoice_number ?? record.external_reference);
   const reason = normalizeOptionalText(record.reason ?? record.memo)
-    ?? [payeeName ? `Pay ${payeeName}` : 'Payment request', externalReference].filter(Boolean).join(' ');
+    ?? [counterpartyName ? `Pay ${counterpartyName}` : 'Payment request', externalReference].filter(Boolean).join(' ');
   const dueAt = parseOptionalDate(record.due_date ?? record.due_at);
 
-  if (!payeeName && !destinationInput) {
-    throw new Error('Provide payee or destination');
+  if (!destinationInput) {
+    throw new Error('Destination wallet address is required');
   }
 
   return {
-    payeeName,
+    counterpartyName,
     destinationInput,
     amountRaw,
     asset: normalizeOptionalText(record.asset) ?? 'usdc',
@@ -559,7 +487,6 @@ function parsePaymentRequestCsvRecord(record: Record<string, string>) {
 function buildCsvImportRowKey(parsed: ReturnType<typeof parsePaymentRequestCsvRecord>) {
   return [
     parsed.destinationInput?.toLowerCase() ?? '',
-    parsed.payeeName?.toLowerCase() ?? '',
     parsed.amountRaw,
     parsed.externalReference?.toLowerCase() ?? '',
   ].join('|');
@@ -631,7 +558,7 @@ async function findActivePaymentDuplicate(args: {
 async function createCsvDestinationFromWallet(args: {
   workspaceId: string;
   walletAddress: string;
-  payeeName: string | null;
+  labelFromCsv: string | null;
   rowNumber: number;
 }) {
   let usdcAtaAddress: string;
@@ -641,55 +568,36 @@ async function createCsvDestinationFromWallet(args: {
     throw new Error(`Row ${args.rowNumber}: destination not found and "${args.walletAddress}" is not a valid Solana wallet address`);
   }
 
-  const label = normalizeOptionalText(args.payeeName) ?? shortenAddress(args.walletAddress);
+  const label = normalizeOptionalText(args.labelFromCsv) ?? shortenAddress(args.walletAddress);
 
   return prisma.$transaction(async (tx) => {
-    const workspaceAddress = await tx.workspaceAddress.upsert({
+    const existing = await tx.destination.findUnique({
       where: {
-        workspaceId_address: {
+        workspaceId_walletAddress: {
           workspaceId: args.workspaceId,
-          address: args.walletAddress,
-        },
-      },
-      create: {
-        workspaceId: args.workspaceId,
-        chain: SOLANA_CHAIN,
-        address: args.walletAddress,
-        addressKind: 'wallet',
-        assetScope: USDC_ASSET,
-        usdcAtaAddress,
-        source: 'csv_import',
-        displayName: `${label} wallet`,
-        propertiesJson: {
-          usdcAtaAddress,
-          inputSource: 'csv_import',
-        },
-      },
-      update: {
-        isActive: true,
-        usdcAtaAddress,
-        propertiesJson: {
-          usdcAtaAddress,
-          inputSource: 'csv_import',
+          walletAddress: args.walletAddress,
         },
       },
     });
 
-    return tx.destination.upsert({
-      where: {
-        workspaceId_linkedWorkspaceAddressId: {
-          workspaceId: args.workspaceId,
-          linkedWorkspaceAddressId: workspaceAddress.workspaceAddressId,
+    if (existing) {
+      return tx.destination.update({
+        where: { destinationId: existing.destinationId },
+        data: {
+          isActive: true,
+          tokenAccountAddress: existing.tokenAccountAddress ?? usdcAtaAddress,
         },
-      },
-      create: {
+      });
+    }
+
+    return tx.destination.create({
+      data: {
         workspaceId: args.workspaceId,
-        linkedWorkspaceAddressId: workspaceAddress.workspaceAddressId,
-        chain: workspaceAddress.chain,
-        asset: workspaceAddress.assetScope,
-        walletAddress: workspaceAddress.address,
-        tokenAccountAddress: workspaceAddress.usdcAtaAddress,
-        destinationType: 'csv_payee_wallet',
+        chain: SOLANA_CHAIN,
+        asset: USDC_ASSET,
+        walletAddress: args.walletAddress,
+        tokenAccountAddress: usdcAtaAddress,
+        destinationType: 'csv_imported',
         trustState: 'unreviewed',
         label,
         notes: 'Created from CSV payment request import. Review trust state before live execution.',
@@ -698,13 +606,6 @@ async function createCsvDestinationFromWallet(args: {
         metadataJson: {
           inputSource: 'csv_import',
         },
-      },
-      update: {
-        isActive: true,
-        chain: workspaceAddress.chain,
-        asset: workspaceAddress.assetScope,
-        walletAddress: workspaceAddress.address,
-        tokenAccountAddress: workspaceAddress.usdcAtaAddress,
       },
     });
   });
@@ -715,7 +616,6 @@ function serializePaymentRequest(request: PaymentRequestWithRelations) {
     paymentRequestId: request.paymentRequestId,
     workspaceId: request.workspaceId,
     paymentRunId: request.paymentRunId,
-    payeeId: request.payeeId,
     destinationId: request.destinationId,
     counterpartyId: request.counterpartyId,
     requestedByUserId: request.requestedByUserId,
@@ -728,7 +628,6 @@ function serializePaymentRequest(request: PaymentRequestWithRelations) {
     metadataJson: request.metadataJson,
     createdAt: request.createdAt,
     updatedAt: request.updatedAt,
-    payee: request.payee ? serializePayee(request.payee) : null,
     destination: serializeDestination(request.destination),
     counterparty: request.counterparty ? serializeCounterparty(request.counterparty) : null,
     requestedByUser: serializeUserRef(request.requestedByUser),
@@ -747,7 +646,6 @@ function serializeDestination(destination: Destination & { counterparty: Counter
     destinationId: destination.destinationId,
     workspaceId: destination.workspaceId,
     counterpartyId: destination.counterpartyId,
-    linkedWorkspaceAddressId: destination.linkedWorkspaceAddressId,
     chain: destination.chain,
     asset: destination.asset,
     walletAddress: destination.walletAddress,
@@ -762,7 +660,6 @@ function serializeDestination(destination: Destination & { counterparty: Counter
     createdAt: destination.createdAt,
     updatedAt: destination.updatedAt,
     counterparty: destination.counterparty ? serializeCounterparty(destination.counterparty) : null,
-    linkedWorkspaceAddress: null,
   };
 }
 

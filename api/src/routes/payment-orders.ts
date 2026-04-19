@@ -36,8 +36,7 @@ const amountRawSchema = z.union([
 
 const createPaymentOrderSchema = z.object({
   destinationId: z.string().uuid(),
-  payeeId: z.string().uuid().optional(),
-  sourceWorkspaceAddressId: z.string().uuid().optional(),
+  sourceTreasuryWalletId: z.string().uuid().optional(),
   amountRaw: amountRawSchema,
   asset: z.string().trim().min(1).max(20).default('usdc'),
   memo: z.string().trim().max(1000).optional(),
@@ -51,7 +50,7 @@ const createPaymentOrderSchema = z.object({
 });
 
 const updatePaymentOrderSchema = z.object({
-  sourceWorkspaceAddressId: z.string().uuid().nullable().optional(),
+  sourceTreasuryWalletId: z.string().uuid().nullable().optional(),
   memo: z.string().trim().max(1000).nullable().optional(),
   externalReference: z.string().trim().max(200).nullable().optional(),
   invoiceNumber: z.string().trim().max(200).nullable().optional(),
@@ -74,7 +73,7 @@ const createExecutionSchema = z.object({
 });
 
 const prepareExecutionSchema = z.object({
-  sourceWorkspaceAddressId: z.string().uuid().optional(),
+  sourceTreasuryWalletId: z.string().uuid().optional(),
 });
 
 const attachSignatureSchema = z.object({
@@ -122,8 +121,7 @@ paymentOrdersRouter.post('/workspaces/:workspaceId/payment-orders', asyncRoute(a
       workspaceId,
       ...actor,
       destinationId: input.destinationId,
-      payeeId: input.payeeId,
-      sourceWorkspaceAddressId: input.sourceWorkspaceAddressId,
+      sourceTreasuryWalletId: input.sourceTreasuryWalletId,
       amountRaw: input.amountRaw,
       asset: input.asset,
       memo: input.memo,
@@ -211,7 +209,7 @@ paymentOrdersRouter.post(
         workspaceId,
         paymentOrderId,
         ...actor,
-        sourceWorkspaceAddressId: input.sourceWorkspaceAddressId,
+        sourceTreasuryWalletId: input.sourceTreasuryWalletId,
       });
 
       res.status(201).json(prepared);

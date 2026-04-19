@@ -92,13 +92,11 @@ capabilitiesRouter.get('/capabilities', (_req, res) => {
           'GET /openapi.json',
           'GET /organizations',
           'POST /organizations',
-          'POST /organizations/:organizationId/demo-workspace',
           'GET /workspaces/:workspaceId/api-keys',
           'POST /workspaces/:workspaceId/api-keys',
           'POST /workspaces/:workspaceId/api-keys/:apiKeyId/revoke',
-          'GET /workspaces/:workspaceId/addresses',
+          'GET /workspaces/:workspaceId/treasury-wallets',
           'GET /workspaces/:workspaceId/destinations',
-          'GET /workspaces/:workspaceId/payees',
         ],
       },
       {
@@ -197,8 +195,7 @@ capabilitiesRouter.get('/capabilities', (_req, res) => {
         idempotentWithHeader: 'Idempotency-Key',
         bodyShape: {
           destinationId: 'uuid',
-          sourceWorkspaceAddressId: 'uuid optional',
-          payeeId: 'uuid optional',
+          sourceTreasuryWalletId: 'uuid optional',
           amountRaw: 'USDC base units as string',
           externalReference: 'string optional',
           memo: 'string optional',
@@ -213,8 +210,8 @@ capabilitiesRouter.get('/capabilities', (_req, res) => {
         idempotentWithHeader: 'Idempotency-Key',
         bodyShape: {
           runName: 'string',
-          csv: 'header row: payee,destination,amount,reference,due_date',
-          sourceWorkspaceAddressId: 'uuid optional',
+          csv: 'header row: counterparty,destination,amount,reference,due_date',
+          sourceTreasuryWalletId: 'uuid optional',
           submitOrderNow: 'boolean optional',
           importKey: 'string optional; stable client key for idempotent CSV imports',
         },
@@ -225,9 +222,9 @@ capabilitiesRouter.get('/capabilities', (_req, res) => {
         path: '/workspaces/:workspaceId/payment-runs/import-csv/preview',
         requiredScope: 'workspace:read',
         bodyShape: {
-          csv: 'header row: payee,destination,amount,reference,due_date',
+          csv: 'header row: counterparty,destination,amount,reference,due_date',
         },
-        purpose: 'Validate CSV rows, detect duplicate rows/references, and show payees/destinations that would be created without committing anything.',
+        purpose: 'Validate CSV rows, detect duplicate rows/references, and show destinations that would be created without committing anything.',
       },
       {
         id: 'preview_payment_requests_csv',
@@ -235,9 +232,9 @@ capabilitiesRouter.get('/capabilities', (_req, res) => {
         path: '/workspaces/:workspaceId/payment-requests/import-csv/preview',
         requiredScope: 'workspace:read',
         bodyShape: {
-          csv: 'header row: payee,destination,amount,reference,due_date',
+          csv: 'header row: counterparty,destination,amount,reference,due_date',
         },
-        purpose: 'Validate CSV payment request rows without committing payees, destinations, requests, or orders.',
+        purpose: 'Validate CSV payment request rows without committing destinations, requests, or orders.',
       },
       {
         id: 'cancel_payment_run',

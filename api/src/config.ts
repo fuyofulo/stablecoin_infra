@@ -2,6 +2,7 @@ export const config = {
   nodeEnv: process.env.NODE_ENV ?? 'development',
   host: process.env.HOST ?? '0.0.0.0',
   port: Number(process.env.PORT ?? 3100),
+  solanaRpcUrl: process.env.SOLANA_RPC_URL ?? 'https://api.mainnet-beta.solana.com',
   clickhouseUrl: process.env.CLICKHOUSE_URL ?? 'http://127.0.0.1:8123',
   clickhouseDatabase: process.env.CLICKHOUSE_DATABASE ?? 'usdc_ops',
   orbTagsResolveUrl: process.env.ORB_TAGS_RESOLVE_URL ?? 'https://orbmarkets.io/api/tags/resolve',

@@ -48,7 +48,7 @@ export async function buildPaymentOrderAuditRows(workspaceId: string, paymentOrd
     {
       section: 'source',
       key: 'source_wallet',
-      value: detail.sourceWorkspaceAddress?.address ?? '',
+      value: detail.sourceTreasuryWallet?.address ?? '',
     },
     {
       section: 'destination',
@@ -121,10 +121,6 @@ export async function buildPaymentOrderProofPacket(workspaceId: string, paymentO
       paymentRequestId: detail.paymentRequestId,
       paymentOrderId: detail.paymentOrderId,
       transferRequestId: detail.transferRequestId,
-      payee: detail.payee ? {
-        payeeId: detail.payee.payeeId,
-        name: detail.payee.name,
-      } : null,
       reference: detail.externalReference ?? detail.invoiceNumber ?? null,
       reason: detail.paymentRequest?.reason ?? detail.memo ?? null,
       amountRaw: detail.amountRaw,
@@ -135,11 +131,11 @@ export async function buildPaymentOrderProofPacket(workspaceId: string, paymentO
       attachmentUrl: detail.attachmentUrl,
     },
     parties: {
-      source: detail.sourceWorkspaceAddress ? {
-        workspaceAddressId: detail.sourceWorkspaceAddress.workspaceAddressId,
-        label: detail.sourceWorkspaceAddress.displayName,
-        walletAddress: detail.sourceWorkspaceAddress.address,
-        usdcAtaAddress: detail.sourceWorkspaceAddress.usdcAtaAddress,
+      source: detail.sourceTreasuryWallet ? {
+        treasuryWalletId: detail.sourceTreasuryWallet.treasuryWalletId,
+        label: detail.sourceTreasuryWallet.displayName,
+        walletAddress: detail.sourceTreasuryWallet.address,
+        usdcAtaAddress: detail.sourceTreasuryWallet.usdcAtaAddress,
       } : null,
       destination: {
         destinationId: detail.destination.destinationId,

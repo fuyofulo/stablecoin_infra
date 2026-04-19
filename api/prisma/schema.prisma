@@ -8,11 +8,11 @@ datasource db {
 }
 
 model Organization {
-  organizationId   String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid @map("organization_id")
+  organizationId   String                   @id @default(dbgenerated("gen_random_uuid()")) @map("organization_id") @db.Uuid
   organizationName String                   @map("organization_name")
   status           String                   @default("active")
-  createdAt        DateTime                 @default(now()) @db.Timestamptz(6) @map("created_at")
-  updatedAt        DateTime                 @updatedAt @db.Timestamptz(6) @map("updated_at")
+  createdAt        DateTime                 @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime                 @updatedAt @map("updated_at") @db.Timestamptz(6)
   apiKeys          ApiKey[]
   memberships      OrganizationMembership[]
   sessions         AuthSession[]
@@ -23,38 +23,38 @@ model Organization {
 }
 
 model User {
-  userId                    String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid @map("user_id")
-  email                     String            @unique
-  displayName               String            @map("display_name")
-  status                    String            @default("active")
-  createdAt                 DateTime          @default(now()) @db.Timestamptz(6) @map("created_at")
-  updatedAt                 DateTime          @updatedAt @db.Timestamptz(6) @map("updated_at")
+  userId                    String                   @id @default(dbgenerated("gen_random_uuid()")) @map("user_id") @db.Uuid
+  email                     String                   @unique
+  displayName               String                   @map("display_name")
+  status                    String                   @default("active")
+  createdAt                 DateTime                 @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                 DateTime                 @updatedAt @map("updated_at") @db.Timestamptz(6)
   memberships               OrganizationMembership[]
   sessions                  AuthSession[]
-  transferRequestsRequested TransferRequest[] @relation("TransferRequestRequestedByUser")
+  transferRequestsRequested TransferRequest[]        @relation("TransferRequestRequestedByUser")
   transferRequestNotes      TransferRequestNote[]
   exceptionNotes            ExceptionNote[]
   exceptionStatesUpdated    ExceptionState[]
-  exceptionStatesAssigned   ExceptionState[] @relation("ExceptionStateAssignee")
+  exceptionStatesAssigned   ExceptionState[]         @relation("ExceptionStateAssignee")
   approvalDecisions         ApprovalDecision[]
-  apiKeysCreated            ApiKey[]           @relation("ApiKeyCreatedByUser")
-  executionRecords          ExecutionRecord[] @relation("ExecutionRecordExecutorUser")
+  apiKeysCreated            ApiKey[]                 @relation("ApiKeyCreatedByUser")
+  executionRecords          ExecutionRecord[]        @relation("ExecutionRecordExecutorUser")
   exportJobs                ExportJob[]
-  paymentOrdersCreated      PaymentOrder[]    @relation("PaymentOrderCreatedByUser")
-  paymentRequestsCreated    PaymentRequest[]  @relation("PaymentRequestRequestedByUser")
-  paymentRunsCreated        PaymentRun[]      @relation("PaymentRunCreatedByUser")
+  paymentOrdersCreated      PaymentOrder[]           @relation("PaymentOrderCreatedByUser")
+  paymentRequestsCreated    PaymentRequest[]         @relation("PaymentRequestRequestedByUser")
+  paymentRunsCreated        PaymentRun[]             @relation("PaymentRunCreatedByUser")
 
   @@map("users")
 }
 
 model OrganizationMembership {
-  membershipId   String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid @map("membership_id")
-  organizationId String       @db.Uuid @map("organization_id")
-  userId         String       @db.Uuid @map("user_id")
+  membershipId   String       @id @default(dbgenerated("gen_random_uuid()")) @map("membership_id") @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  userId         String       @map("user_id") @db.Uuid
   role           String
   status         String       @default("active")
-  createdAt      DateTime     @default(now()) @db.Timestamptz(6) @map("created_at")
-  updatedAt      DateTime     @updatedAt @db.Timestamptz(6) @map("updated_at")
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
   organization   Organization @relation(fields: [organizationId], references: [organizationId], onDelete: Cascade)
   user           User         @relation(fields: [userId], references: [userId], onDelete: Cascade)
 
@@ -63,13 +63,13 @@ model OrganizationMembership {
 }
 
 model AuthSession {
-  authSessionId  String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid @map("auth_session_id")
+  authSessionId  String        @id @default(dbgenerated("gen_random_uuid()")) @map("auth_session_id") @db.Uuid
   sessionToken   String        @unique @map("session_token")
-  organizationId String?       @db.Uuid @map("organization_id")
-  userId         String        @db.Uuid @map("user_id")
-  expiresAt      DateTime      @db.Timestamptz(6) @map("expires_at")
-  lastSeenAt     DateTime      @default(now()) @db.Timestamptz(6) @map("last_seen_at")
-  createdAt      DateTime      @default(now()) @db.Timestamptz(6) @map("created_at")
+  organizationId String?       @map("organization_id") @db.Uuid
+  userId         String        @map("user_id") @db.Uuid
+  expiresAt      DateTime      @map("expires_at") @db.Timestamptz(6)
+  lastSeenAt     DateTime      @default(now()) @map("last_seen_at") @db.Timestamptz(6)
+  createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
   organization   Organization? @relation(fields: [organizationId], references: [organizationId], onDelete: Cascade)
   user           User          @relation(fields: [userId], references: [userId], onDelete: Cascade)
 
@@ -77,53 +77,52 @@ model AuthSession {
 }
 
 model Workspace {
-  workspaceId            String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid @map("workspace_id")
-  organizationId         String                 @db.Uuid @map("organization_id")
-  workspaceName          String                 @map("workspace_name")
-  status                 String                 @default("active")
-  createdAt              DateTime               @default(now()) @db.Timestamptz(6) @map("created_at")
-  updatedAt              DateTime               @updatedAt @db.Timestamptz(6) @map("updated_at")
-  organization           Organization           @relation(fields: [organizationId], references: [organizationId], onDelete: Cascade)
-  addresses              WorkspaceAddress[]
-  destinations           Destination[]
-  transferRequests       TransferRequest[]
-  approvalPolicy         ApprovalPolicy?
-  approvalDecisions      ApprovalDecision[]
+  workspaceId           String                 @id @default(dbgenerated("gen_random_uuid()")) @map("workspace_id") @db.Uuid
+  organizationId        String                 @map("organization_id") @db.Uuid
+  workspaceName         String                 @map("workspace_name")
+  status                String                 @default("active")
+  createdAt             DateTime               @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt             DateTime               @updatedAt @map("updated_at") @db.Timestamptz(6)
+  organization          Organization           @relation(fields: [organizationId], references: [organizationId], onDelete: Cascade)
+  treasuryWallets       TreasuryWallet[]
+  destinations          Destination[]
+  transferRequests      TransferRequest[]
+  approvalPolicy        ApprovalPolicy?
+  approvalDecisions     ApprovalDecision[]
   executionRecords      ExecutionRecord[]
   transferRequestEvents TransferRequestEvent[]
   transferRequestNotes  TransferRequestNote[]
-  exceptionNotes       ExceptionNote[]
-  exceptionStates      ExceptionState[]
-  exportJobs           ExportJob[]
-  paymentRuns          PaymentRun[]
-  paymentOrders        PaymentOrder[]
-  paymentOrderEvents   PaymentOrderEvent[]
-  paymentRequests      PaymentRequest[]
-  payees               Payee[]
-  apiKeys              ApiKey[]
+  exceptionNotes        ExceptionNote[]
+  exceptionStates       ExceptionState[]
+  exportJobs            ExportJob[]
+  paymentRuns           PaymentRun[]
+  paymentOrders         PaymentOrder[]
+  paymentOrderEvents    PaymentOrderEvent[]
+  paymentRequests       PaymentRequest[]
+  apiKeys               ApiKey[]
 
   @@map("workspaces")
 }
 
 model ApiKey {
-  apiKeyId        String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid @map("api_key_id")
-  workspaceId     String        @db.Uuid @map("workspace_id")
-  organizationId  String        @db.Uuid @map("organization_id")
-  createdByUserId String?       @db.Uuid @map("created_by_user_id")
-  keyPrefix       String        @map("key_prefix")
-  keyHash         String        @unique @map("key_hash")
+  apiKeyId        String       @id @default(dbgenerated("gen_random_uuid()")) @map("api_key_id") @db.Uuid
+  workspaceId     String       @map("workspace_id") @db.Uuid
+  organizationId  String       @map("organization_id") @db.Uuid
+  createdByUserId String?      @map("created_by_user_id") @db.Uuid
+  keyPrefix       String       @map("key_prefix")
+  keyHash         String       @unique @map("key_hash")
   label           String
-  status          String        @default("active")
-  role            String        @default("agent_operator")
-  scopes          Json          @default("[]")
-  lastUsedAt      DateTime?     @db.Timestamptz(6) @map("last_used_at")
-  expiresAt       DateTime?     @db.Timestamptz(6) @map("expires_at")
-  revokedAt       DateTime?     @db.Timestamptz(6) @map("revoked_at")
-  createdAt       DateTime      @default(now()) @db.Timestamptz(6) @map("created_at")
-  updatedAt       DateTime      @updatedAt @db.Timestamptz(6) @map("updated_at")
-  workspace       Workspace     @relation(fields: [workspaceId], references: [workspaceId], onDelete: Cascade)
-  organization    Organization  @relation(fields: [organizationId], references: [organizationId], onDelete: Cascade)
-  createdByUser   User?         @relation("ApiKeyCreatedByUser", fields: [createdByUserId], references: [userId], onDelete: SetNull)
+  status          String       @default("active")
+  role            String       @default("agent_operator")
+  scopes          Json         @default("[]")
+  lastUsedAt      DateTime?    @map("last_used_at") @db.Timestamptz(6)
+  expiresAt       DateTime?    @map("expires_at") @db.Timestamptz(6)
+  revokedAt       DateTime?    @map("revoked_at") @db.Timestamptz(6)
+  createdAt       DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+  workspace       Workspace    @relation(fields: [workspaceId], references: [workspaceId], onDelete: Cascade)
+  organization    Organization @relation(fields: [organizationId], references: [organizationId], onDelete: Cascade)
+  createdByUser   User?        @relation("ApiKeyCreatedByUser", fields: [createdByUserId], references: [userId], onDelete: SetNull)
 
   @@unique([workspaceId, label])
   @@index([workspaceId, status, createdAt(sort: Desc)])
@@ -132,7 +131,7 @@ model ApiKey {
 }
 
 model IdempotencyRecord {
-  idempotencyRecordId String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid @map("idempotency_record_id")
+  idempotencyRecordId String   @id @default(dbgenerated("gen_random_uuid()")) @map("idempotency_record_id") @db.Uuid
   key                 String
   requestMethod       String   @map("request_method")
   requestPath         String   @map("request_path")
@@ -142,9 +141,9 @@ model IdempotencyRecord {
   status              String   @default("processing")
   statusCode          Int?     @map("status_code")
   responseBodyJson    Json?    @map("response_body_json")
-  createdAt           DateTime @default(now()) @db.Timestamptz(6) @map("created_at")
-  updatedAt           DateTime @updatedAt @db.Timestamptz(6) @map("updated_at")
-  expiresAt           DateTime @db.Timestamptz(6) @map("expires_at")
+  createdAt           DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt           DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  expiresAt           DateTime @map("expires_at") @db.Timestamptz(6)
 
   @@unique([actorType, actorId, requestMethod, requestPath, key])
   @@index([actorType, actorId, createdAt(sort: Desc)])
@@ -152,257 +151,227 @@ model IdempotencyRecord {
   @@map("idempotency_records")
 }
 
-model WorkspaceAddress {
-  workspaceAddressId     String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid @map("workspace_address_id")
-  workspaceId            String           @db.Uuid @map("workspace_id")
-  chain                  String
-  address                String
-  addressKind            String           @default("wallet") @map("address_kind")
-  assetScope             String           @default("usdc") @map("asset_scope")
-  usdcAtaAddress         String?          @map("usdc_ata_address")
-  isActive               Boolean          @default(true) @map("is_active")
-  source                 String           @default("manual")
-  sourceRef              String?          @map("source_ref")
-  displayName            String?          @map("display_name")
-  notes                  String?
-  propertiesJson         Json             @default("{}") @map("properties_json")
-  createdAt              DateTime         @default(now()) @db.Timestamptz(6) @map("created_at")
-  updatedAt              DateTime         @updatedAt @db.Timestamptz(6) @map("updated_at")
-  workspace              Workspace        @relation(fields: [workspaceId], references: [workspaceId], onDelete: Cascade)
-  destinations           Destination[]
-  outboundTransferRequests TransferRequest[] @relation("TransferRequestSourceAddress")
-  inboundTransferRequests  TransferRequest[] @relation("TransferRequestDestinationAddress")
-  sourcePaymentOrders      PaymentOrder[]    @relation("PaymentOrderSourceAddress")
-  sourcePaymentRuns        PaymentRun[]      @relation("PaymentRunSourceAddress")
+// TreasuryWallet — wallets the workspace OWNS. The source side of every payment.
+// Only these are monitored by the Yellowstone worker.
+// Counterparty addresses (who we pay) live on the Destination row directly and
+// are NOT tracked here.
+model TreasuryWallet {
+  treasuryWalletId         String            @id @default(dbgenerated("gen_random_uuid()")) @map("treasury_wallet_id") @db.Uuid
+  workspaceId              String            @map("workspace_id") @db.Uuid
+  chain                    String
+  address                  String
+  assetScope               String            @default("usdc") @map("asset_scope")
+  usdcAtaAddress           String?           @map("usdc_ata_address")
+  isActive                 Boolean           @default(true) @map("is_active")
+  source                   String            @default("manual")
+  sourceRef                String?           @map("source_ref")
+  displayName              String?           @map("display_name")
+  notes                    String?
+  propertiesJson           Json              @default("{}") @map("properties_json")
+  createdAt                DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                DateTime          @updatedAt @map("updated_at") @db.Timestamptz(6)
+  workspace                Workspace         @relation(fields: [workspaceId], references: [workspaceId], onDelete: Cascade)
+  outboundTransferRequests TransferRequest[] @relation("TransferRequestSourceWallet")
+  sourcePaymentOrders      PaymentOrder[]    @relation("PaymentOrderSourceWallet")
+  sourcePaymentRuns        PaymentRun[]      @relation("PaymentRunSourceWallet")
 
   @@unique([workspaceId, address])
-  @@map("workspace_addresses")
+  @@map("treasury_wallets")
 }
 
 model Counterparty {
-  counterpartyId      String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid @map("counterparty_id")
-  organizationId      String        @db.Uuid @map("organization_id")
-  displayName         String        @map("display_name")
-  category            String
-  externalReference   String?       @map("external_reference")
-  status              String        @default("active")
-  metadataJson        Json          @default("{}") @map("metadata_json")
-  createdAt           DateTime      @default(now()) @db.Timestamptz(6) @map("created_at")
-  updatedAt           DateTime      @updatedAt @db.Timestamptz(6) @map("updated_at")
-  organization        Organization  @relation(fields: [organizationId], references: [organizationId], onDelete: Cascade)
-  destinations        Destination[]
-  paymentOrders       PaymentOrder[]
-  paymentRequests     PaymentRequest[]
+  counterpartyId    String           @id @default(dbgenerated("gen_random_uuid()")) @map("counterparty_id") @db.Uuid
+  organizationId    String           @map("organization_id") @db.Uuid
+  displayName       String           @map("display_name")
+  category          String
+  externalReference String?          @map("external_reference")
+  status            String           @default("active")
+  metadataJson      Json             @default("{}") @map("metadata_json")
+  createdAt         DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
+  organization      Organization     @relation(fields: [organizationId], references: [organizationId], onDelete: Cascade)
+  destinations      Destination[]
+  paymentOrders     PaymentOrder[]
+  paymentRequests   PaymentRequest[]
 
   @@index([organizationId, createdAt(sort: Desc)])
   @@map("counterparties")
 }
 
+// Destination — counterparty endpoint we pay. Stores the external wallet address
+// directly. No relation to TreasuryWallet; these are THEIR wallets, not ours.
 model Destination {
-  destinationId             String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid @map("destination_id")
-  counterpartyId            String?          @db.Uuid @map("counterparty_id")
-  workspaceId               String           @db.Uuid @map("workspace_id")
-  linkedWorkspaceAddressId  String?          @db.Uuid @map("linked_workspace_address_id")
-  chain                     String
-  asset                     String           @default("usdc")
-  walletAddress             String           @map("wallet_address")
-  tokenAccountAddress       String?          @map("token_account_address")
-  destinationType           String           @default("wallet") @map("destination_type")
-  trustState                String           @default("unreviewed") @map("trust_state")
-  label                     String
-  notes                     String?
-  isInternal                Boolean          @default(false) @map("is_internal")
-  isActive                  Boolean          @default(true) @map("is_active")
-  metadataJson              Json             @default("{}") @map("metadata_json")
-  createdAt                 DateTime         @default(now()) @db.Timestamptz(6) @map("created_at")
-  updatedAt                 DateTime         @updatedAt @db.Timestamptz(6) @map("updated_at")
-  counterparty              Counterparty?    @relation(fields: [counterpartyId], references: [counterpartyId], onDelete: SetNull)
-  workspace                 Workspace        @relation(fields: [workspaceId], references: [workspaceId], onDelete: Cascade)
-  linkedWorkspaceAddress    WorkspaceAddress? @relation(fields: [linkedWorkspaceAddressId], references: [workspaceAddressId], onDelete: SetNull)
-  transferRequests          TransferRequest[]
-  paymentOrders             PaymentOrder[]
-  paymentRequests           PaymentRequest[]
-  payees                    Payee[]
+  destinationId       String            @id @default(dbgenerated("gen_random_uuid()")) @map("destination_id") @db.Uuid
+  counterpartyId      String?           @map("counterparty_id") @db.Uuid
+  workspaceId         String            @map("workspace_id") @db.Uuid
+  chain               String
+  asset               String            @default("usdc")
+  walletAddress       String            @map("wallet_address")
+  tokenAccountAddress String?           @map("token_account_address")
+  destinationType     String            @default("wallet") @map("destination_type")
+  trustState          String            @default("unreviewed") @map("trust_state")
+  label               String
+  notes               String?
+  isInternal          Boolean           @default(false) @map("is_internal")
+  isActive            Boolean           @default(true) @map("is_active")
+  metadataJson        Json              @default("{}") @map("metadata_json")
+  createdAt           DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt           DateTime          @updatedAt @map("updated_at") @db.Timestamptz(6)
+  counterparty        Counterparty?     @relation(fields: [counterpartyId], references: [counterpartyId], onDelete: SetNull)
+  workspace           Workspace         @relation(fields: [workspaceId], references: [workspaceId], onDelete: Cascade)
+  transferRequests    TransferRequest[]
+  paymentOrders       PaymentOrder[]
+  paymentRequests     PaymentRequest[]
 
+  @@unique([workspaceId, walletAddress])
   @@index([workspaceId, createdAt(sort: Desc)])
   @@index([counterpartyId, createdAt(sort: Desc)])
-  @@unique([workspaceId, linkedWorkspaceAddressId])
   @@map("destinations")
 }
 
 model TransferRequest {
-  transferRequestId          String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid @map("transfer_request_id")
-  workspaceId                String           @db.Uuid @map("workspace_id")
-  paymentOrderId             String?          @db.Uuid @map("payment_order_id")
-  sourceWorkspaceAddressId   String?          @db.Uuid @map("source_workspace_address_id")
-  destinationWorkspaceAddressId String        @db.Uuid @map("destination_workspace_address_id")
-  destinationId              String?          @db.Uuid @map("destination_id")
-  requestType                String           @map("request_type")
-  asset                      String           @default("usdc")
-  amountRaw                  BigInt           @map("amount_raw")
-  requestedByUserId          String?          @db.Uuid @map("requested_by_user_id")
-  reason                     String?
-  externalReference          String?          @map("external_reference")
-  status                     String           @default("submitted")
-  requestedAt                DateTime         @default(now()) @db.Timestamptz(6) @map("requested_at")
-  dueAt                      DateTime?        @db.Timestamptz(6) @map("due_at")
-  propertiesJson             Json             @default("{}") @map("properties_json")
-  createdAt                  DateTime         @default(now()) @db.Timestamptz(6) @map("created_at")
-  updatedAt                  DateTime         @updatedAt @db.Timestamptz(6) @map("updated_at")
-  workspace                  Workspace        @relation(fields: [workspaceId], references: [workspaceId], onDelete: Cascade)
-  paymentOrder               PaymentOrder?    @relation(fields: [paymentOrderId], references: [paymentOrderId], onDelete: SetNull)
-  sourceWorkspaceAddress     WorkspaceAddress? @relation("TransferRequestSourceAddress", fields: [sourceWorkspaceAddressId], references: [workspaceAddressId], onDelete: SetNull)
-  destinationWorkspaceAddress WorkspaceAddress @relation("TransferRequestDestinationAddress", fields: [destinationWorkspaceAddressId], references: [workspaceAddressId], onDelete: Restrict)
-  destination                Destination?     @relation(fields: [destinationId], references: [destinationId], onDelete: SetNull)
-  requestedByUser            User?            @relation("TransferRequestRequestedByUser", fields: [requestedByUserId], references: [userId], onDelete: SetNull)
-  approvalDecisions          ApprovalDecision[]
-  executionRecords           ExecutionRecord[]
-  events                     TransferRequestEvent[]
-  notes                      TransferRequestNote[]
+  transferRequestId      String                 @id @default(dbgenerated("gen_random_uuid()")) @map("transfer_request_id") @db.Uuid
+  workspaceId            String                 @map("workspace_id") @db.Uuid
+  paymentOrderId         String?                @map("payment_order_id") @db.Uuid
+  sourceTreasuryWalletId String?                @map("source_treasury_wallet_id") @db.Uuid
+  destinationId          String                 @map("destination_id") @db.Uuid
+  requestType            String                 @map("request_type")
+  asset                  String                 @default("usdc")
+  amountRaw              BigInt                 @map("amount_raw")
+  requestedByUserId      String?                @map("requested_by_user_id") @db.Uuid
+  reason                 String?
+  externalReference      String?                @map("external_reference")
+  status                 String                 @default("submitted")
+  requestedAt            DateTime               @default(now()) @map("requested_at") @db.Timestamptz(6)
+  dueAt                  DateTime?              @map("due_at") @db.Timestamptz(6)
+  propertiesJson         Json                   @default("{}") @map("properties_json")
+  createdAt              DateTime               @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt              DateTime               @updatedAt @map("updated_at") @db.Timestamptz(6)
+  workspace              Workspace              @relation(fields: [workspaceId], references: [workspaceId], onDelete: Cascade)
+  paymentOrder           PaymentOrder?          @relation(fields: [paymentOrderId], references: [paymentOrderId], onDelete: SetNull)
+  sourceTreasuryWallet   TreasuryWallet?        @relation("TransferRequestSourceWallet", fields: [sourceTreasuryWalletId], references: [treasuryWalletId], onDelete: SetNull)
+  destination            Destination            @relation(fields: [destinationId], references: [destinationId], onDelete: Restrict)
+  requestedByUser        User?                  @relation("TransferRequestRequestedByUser", fields: [requestedByUserId], references: [userId], onDelete: SetNull)
+  approvalDecisions      ApprovalDecision[]
+  executionRecords       ExecutionRecord[]
+  events                 TransferRequestEvent[]
+  notes                  TransferRequestNote[]
 
   @@index([workspaceId, status, requestedAt(sort: Desc)])
   @@index([paymentOrderId])
-  @@index([destinationWorkspaceAddressId, status, requestedAt(sort: Desc)])
   @@index([destinationId, status, requestedAt(sort: Desc)])
+  @@index([sourceTreasuryWalletId, status, requestedAt(sort: Desc)])
   @@map("transfer_requests")
 }
 
 model PaymentOrder {
-  paymentOrderId             String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid @map("payment_order_id")
-  workspaceId                String            @db.Uuid @map("workspace_id")
-  paymentRequestId           String?           @unique @db.Uuid @map("payment_request_id")
-  paymentRunId               String?           @db.Uuid @map("payment_run_id")
-  payeeId                    String?           @db.Uuid @map("payee_id")
-  destinationId              String            @db.Uuid @map("destination_id")
-  counterpartyId             String?           @db.Uuid @map("counterparty_id")
-  sourceWorkspaceAddressId   String?           @db.Uuid @map("source_workspace_address_id")
-  amountRaw                  BigInt            @map("amount_raw")
-  asset                      String            @default("usdc")
-  memo                       String?
-  externalReference          String?           @map("external_reference")
-  invoiceNumber              String?           @map("invoice_number")
-  attachmentUrl              String?           @map("attachment_url")
-  dueAt                      DateTime?         @db.Timestamptz(6) @map("due_at")
-  state                      String            @default("draft")
-  sourceBalanceSnapshotJson  Json              @default("{}") @map("source_balance_snapshot_json")
-  metadataJson               Json              @default("{}") @map("metadata_json")
-  createdByUserId            String?           @db.Uuid @map("created_by_user_id")
-  createdAt                  DateTime          @default(now()) @db.Timestamptz(6) @map("created_at")
-  updatedAt                  DateTime          @updatedAt @db.Timestamptz(6) @map("updated_at")
-  workspace                  Workspace         @relation(fields: [workspaceId], references: [workspaceId], onDelete: Cascade)
-  paymentRequest             PaymentRequest?   @relation(fields: [paymentRequestId], references: [paymentRequestId], onDelete: SetNull)
-  paymentRun                 PaymentRun?       @relation(fields: [paymentRunId], references: [paymentRunId], onDelete: SetNull)
-  payee                      Payee?            @relation(fields: [payeeId], references: [payeeId], onDelete: SetNull)
-  destination                Destination       @relation(fields: [destinationId], references: [destinationId], onDelete: Restrict)
-  counterparty               Counterparty?     @relation(fields: [counterpartyId], references: [counterpartyId], onDelete: SetNull)
-  sourceWorkspaceAddress     WorkspaceAddress? @relation("PaymentOrderSourceAddress", fields: [sourceWorkspaceAddressId], references: [workspaceAddressId], onDelete: SetNull)
-  createdByUser              User?             @relation("PaymentOrderCreatedByUser", fields: [createdByUserId], references: [userId], onDelete: SetNull)
-  transferRequests           TransferRequest[]
-  events                     PaymentOrderEvent[]
+  paymentOrderId            String              @id @default(dbgenerated("gen_random_uuid()")) @map("payment_order_id") @db.Uuid
+  workspaceId               String              @map("workspace_id") @db.Uuid
+  paymentRequestId          String?             @unique @map("payment_request_id") @db.Uuid
+  paymentRunId              String?             @map("payment_run_id") @db.Uuid
+  destinationId             String              @map("destination_id") @db.Uuid
+  counterpartyId            String?             @map("counterparty_id") @db.Uuid
+  sourceTreasuryWalletId    String?             @map("source_treasury_wallet_id") @db.Uuid
+  amountRaw                 BigInt              @map("amount_raw")
+  asset                     String              @default("usdc")
+  memo                      String?
+  externalReference         String?             @map("external_reference")
+  invoiceNumber             String?             @map("invoice_number")
+  attachmentUrl             String?             @map("attachment_url")
+  dueAt                     DateTime?           @map("due_at") @db.Timestamptz(6)
+  state                     String              @default("draft")
+  sourceBalanceSnapshotJson Json                @default("{}") @map("source_balance_snapshot_json")
+  metadataJson              Json                @default("{}") @map("metadata_json")
+  createdByUserId           String?             @map("created_by_user_id") @db.Uuid
+  createdAt                 DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                 DateTime            @updatedAt @map("updated_at") @db.Timestamptz(6)
+  workspace                 Workspace           @relation(fields: [workspaceId], references: [workspaceId], onDelete: Cascade)
+  paymentRequest            PaymentRequest?     @relation(fields: [paymentRequestId], references: [paymentRequestId], onDelete: SetNull)
+  paymentRun                PaymentRun?         @relation(fields: [paymentRunId], references: [paymentRunId], onDelete: SetNull)
+  destination               Destination         @relation(fields: [destinationId], references: [destinationId], onDelete: Restrict)
+  counterparty              Counterparty?       @relation(fields: [counterpartyId], references: [counterpartyId], onDelete: SetNull)
+  sourceTreasuryWallet      TreasuryWallet?     @relation("PaymentOrderSourceWallet", fields: [sourceTreasuryWalletId], references: [treasuryWalletId], onDelete: SetNull)
+  createdByUser             User?               @relation("PaymentOrderCreatedByUser", fields: [createdByUserId], references: [userId], onDelete: SetNull)
+  transferRequests          TransferRequest[]
+  events                    PaymentOrderEvent[]
 
   @@index([workspaceId, state, createdAt(sort: Desc)])
   @@index([paymentRequestId])
   @@index([paymentRunId, createdAt(sort: Desc)])
-  @@index([payeeId, createdAt(sort: Desc)])
   @@index([destinationId, createdAt(sort: Desc)])
-  @@index([sourceWorkspaceAddressId, createdAt(sort: Desc)])
+  @@index([sourceTreasuryWalletId, createdAt(sort: Desc)])
   @@map("payment_orders")
 }
 
 model PaymentRequest {
-  paymentRequestId  String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid @map("payment_request_id")
-  workspaceId       String        @db.Uuid @map("workspace_id")
-  paymentRunId      String?       @db.Uuid @map("payment_run_id")
-  payeeId           String?       @db.Uuid @map("payee_id")
-  destinationId     String        @db.Uuid @map("destination_id")
-  counterpartyId    String?       @db.Uuid @map("counterparty_id")
-  requestedByUserId String?       @db.Uuid @map("requested_by_user_id")
+  paymentRequestId  String        @id @default(dbgenerated("gen_random_uuid()")) @map("payment_request_id") @db.Uuid
+  workspaceId       String        @map("workspace_id") @db.Uuid
+  paymentRunId      String?       @map("payment_run_id") @db.Uuid
+  destinationId     String        @map("destination_id") @db.Uuid
+  counterpartyId    String?       @map("counterparty_id") @db.Uuid
+  requestedByUserId String?       @map("requested_by_user_id") @db.Uuid
   amountRaw         BigInt        @map("amount_raw")
   asset             String        @default("usdc")
   reason            String
   externalReference String?       @map("external_reference")
-  dueAt             DateTime?     @db.Timestamptz(6) @map("due_at")
+  dueAt             DateTime?     @map("due_at") @db.Timestamptz(6)
   state             String        @default("submitted")
   metadataJson      Json          @default("{}") @map("metadata_json")
-  createdAt         DateTime      @default(now()) @db.Timestamptz(6) @map("created_at")
-  updatedAt         DateTime      @updatedAt @db.Timestamptz(6) @map("updated_at")
+  createdAt         DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
   workspace         Workspace     @relation(fields: [workspaceId], references: [workspaceId], onDelete: Cascade)
   paymentRun        PaymentRun?   @relation(fields: [paymentRunId], references: [paymentRunId], onDelete: SetNull)
-  payee             Payee?        @relation(fields: [payeeId], references: [payeeId], onDelete: SetNull)
   destination       Destination   @relation(fields: [destinationId], references: [destinationId], onDelete: Restrict)
   counterparty      Counterparty? @relation(fields: [counterpartyId], references: [counterpartyId], onDelete: SetNull)
   requestedByUser   User?         @relation("PaymentRequestRequestedByUser", fields: [requestedByUserId], references: [userId], onDelete: SetNull)
   paymentOrder      PaymentOrder?
 
+  @@unique([workspaceId, destinationId, amountRaw, externalReference])
   @@index([workspaceId, state, createdAt(sort: Desc)])
   @@index([paymentRunId, createdAt(sort: Desc)])
-  @@index([payeeId, createdAt(sort: Desc)])
   @@index([destinationId, createdAt(sort: Desc)])
   @@index([counterpartyId, createdAt(sort: Desc)])
-  @@unique([workspaceId, destinationId, amountRaw, externalReference])
   @@map("payment_requests")
 }
 
-model Payee {
-  payeeId              String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid @map("payee_id")
-  workspaceId          String          @db.Uuid @map("workspace_id")
-  defaultDestinationId String?         @db.Uuid @map("default_destination_id")
-  name                 String
-  externalReference    String?         @map("external_reference")
-  status               String          @default("active")
-  notes                String?
-  metadataJson         Json            @default("{}") @map("metadata_json")
-  createdAt            DateTime        @default(now()) @db.Timestamptz(6) @map("created_at")
-  updatedAt            DateTime        @updatedAt @db.Timestamptz(6) @map("updated_at")
-  workspace            Workspace       @relation(fields: [workspaceId], references: [workspaceId], onDelete: Cascade)
-  defaultDestination   Destination?    @relation(fields: [defaultDestinationId], references: [destinationId], onDelete: SetNull)
-  paymentRequests      PaymentRequest[]
-  paymentOrders        PaymentOrder[]
-
-  @@unique([workspaceId, name])
-  @@index([workspaceId, status, createdAt(sort: Desc)])
-  @@index([defaultDestinationId, createdAt(sort: Desc)])
-  @@map("payees")
-}
-
 model PaymentRun {
-  paymentRunId             String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid @map("payment_run_id")
-  workspaceId              String            @db.Uuid @map("workspace_id")
-  sourceWorkspaceAddressId String?           @db.Uuid @map("source_workspace_address_id")
-  runName                  String            @map("run_name")
-  inputSource              String            @default("manual") @map("input_source")
-  state                    String            @default("draft")
-  metadataJson             Json              @default("{}") @map("metadata_json")
-  createdByUserId          String?           @db.Uuid @map("created_by_user_id")
-  createdAt                DateTime          @default(now()) @db.Timestamptz(6) @map("created_at")
-  updatedAt                DateTime          @updatedAt @db.Timestamptz(6) @map("updated_at")
-  workspace                Workspace         @relation(fields: [workspaceId], references: [workspaceId], onDelete: Cascade)
-  sourceWorkspaceAddress   WorkspaceAddress? @relation("PaymentRunSourceAddress", fields: [sourceWorkspaceAddressId], references: [workspaceAddressId], onDelete: SetNull)
-  createdByUser            User?             @relation("PaymentRunCreatedByUser", fields: [createdByUserId], references: [userId], onDelete: SetNull)
-  paymentRequests          PaymentRequest[]
-  paymentOrders            PaymentOrder[]
+  paymentRunId           String           @id @default(dbgenerated("gen_random_uuid()")) @map("payment_run_id") @db.Uuid
+  workspaceId            String           @map("workspace_id") @db.Uuid
+  sourceTreasuryWalletId String?          @map("source_treasury_wallet_id") @db.Uuid
+  runName                String           @map("run_name")
+  inputSource            String           @default("manual") @map("input_source")
+  state                  String           @default("draft")
+  metadataJson           Json             @default("{}") @map("metadata_json")
+  createdByUserId        String?          @map("created_by_user_id") @db.Uuid
+  createdAt              DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt              DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
+  workspace              Workspace        @relation(fields: [workspaceId], references: [workspaceId], onDelete: Cascade)
+  sourceTreasuryWallet   TreasuryWallet?  @relation("PaymentRunSourceWallet", fields: [sourceTreasuryWalletId], references: [treasuryWalletId], onDelete: SetNull)
+  createdByUser          User?            @relation("PaymentRunCreatedByUser", fields: [createdByUserId], references: [userId], onDelete: SetNull)
+  paymentRequests        PaymentRequest[]
+  paymentOrders          PaymentOrder[]
 
   @@index([workspaceId, state, createdAt(sort: Desc)])
-  @@index([sourceWorkspaceAddressId, createdAt(sort: Desc)])
+  @@index([sourceTreasuryWalletId, createdAt(sort: Desc)])
   @@map("payment_runs")
 }
 
 model PaymentOrderEvent {
-  paymentOrderEventId String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid @map("payment_order_event_id")
-  paymentOrderId      String       @db.Uuid @map("payment_order_id")
-  workspaceId         String       @db.Uuid @map("workspace_id")
-  eventType           String       @map("event_type")
-  actorType           String       @map("actor_type")
-  actorId             String?      @map("actor_id")
-  beforeState         String?      @map("before_state")
-  afterState          String?      @map("after_state")
-  linkedTransferRequestId String?  @db.Uuid @map("linked_transfer_request_id")
-  linkedExecutionRecordId String?  @db.Uuid @map("linked_execution_record_id")
-  linkedSignature     String?      @map("linked_signature")
-  payloadJson         Json         @default("{}") @map("payload_json")
-  createdAt           DateTime     @default(now()) @db.Timestamptz(6) @map("created_at")
-  paymentOrder        PaymentOrder @relation(fields: [paymentOrderId], references: [paymentOrderId], onDelete: Cascade)
-  workspace           Workspace    @relation(fields: [workspaceId], references: [workspaceId], onDelete: Cascade)
+  paymentOrderEventId     String       @id @default(dbgenerated("gen_random_uuid()")) @map("payment_order_event_id") @db.Uuid
+  paymentOrderId          String       @map("payment_order_id") @db.Uuid
+  workspaceId             String       @map("workspace_id") @db.Uuid
+  eventType               String       @map("event_type")
+  actorType               String       @map("actor_type")
+  actorId                 String?      @map("actor_id")
+  beforeState             String?      @map("before_state")
+  afterState              String?      @map("after_state")
+  linkedTransferRequestId String?      @map("linked_transfer_request_id") @db.Uuid
+  linkedExecutionRecordId String?      @map("linked_execution_record_id") @db.Uuid
+  linkedSignature         String?      @map("linked_signature")
+  payloadJson             Json         @default("{}") @map("payload_json")
+  createdAt               DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  paymentOrder            PaymentOrder @relation(fields: [paymentOrderId], references: [paymentOrderId], onDelete: Cascade)
+  workspace               Workspace    @relation(fields: [workspaceId], references: [workspaceId], onDelete: Cascade)
 
   @@index([paymentOrderId, createdAt(sort: Asc)])
   @@index([workspaceId, createdAt(sort: Desc)])
@@ -410,20 +379,20 @@ model PaymentOrderEvent {
 }
 
 model ExecutionRecord {
-  executionRecordId   String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid @map("execution_record_id")
-  transferRequestId   String          @db.Uuid @map("transfer_request_id")
-  workspaceId         String          @db.Uuid @map("workspace_id")
-  submittedSignature  String?         @map("submitted_signature")
-  executionSource     String          @default("manual") @map("execution_source")
-  executorUserId      String?         @db.Uuid @map("executor_user_id")
-  state               String          @default("ready_for_execution")
-  submittedAt         DateTime?       @db.Timestamptz(6) @map("submitted_at")
-  metadataJson        Json            @default("{}") @map("metadata_json")
-  createdAt           DateTime        @default(now()) @db.Timestamptz(6) @map("created_at")
-  updatedAt           DateTime        @updatedAt @db.Timestamptz(6) @map("updated_at")
-  transferRequest     TransferRequest @relation(fields: [transferRequestId], references: [transferRequestId], onDelete: Cascade)
-  workspace           Workspace       @relation(fields: [workspaceId], references: [workspaceId], onDelete: Cascade)
-  executorUser        User?           @relation("ExecutionRecordExecutorUser", fields: [executorUserId], references: [userId], onDelete: SetNull)
+  executionRecordId  String          @id @default(dbgenerated("gen_random_uuid()")) @map("execution_record_id") @db.Uuid
+  transferRequestId  String          @map("transfer_request_id") @db.Uuid
+  workspaceId        String          @map("workspace_id") @db.Uuid
+  submittedSignature String?         @map("submitted_signature")
+  executionSource    String          @default("manual") @map("execution_source")
+  executorUserId     String?         @map("executor_user_id") @db.Uuid
+  state              String          @default("ready_for_execution")
+  submittedAt        DateTime?       @map("submitted_at") @db.Timestamptz(6)
+  metadataJson       Json            @default("{}") @map("metadata_json")
+  createdAt          DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime        @updatedAt @map("updated_at") @db.Timestamptz(6)
+  transferRequest    TransferRequest @relation(fields: [transferRequestId], references: [transferRequestId], onDelete: Cascade)
+  workspace          Workspace       @relation(fields: [workspaceId], references: [workspaceId], onDelete: Cascade)
+  executorUser       User?           @relation("ExecutionRecordExecutorUser", fields: [executorUserId], references: [userId], onDelete: SetNull)
 
   @@index([workspaceId, createdAt(sort: Desc)])
   @@index([transferRequestId, createdAt(sort: Desc)])
@@ -431,34 +400,34 @@ model ExecutionRecord {
 }
 
 model ApprovalPolicy {
-  approvalPolicyId    String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid @map("approval_policy_id")
-  workspaceId         String     @unique @db.Uuid @map("workspace_id")
-  policyName          String     @map("policy_name")
-  isActive            Boolean    @default(true) @map("is_active")
-  ruleJson            Json       @default("{}") @map("rule_json")
-  createdAt           DateTime   @default(now()) @db.Timestamptz(6) @map("created_at")
-  updatedAt           DateTime   @updatedAt @db.Timestamptz(6) @map("updated_at")
-  workspace           Workspace  @relation(fields: [workspaceId], references: [workspaceId], onDelete: Cascade)
-  approvalDecisions   ApprovalDecision[]
+  approvalPolicyId  String             @id @default(dbgenerated("gen_random_uuid()")) @map("approval_policy_id") @db.Uuid
+  workspaceId       String             @unique @map("workspace_id") @db.Uuid
+  policyName        String             @map("policy_name")
+  isActive          Boolean            @default(true) @map("is_active")
+  ruleJson          Json               @default("{}") @map("rule_json")
+  createdAt         DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
+  workspace         Workspace          @relation(fields: [workspaceId], references: [workspaceId], onDelete: Cascade)
+  approvalDecisions ApprovalDecision[]
 
   @@map("approval_policies")
 }
 
 model ApprovalDecision {
-  approvalDecisionId  String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid @map("approval_decision_id")
-  approvalPolicyId    String?         @db.Uuid @map("approval_policy_id")
-  transferRequestId   String          @db.Uuid @map("transfer_request_id")
-  workspaceId         String          @db.Uuid @map("workspace_id")
-  actorUserId         String?         @db.Uuid @map("actor_user_id")
-  actorType           String          @default("user") @map("actor_type")
-  action              String
-  comment             String?
-  payloadJson         Json            @default("{}") @map("payload_json")
-  createdAt           DateTime        @default(now()) @db.Timestamptz(6) @map("created_at")
-  approvalPolicy      ApprovalPolicy? @relation(fields: [approvalPolicyId], references: [approvalPolicyId], onDelete: SetNull)
-  transferRequest     TransferRequest @relation(fields: [transferRequestId], references: [transferRequestId], onDelete: Cascade)
-  workspace           Workspace       @relation(fields: [workspaceId], references: [workspaceId], onDelete: Cascade)
-  actorUser           User?           @relation(fields: [actorUserId], references: [userId], onDelete: SetNull)
+  approvalDecisionId String          @id @default(dbgenerated("gen_random_uuid()")) @map("approval_decision_id") @db.Uuid
+  approvalPolicyId   String?         @map("approval_policy_id") @db.Uuid
+  transferRequestId  String          @map("transfer_request_id") @db.Uuid
+  workspaceId        String          @map("workspace_id") @db.Uuid
+  actorUserId        String?         @map("actor_user_id") @db.Uuid
+  actorType          String          @default("user") @map("actor_type")
+  action             String
+  comment            String?
+  payloadJson        Json            @default("{}") @map("payload_json")
+  createdAt          DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+  approvalPolicy     ApprovalPolicy? @relation(fields: [approvalPolicyId], references: [approvalPolicyId], onDelete: SetNull)
+  transferRequest    TransferRequest @relation(fields: [transferRequestId], references: [transferRequestId], onDelete: Cascade)
+  workspace          Workspace       @relation(fields: [workspaceId], references: [workspaceId], onDelete: Cascade)
+  actorUser          User?           @relation(fields: [actorUserId], references: [userId], onDelete: SetNull)
 
   @@index([workspaceId, createdAt(sort: Desc)])
   @@index([transferRequestId, createdAt(sort: Asc)])
@@ -466,9 +435,9 @@ model ApprovalDecision {
 }
 
 model TransferRequestEvent {
-  transferRequestEventId String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid @map("transfer_request_event_id")
-  transferRequestId      String          @db.Uuid @map("transfer_request_id")
-  workspaceId            String          @db.Uuid @map("workspace_id")
+  transferRequestEventId String          @id @default(dbgenerated("gen_random_uuid()")) @map("transfer_request_event_id") @db.Uuid
+  transferRequestId      String          @map("transfer_request_id") @db.Uuid
+  workspaceId            String          @map("workspace_id") @db.Uuid
   eventType              String          @map("event_type")
   actorType              String          @map("actor_type")
   actorId                String?         @map("actor_id")
@@ -476,10 +445,10 @@ model TransferRequestEvent {
   beforeState            String?         @map("before_state")
   afterState             String?         @map("after_state")
   linkedSignature        String?         @map("linked_signature")
-  linkedPaymentId        String?         @db.Uuid @map("linked_payment_id")
+  linkedPaymentId        String?         @map("linked_payment_id") @db.Uuid
   linkedTransferIds      Json            @default("[]") @map("linked_transfer_ids")
   payloadJson            Json            @default("{}") @map("payload_json")
-  createdAt              DateTime        @default(now()) @db.Timestamptz(6) @map("created_at")
+  createdAt              DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
   transferRequest        TransferRequest @relation(fields: [transferRequestId], references: [transferRequestId], onDelete: Cascade)
   workspace              Workspace       @relation(fields: [workspaceId], references: [workspaceId], onDelete: Cascade)
 
@@ -489,12 +458,12 @@ model TransferRequestEvent {
 }
 
 model TransferRequestNote {
-  transferRequestNoteId String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid @map("transfer_request_note_id")
-  transferRequestId     String          @db.Uuid @map("transfer_request_id")
-  workspaceId           String          @db.Uuid @map("workspace_id")
-  authorUserId          String?         @db.Uuid @map("author_user_id")
+  transferRequestNoteId String          @id @default(dbgenerated("gen_random_uuid()")) @map("transfer_request_note_id") @db.Uuid
+  transferRequestId     String          @map("transfer_request_id") @db.Uuid
+  workspaceId           String          @map("workspace_id") @db.Uuid
+  authorUserId          String?         @map("author_user_id") @db.Uuid
   body                  String
-  createdAt             DateTime        @default(now()) @db.Timestamptz(6) @map("created_at")
+  createdAt             DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
   transferRequest       TransferRequest @relation(fields: [transferRequestId], references: [transferRequestId], onDelete: Cascade)
   workspace             Workspace       @relation(fields: [workspaceId], references: [workspaceId], onDelete: Cascade)
   authorUser            User?           @relation(fields: [authorUserId], references: [userId], onDelete: SetNull)
@@ -505,12 +474,12 @@ model TransferRequestNote {
 }
 
 model ExceptionNote {
-  exceptionNoteId String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid @map("exception_note_id")
-  workspaceId     String    @db.Uuid @map("workspace_id")
-  exceptionId     String    @db.Uuid @map("exception_id")
-  authorUserId    String?   @db.Uuid @map("author_user_id")
+  exceptionNoteId String    @id @default(dbgenerated("gen_random_uuid()")) @map("exception_note_id") @db.Uuid
+  workspaceId     String    @map("workspace_id") @db.Uuid
+  exceptionId     String    @map("exception_id") @db.Uuid
+  authorUserId    String?   @map("author_user_id") @db.Uuid
   body            String
-  createdAt       DateTime  @default(now()) @db.Timestamptz(6) @map("created_at")
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   workspace       Workspace @relation(fields: [workspaceId], references: [workspaceId], onDelete: Cascade)
   authorUser      User?     @relation(fields: [authorUserId], references: [userId], onDelete: SetNull)
 
@@ -520,16 +489,16 @@ model ExceptionNote {
 }
 
 model ExceptionState {
-  exceptionStateId String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid @map("exception_state_id")
-  workspaceId      String    @db.Uuid @map("workspace_id")
-  exceptionId      String    @db.Uuid @map("exception_id")
+  exceptionStateId String    @id @default(dbgenerated("gen_random_uuid()")) @map("exception_state_id") @db.Uuid
+  workspaceId      String    @map("workspace_id") @db.Uuid
+  exceptionId      String    @map("exception_id") @db.Uuid
   status           String
-  updatedByUserId  String?   @db.Uuid @map("updated_by_user_id")
-  assignedToUserId String?   @db.Uuid @map("assigned_to_user_id")
+  updatedByUserId  String?   @map("updated_by_user_id") @db.Uuid
+  assignedToUserId String?   @map("assigned_to_user_id") @db.Uuid
   resolutionCode   String?   @map("resolution_code")
   severity         String?   @map("severity")
-  createdAt        DateTime  @default(now()) @db.Timestamptz(6) @map("created_at")
-  updatedAt        DateTime  @updatedAt @db.Timestamptz(6) @map("updated_at")
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
   workspace        Workspace @relation(fields: [workspaceId], references: [workspaceId], onDelete: Cascade)
   updatedByUser    User?     @relation(fields: [updatedByUserId], references: [userId], onDelete: SetNull)
   assignedToUser   User?     @relation("ExceptionStateAssignee", fields: [assignedToUserId], references: [userId], onDelete: SetNull)
@@ -540,16 +509,16 @@ model ExceptionState {
 }
 
 model ExportJob {
-  exportJobId       String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid @map("export_job_id")
-  workspaceId       String    @db.Uuid @map("workspace_id")
-  requestedByUserId String?   @db.Uuid @map("requested_by_user_id")
+  exportJobId       String    @id @default(dbgenerated("gen_random_uuid()")) @map("export_job_id") @db.Uuid
+  workspaceId       String    @map("workspace_id") @db.Uuid
+  requestedByUserId String?   @map("requested_by_user_id") @db.Uuid
   exportKind        String    @map("export_kind")
   format            String
   status            String    @default("completed")
   rowCount          Int       @default(0) @map("row_count")
   filterJson        Json      @default("{}") @map("filter_json")
-  createdAt         DateTime  @default(now()) @db.Timestamptz(6) @map("created_at")
-  completedAt       DateTime? @db.Timestamptz(6) @map("completed_at")
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  completedAt       DateTime? @map("completed_at") @db.Timestamptz(6)
   workspace         Workspace @relation(fields: [workspaceId], references: [workspaceId], onDelete: Cascade)
   requestedByUser   User?     @relation(fields: [requestedByUserId], references: [userId], onDelete: SetNull)
 
@@ -558,7 +527,7 @@ model ExportJob {
 }
 
 model AddressLabel {
-  addressLabelId String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid @map("address_label_id")
+  addressLabelId String   @id @default(dbgenerated("gen_random_uuid()")) @map("address_label_id") @db.Uuid
   chain          String
   address        String
   entityName     String   @map("entity_name")
@@ -570,8 +539,8 @@ model AddressLabel {
   confidence     String   @default("seeded")
   isActive       Boolean  @default(true) @map("is_active")
   notes          String?
-  createdAt      DateTime @default(now()) @db.Timestamptz(6) @map("created_at")
-  updatedAt      DateTime @updatedAt @db.Timestamptz(6) @map("updated_at")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   @@unique([chain, address])
   @@index([chain, address])

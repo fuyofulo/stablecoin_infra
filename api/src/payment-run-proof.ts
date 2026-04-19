@@ -22,12 +22,6 @@ export async function buildPaymentRunProofPacket(
       paymentOrderId: order.paymentOrderId,
       paymentRequestId: order.paymentRequestId,
       transferRequestId: order.transferRequestId,
-      payee: order.payee
-        ? {
-            payeeId: order.payee.payeeId,
-            name: order.payee.name,
-          }
-        : null,
       destination: {
         destinationId: order.destination.destinationId,
         label: order.destination.label,
@@ -107,7 +101,6 @@ function buildOrderProofRef(proof: Awaited<ReturnType<typeof buildPaymentOrderPr
       paymentRequestId: proof.intent.paymentRequestId,
       paymentOrderId: proof.intent.paymentOrderId,
       transferRequestId: proof.intent.transferRequestId,
-      payee: proof.intent.payee,
       reference: proof.intent.reference,
       reason: proof.intent.reason,
       amountRaw: proof.intent.amountRaw,

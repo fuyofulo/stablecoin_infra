@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import type { Destination, Prisma, WorkspaceAddress } from '@prisma/client';
+import type { Destination, Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { buildApprovalEvaluationSummary, getOrCreateWorkspaceApprovalPolicy } from '../approval-policy.js';
 import {
@@ -43,9 +43,8 @@ const amountRawSchema = z.union([
 ]);
 
 const createTransferRequestSchema = z.object({
-  sourceWorkspaceAddressId: z.string().uuid().optional(),
-  destinationWorkspaceAddressId: z.string().uuid().optional(),
-  destinationId: z.string().uuid().optional(),
+  sourceTreasuryWalletId: z.string().uuid().optional(),
+  destinationId: z.string().uuid(),
   requestType: z.string().default('wallet_transfer'),
   asset: z.string().default('usdc'),
   amountRaw: amountRawSchema,
@@ -54,10 +53,7 @@ const createTransferRequestSchema = z.object({
   status: z.enum(CREATE_REQUEST_STATUSES).default('submitted'),
   dueAt: z.string().datetime().optional(),
   propertiesJson: z.record(z.any()).default({}),
-}).refine(
-  (value) => Boolean(value.destinationId || value.destinationWorkspaceAddressId),
-  'Either destinationId or destinationWorkspaceAddressId is required',
-);
+});
 
 const requestNoteSchema = z.object({
   body: z.string().trim().min(1).max(5000),
@@ -92,8 +88,7 @@ transferRequestsRouter.get('/workspaces/:workspaceId/transfer-requests', async (
     const items = await prisma.transferRequest.findMany({
       where: { workspaceId },
       include: {
-        sourceWorkspaceAddress: true,
-        destinationWorkspaceAddress: true,
+        sourceTreasuryWallet: true,
         destination: {
           include: {
             counterparty: true,
@@ -135,68 +130,43 @@ transferRequestsRouter.post('/workspaces/:workspaceId/transfer-requests', async 
     await assertWorkspaceAdmin(workspaceId, req.auth!);
     const input = createTransferRequestSchema.parse(req.body);
 
-    const [sourceWorkspaceAddress, destinationWorkspaceAddress, destination] = await Promise.all([
-      input.sourceWorkspaceAddressId
-        ? prisma.workspaceAddress.findFirst({
+    const [sourceTreasuryWallet, destination] = await Promise.all([
+      input.sourceTreasuryWalletId
+        ? prisma.treasuryWallet.findFirst({
             where: {
               workspaceId,
-              workspaceAddressId: input.sourceWorkspaceAddressId,
+              treasuryWalletId: input.sourceTreasuryWalletId,
             },
-          })
+        })
         : Promise.resolve(null),
-      prisma.workspaceAddress.findFirst({
+      prisma.destination.findFirst({
         where: {
           workspaceId,
-          workspaceAddressId: input.destinationWorkspaceAddressId,
+          destinationId: input.destinationId,
+          isActive: true,
+        },
+        include: {
+          counterparty: true,
         },
       }),
-      input.destinationId
-        ? prisma.destination.findFirst({
-            where: {
-              workspaceId,
-              destinationId: input.destinationId,
-              isActive: true,
-            },
-            include: {
-              counterparty: true,
-            },
-          })
-        : Promise.resolve(null),
     ]);
 
-    if (input.sourceWorkspaceAddressId && !sourceWorkspaceAddress) {
+    if (input.sourceTreasuryWalletId && !sourceTreasuryWallet) {
       throw new Error('Source wallet not found');
     }
 
-    const resolvedDestinationWorkspaceAddress =
-      destination && destination.linkedWorkspaceAddressId
-        ? await prisma.workspaceAddress.findFirst({
-            where: {
-              workspaceId,
-              workspaceAddressId: destination.linkedWorkspaceAddressId,
-            },
-          })
-        : destinationWorkspaceAddress;
-
-    if (input.destinationId && !destination) {
+    if (!destination) {
       throw new Error('Destination not found');
     }
 
-    if (destination) {
-      enforceDestinationRequestRules(destination, input.status);
-    }
-
-    if (!resolvedDestinationWorkspaceAddress) {
-      throw new Error('Destination wallet not found');
-    }
+    enforceDestinationRequestRules(destination);
 
     const transferRequest = await prisma.$transaction(async (tx) => {
       const created = await tx.transferRequest.create({
         data: {
           workspaceId,
-          sourceWorkspaceAddressId: sourceWorkspaceAddress?.workspaceAddressId,
-          destinationWorkspaceAddressId: resolvedDestinationWorkspaceAddress.workspaceAddressId,
-          destinationId: destination?.destinationId,
+          sourceTreasuryWalletId: sourceTreasuryWallet?.treasuryWalletId,
+          destinationId: destination.destinationId,
           requestType: input.requestType,
           asset: input.asset,
           amountRaw: BigInt(input.amountRaw),
@@ -208,8 +178,7 @@ transferRequestsRouter.post('/workspaces/:workspaceId/transfer-requests', async 
           propertiesJson: input.propertiesJson,
         },
         include: {
-          sourceWorkspaceAddress: true,
-          destinationWorkspaceAddress: true,
+          sourceTreasuryWallet: true,
           destination: {
             include: {
               counterparty: true,
@@ -243,7 +212,7 @@ transferRequestsRouter.post('/workspaces/:workspaceId/transfer-requests', async 
       const approvalEvaluation = buildApprovalEvaluationSummary({
         policy: approvalPolicy,
         amountRaw: created.amountRaw,
-        destination: buildApprovalDestinationContext(destination, resolvedDestinationWorkspaceAddress),
+        destination: buildApprovalDestinationContext(destination),
       });
       const finalStatus = approvalEvaluation.requiresApproval ? 'pending_approval' : 'approved';
 
@@ -264,8 +233,7 @@ transferRequestsRouter.post('/workspaces/:workspaceId/transfer-requests', async 
           status: finalStatus,
         },
         include: {
-          sourceWorkspaceAddress: true,
-          destinationWorkspaceAddress: true,
+          sourceTreasuryWallet: true,
           destination: {
             include: {
               counterparty: true,
@@ -298,26 +266,19 @@ transferRequestsRouter.post('/workspaces/:workspaceId/transfer-requests', async 
   }
 });
 
-function enforceDestinationRequestRules(
-  destination: {
-    label: string;
-    trustState: string;
-    isActive: boolean;
-  },
-  createStatus: (typeof CREATE_REQUEST_STATUSES)[number],
-) {
+function enforceDestinationRequestRules(destination: {
+  label: string;
+  trustState: string;
+  isActive: boolean;
+}) {
+  // Hard blocks only. Unreviewed and restricted destinations are valid —
+  // they route through the approval policy, which is the right place to
+  // decide whether human review is needed.
   if (!destination.isActive) {
     throw new Error(`Destination "${destination.label}" is inactive and cannot be used for new requests`);
   }
-
   if (destination.trustState === 'blocked') {
     throw new Error(`Destination "${destination.label}" is blocked and cannot be used for new requests`);
-  }
-
-  if ((destination.trustState === 'unreviewed' || destination.trustState === 'restricted') && createStatus !== 'draft') {
-    throw new Error(
-      `Destination "${destination.label}" is ${destination.trustState}. Create the request as draft until it is reviewed or trusted`,
-    );
   }
 }
 
@@ -374,8 +335,7 @@ transferRequestsRouter.post(
       const current = await prisma.transferRequest.findFirstOrThrow({
         where: { workspaceId, transferRequestId },
         include: {
-          sourceWorkspaceAddress: true,
-          destinationWorkspaceAddress: true,
+          sourceTreasuryWallet: true,
           destination: {
             include: {
               counterparty: true,
@@ -408,8 +368,7 @@ transferRequestsRouter.post(
             status: input.toStatus,
           },
           include: {
-            sourceWorkspaceAddress: true,
-            destinationWorkspaceAddress: true,
+            sourceTreasuryWallet: true,
             destination: {
               include: {
                 counterparty: true,
@@ -450,10 +409,7 @@ transferRequestsRouter.post(
           const approvalEvaluation = buildApprovalEvaluationSummary({
             policy: approvalPolicy,
             amountRaw: nextRequest.amountRaw,
-            destination: buildApprovalDestinationContext(
-              nextRequest.destination,
-              nextRequest.destinationWorkspaceAddress,
-            ),
+            destination: buildApprovalDestinationContext(nextRequest.destination),
           });
           const finalStatus = approvalEvaluation.requiresApproval ? 'pending_approval' : 'approved';
 
@@ -474,8 +430,7 @@ transferRequestsRouter.post(
               status: finalStatus,
             },
             include: {
-              sourceWorkspaceAddress: true,
-              destinationWorkspaceAddress: true,
+              sourceTreasuryWallet: true,
               destination: {
                 include: {
                   counterparty: true,
@@ -743,7 +698,6 @@ export const matchingActiveRequestStatuses = [...ACTIVE_MATCHING_REQUEST_STATUSE
 
 function buildApprovalDestinationContext(
   destination: Pick<Destination, 'label' | 'trustState' | 'isInternal'> | null | undefined,
-  workspaceAddress: Pick<WorkspaceAddress, 'displayName' | 'address'> | null | undefined,
 ) {
   if (destination) {
     return {
@@ -754,7 +708,7 @@ function buildApprovalDestinationContext(
   }
 
   return {
-    label: workspaceAddress?.displayName ?? workspaceAddress?.address ?? 'unnamed destination',
+    label: 'unnamed destination',
     trustState: 'unreviewed',
     isInternal: false,
   };

@@ -33,7 +33,6 @@ export const API_ENDPOINTS = [
   endpoint('create_workspace', 'POST', '/organizations/{organizationId}/workspaces', ['organizations'], 'Create workspace', 'session_or_api_key', {
     requestBody: { workspaceName: 'string' },
   }),
-  endpoint('create_demo_workspace', 'POST', '/organizations/{organizationId}/demo-workspace', ['organizations'], 'Create demo workspace', 'session_or_api_key'),
 
   endpoint('list_api_keys', 'GET', '/workspaces/{workspaceId}/api-keys', ['api keys'], 'List workspace API keys', 'session_or_api_key', { scope: 'api_keys:write' }),
   endpoint('create_api_key', 'POST', '/workspaces/{workspaceId}/api-keys', ['api keys'], 'Create scoped workspace API key', 'session_or_api_key', {
@@ -43,23 +42,23 @@ export const API_ENDPOINTS = [
   endpoint('revoke_api_key', 'POST', '/workspaces/{workspaceId}/api-keys/{apiKeyId}/revoke', ['api keys'], 'Revoke API key', 'session_or_api_key', { scope: 'api_keys:write' }),
   endpoint('delete_api_key', 'DELETE', '/workspaces/{workspaceId}/api-keys/{apiKeyId}', ['api keys'], 'Delete API key', 'session_or_api_key', { scope: 'api_keys:write' }),
 
-  endpoint('list_addresses', 'GET', '/workspaces/{workspaceId}/addresses', ['address book'], 'List workspace wallets', 'session_or_api_key', { scope: 'workspace:read' }),
-  endpoint('create_address', 'POST', '/workspaces/{workspaceId}/addresses', ['address book'], 'Create workspace wallet', 'session_or_api_key', {
+  endpoint('list_treasury_wallets', 'GET', '/workspaces/{workspaceId}/treasury-wallets', ['address book'], 'List owned treasury wallets', 'session_or_api_key', { scope: 'workspace:read' }),
+  endpoint('list_treasury_wallet_balances', 'GET', '/workspaces/{workspaceId}/treasury-wallets/balances', ['address book'], 'List treasury wallets with live SOL/USDC balances', 'session_or_api_key', { scope: 'workspace:read' }),
+  endpoint('create_treasury_wallet', 'POST', '/workspaces/{workspaceId}/treasury-wallets', ['address book'], 'Create owned treasury wallet', 'session_or_api_key', {
     scope: 'workspace:write',
     requestBody: { chain: 'solana', address: 'string', displayName: 'string optional' },
   }),
-  endpoint('update_address', 'PATCH', '/workspaces/{workspaceId}/addresses/{workspaceAddressId}', ['address book'], 'Update workspace wallet', 'session_or_api_key', { scope: 'workspace:write' }),
+  endpoint('update_treasury_wallet', 'PATCH', '/workspaces/{workspaceId}/treasury-wallets/{treasuryWalletId}', ['address book'], 'Update owned treasury wallet', 'session_or_api_key', { scope: 'workspace:write' }),
 
   endpoint('list_counterparties', 'GET', '/workspaces/{workspaceId}/counterparties', ['address book'], 'List counterparties', 'session_or_api_key', { scope: 'workspace:read' }),
   endpoint('create_counterparty', 'POST', '/workspaces/{workspaceId}/counterparties', ['address book'], 'Create counterparty', 'session_or_api_key', { scope: 'workspace:write' }),
   endpoint('update_counterparty', 'PATCH', '/workspaces/{workspaceId}/counterparties/{counterpartyId}', ['address book'], 'Update counterparty', 'session_or_api_key', { scope: 'workspace:write' }),
   endpoint('list_destinations', 'GET', '/workspaces/{workspaceId}/destinations', ['address book'], 'List payment destinations', 'session_or_api_key', { scope: 'workspace:read' }),
-  endpoint('create_destination', 'POST', '/workspaces/{workspaceId}/destinations', ['address book'], 'Create payment destination', 'session_or_api_key', { scope: 'workspace:write' }),
+  endpoint('create_destination', 'POST', '/workspaces/{workspaceId}/destinations', ['address book'], 'Create counterparty payment destination', 'session_or_api_key', {
+    scope: 'workspace:write',
+    requestBody: { walletAddress: 'string', tokenAccountAddress: 'string optional', label: 'string', trustState: 'trusted | unreviewed | restricted' },
+  }),
   endpoint('update_destination', 'PATCH', '/workspaces/{workspaceId}/destinations/{destinationId}', ['address book'], 'Update payment destination', 'session_or_api_key', { scope: 'workspace:write' }),
-  endpoint('list_payees', 'GET', '/workspaces/{workspaceId}/payees', ['payees'], 'List payees', 'session_or_api_key', { scope: 'workspace:read' }),
-  endpoint('create_payee', 'POST', '/workspaces/{workspaceId}/payees', ['payees'], 'Create payee', 'session_or_api_key', { scope: 'workspace:write' }),
-  endpoint('get_payee', 'GET', '/workspaces/{workspaceId}/payees/{payeeId}', ['payees'], 'Get payee detail', 'session_or_api_key', { scope: 'workspace:read' }),
-  endpoint('update_payee', 'PATCH', '/workspaces/{workspaceId}/payees/{payeeId}', ['payees'], 'Update payee', 'session_or_api_key', { scope: 'workspace:write' }),
 
   endpoint('get_approval_policy', 'GET', '/workspaces/{workspaceId}/approval-policy', ['approval'], 'Get workspace approval policy', 'session_or_api_key', { scope: 'workspace:read' }),
   endpoint('update_approval_policy', 'PATCH', '/workspaces/{workspaceId}/approval-policy', ['approval'], 'Update workspace approval policy', 'session_or_api_key', { scope: 'approvals:write' }),
@@ -109,13 +108,13 @@ export const API_ENDPOINTS = [
   }),
   endpoint('payment_order_audit_export', 'GET', '/workspaces/{workspaceId}/payment-orders/{paymentOrderId}/audit-export', ['proof'], 'Export payment order audit rows', 'session_or_api_key', { scope: 'proofs:read' }),
 
-  endpoint('list_transfer_requests', 'GET', '/workspaces/{workspaceId}/transfer-requests', ['legacy transfer requests'], 'List transfer requests', 'session_or_api_key', { scope: 'workspace:read' }),
-  endpoint('get_transfer_request', 'GET', '/workspaces/{workspaceId}/transfer-requests/{transferRequestId}', ['legacy transfer requests'], 'Get transfer request detail', 'session_or_api_key', { scope: 'workspace:read' }),
-  endpoint('create_transfer_request', 'POST', '/workspaces/{workspaceId}/transfer-requests', ['legacy transfer requests'], 'Create transfer request', 'session_or_api_key', { scope: 'payments:write' }),
-  endpoint('add_transfer_request_note', 'POST', '/workspaces/{workspaceId}/transfer-requests/{transferRequestId}/notes', ['legacy transfer requests'], 'Add transfer request note', 'session_or_api_key', { scope: 'payments:write' }),
-  endpoint('transition_transfer_request', 'POST', '/workspaces/{workspaceId}/transfer-requests/{transferRequestId}/transitions', ['legacy transfer requests'], 'Transition transfer request status', 'session_or_api_key', { scope: 'payments:write' }),
-  endpoint('record_transfer_execution', 'POST', '/workspaces/{workspaceId}/transfer-requests/{transferRequestId}/executions', ['legacy transfer requests'], 'Record execution on transfer request', 'session_or_api_key', { scope: 'execution:write' }),
-  endpoint('update_transfer_request', 'PATCH', '/workspaces/{workspaceId}/transfer-requests/{transferRequestId}', ['legacy transfer requests'], 'Update transfer request metadata', 'session_or_api_key', { scope: 'payments:write' }),
+  endpoint('list_transfer_requests', 'GET', '/workspaces/{workspaceId}/transfer-requests', ['transfer requests'], 'List transfer requests', 'session_or_api_key', { scope: 'workspace:read' }),
+  endpoint('get_transfer_request', 'GET', '/workspaces/{workspaceId}/transfer-requests/{transferRequestId}', ['transfer requests'], 'Get transfer request detail', 'session_or_api_key', { scope: 'workspace:read' }),
+  endpoint('create_transfer_request', 'POST', '/workspaces/{workspaceId}/transfer-requests', ['transfer requests'], 'Create transfer request', 'session_or_api_key', { scope: 'payments:write' }),
+  endpoint('add_transfer_request_note', 'POST', '/workspaces/{workspaceId}/transfer-requests/{transferRequestId}/notes', ['transfer requests'], 'Add transfer request note', 'session_or_api_key', { scope: 'payments:write' }),
+  endpoint('transition_transfer_request', 'POST', '/workspaces/{workspaceId}/transfer-requests/{transferRequestId}/transitions', ['transfer requests'], 'Transition transfer request status', 'session_or_api_key', { scope: 'payments:write' }),
+  endpoint('record_transfer_execution', 'POST', '/workspaces/{workspaceId}/transfer-requests/{transferRequestId}/executions', ['transfer requests'], 'Record execution on transfer request', 'session_or_api_key', { scope: 'execution:write' }),
+  endpoint('update_transfer_request', 'PATCH', '/workspaces/{workspaceId}/transfer-requests/{transferRequestId}', ['transfer requests'], 'Update transfer request metadata', 'session_or_api_key', { scope: 'payments:write' }),
 
   endpoint('list_transfers', 'GET', '/workspaces/{workspaceId}/transfers', ['reconciliation'], 'List observed transfers for watched wallets', 'session_or_api_key', { scope: 'reconciliation:read' }),
   endpoint('list_reconciliation', 'GET', '/workspaces/{workspaceId}/reconciliation', ['reconciliation'], 'List reconciliation queue', 'session_or_api_key', { scope: 'reconciliation:read' }),

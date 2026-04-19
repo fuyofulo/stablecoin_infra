@@ -174,7 +174,11 @@ impl YellowstoneWorker {
                 .lock()
                 .await
                 .client()
-                .report_worker_stage("startup_registry_refresh", "error", Some(&error.to_string()))
+                .report_worker_stage(
+                    "startup_registry_refresh",
+                    "error",
+                    Some(&error.to_string()),
+                )
                 .await;
         } else {
             let _ = self
@@ -823,7 +827,9 @@ impl YellowstoneWorker {
                 continue;
             };
 
-            let Some(destination_matches) = registry.matches_for_wallet(&destination_wallet) else {
+            let Some(destination_matches) =
+                registry.matches_for_destination_wallet(&destination_wallet)
+            else {
                 continue;
             };
 
@@ -1405,7 +1411,7 @@ fn timestamp_to_utc(
 mod tests {
     use super::*;
     use crate::control_plane::{
-        WorkspaceAddressMatch, WorkspaceRegistry, WorkspaceRegistryCache,
+        WorkspacePaymentMatch, WorkspaceRegistry, WorkspaceRegistryCache,
         WorkspaceTransferRequestMatch,
     };
     use crate::storage::ClickHouseWriter;
@@ -1493,7 +1499,7 @@ mod tests {
         let destination_wallet = Pubkey::new_unique();
         let destination_token_account = Pubkey::new_unique();
         let workspace_id = Uuid::new_v4().to_string();
-        let registry = WorkspaceRegistry::from_matches(vec![WorkspaceAddressMatch {
+        let registry = WorkspaceRegistry::from_matches(vec![WorkspacePaymentMatch {
             workspace_id,
             wallet_address: destination_wallet.to_string(),
         }]);
@@ -1573,7 +1579,7 @@ mod tests {
         let transfer_request_id = Uuid::new_v4().to_string();
 
         let registry = WorkspaceRegistry::with_transfer_requests(
-            vec![WorkspaceAddressMatch {
+            vec![WorkspacePaymentMatch {
                 workspace_id: workspace_id.clone(),
                 wallet_address: wallet.to_string(),
             }],
@@ -1674,7 +1680,7 @@ mod tests {
         let token_account = Pubkey::new_unique();
         let workspace_id = Uuid::new_v4().to_string();
 
-        let registry = WorkspaceRegistry::from_matches(vec![WorkspaceAddressMatch {
+        let registry = WorkspaceRegistry::from_matches(vec![WorkspacePaymentMatch {
             workspace_id: workspace_id.clone(),
             wallet_address: wallet.to_string(),
         }]);
@@ -1731,7 +1737,7 @@ mod tests {
         let transfer_request_id = Uuid::new_v4().to_string();
 
         let registry = WorkspaceRegistry::with_transfer_requests(
-            vec![WorkspaceAddressMatch {
+            vec![WorkspacePaymentMatch {
                 workspace_id: workspace_id.clone(),
                 wallet_address: destination_wallet.to_string(),
             }],
@@ -2037,7 +2043,7 @@ mod tests {
         let destination_token_account = Pubkey::new_unique();
 
         let worker = test_worker(WorkspaceRegistry::from_matches(vec![
-            WorkspaceAddressMatch {
+            WorkspacePaymentMatch {
                 workspace_id: Uuid::new_v4().to_string(),
                 wallet_address: destination_wallet.to_string(),
             },

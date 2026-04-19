@@ -51,7 +51,10 @@ const updateCounterpartySchema = z.object({
 
 const createDestinationSchema = z.object({
   counterpartyId: z.string().uuid().optional(),
-  linkedWorkspaceAddressId: z.string().uuid(),
+  chain: z.literal('solana').default('solana'),
+  asset: z.literal('usdc').default('usdc'),
+  walletAddress: z.string().trim().min(1),
+  tokenAccountAddress: z.string().trim().min(1).optional(),
   destinationType: z.string().trim().min(1).max(100).default('wallet'),
   trustState: z.enum(['unreviewed', 'trusted', 'restricted', 'blocked']).default('unreviewed'),
   label: z.string().trim().min(1).max(200),
@@ -63,7 +66,8 @@ const createDestinationSchema = z.object({
 
 const updateDestinationSchema = z.object({
   counterpartyId: z.string().uuid().nullable().optional(),
-  linkedWorkspaceAddressId: z.string().uuid().optional(),
+  walletAddress: z.string().trim().min(1).optional(),
+  tokenAccountAddress: z.string().trim().min(1).nullable().optional(),
   destinationType: z.string().trim().min(1).max(100).optional(),
   trustState: z.enum(['unreviewed', 'trusted', 'restricted', 'blocked']).optional(),
   label: z.string().trim().min(1).max(200).optional(),
@@ -73,7 +77,8 @@ const updateDestinationSchema = z.object({
 }).refine(
   (value) =>
     value.counterpartyId !== undefined
-    || value.linkedWorkspaceAddressId !== undefined
+    || value.walletAddress !== undefined
+    || value.tokenAccountAddress !== undefined
     || value.destinationType !== undefined
     || value.trustState !== undefined
     || value.label !== undefined

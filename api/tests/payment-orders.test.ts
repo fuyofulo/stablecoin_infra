@@ -22,11 +22,10 @@ TRUNCATE TABLE
   payment_order_events,
   payment_orders,
   payment_requests,
-  payees,
   transfer_requests,
   destinations,
   counterparties,
-  workspace_addresses,
+  treasury_wallets,
   workspaces,
   organizations,
   users
@@ -79,7 +78,7 @@ test('payment orders create a business intent and submit into the existing reque
     `/workspaces/${setup.workspace.workspaceId}/payment-orders`,
     {
       destinationId: setup.destination.destinationId,
-      sourceWorkspaceAddressId: setup.sourceAddress.workspaceAddressId,
+      sourceTreasuryWalletId: setup.sourceAddress.treasuryWalletId,
       amountRaw: '10000',
       memo: 'Invoice 1234 payout',
       externalReference: 'INV-1234',
@@ -96,7 +95,7 @@ test('payment orders create a business intent and submit into the existing reque
 
   assert.equal(paymentOrder.memo, 'Invoice 1234 payout');
   assert.equal(paymentOrder.externalReference, 'INV-1234');
-  assert.equal(paymentOrder.sourceWorkspaceAddressId, setup.sourceAddress.workspaceAddressId);
+  assert.equal(paymentOrder.sourceTreasuryWalletId, setup.sourceAddress.treasuryWalletId);
   assert.equal(paymentOrder.destinationId, setup.destination.destinationId);
   assert.equal(paymentOrder.transferRequests.length, 1);
   assert.equal(paymentOrder.reconciliationDetail.status, 'approved');
@@ -107,7 +106,7 @@ test('payment orders create a business intent and submit into the existing reque
     where: { transferRequestId: paymentOrder.transferRequestId },
   });
   assert.equal(transferRequest.paymentOrderId, paymentOrder.paymentOrderId);
-  assert.equal(transferRequest.sourceWorkspaceAddressId, setup.sourceAddress.workspaceAddressId);
+  assert.equal(transferRequest.sourceTreasuryWalletId, setup.sourceAddress.treasuryWalletId);
   assert.equal(transferRequest.destinationId, setup.destination.destinationId);
   assert.equal(transferRequest.status, 'approved');
 
@@ -127,7 +126,7 @@ test('payment requests capture user intent and promote into payment orders', asy
       reason: 'Pay Fuyo LLC for INV-102',
       externalReference: 'INV-102',
       createOrderNow: true,
-      sourceWorkspaceAddressId: setup.sourceAddress.workspaceAddressId,
+      sourceTreasuryWalletId: setup.sourceAddress.treasuryWalletId,
       submitOrderNow: true,
     },
     setup.sessionToken,
@@ -154,10 +153,10 @@ test('payment requests capture user intent and promote into payment orders', asy
   assert.equal(list.items[0].paymentOrder.paymentOrderId, paymentOrder.paymentOrderId);
 });
 
-test('CSV import creates lightweight payees and payment requests', async () => {
+test('CSV import creates payment requests and orders against existing destinations', async () => {
   const setup = await createPaymentOrderSetup();
   const csv = [
-    'payee,destination,amount,reference,due_date',
+    'counterparty,destination,amount,reference,due_date',
     `Fuyo LLC,${setup.destination.label},0.015,INV-CSV-1,2026-04-15`,
   ].join('\n');
 
@@ -166,7 +165,7 @@ test('CSV import creates lightweight payees and payment requests', async () => {
     {
       csv,
       createOrderNow: true,
-      sourceWorkspaceAddressId: setup.sourceAddress.workspaceAddressId,
+      sourceTreasuryWalletId: setup.sourceAddress.treasuryWalletId,
       submitOrderNow: true,
     },
     setup.sessionToken,
@@ -174,24 +173,18 @@ test('CSV import creates lightweight payees and payment requests', async () => {
 
   assert.equal(result.imported, 1);
   assert.equal(result.failed, 0);
-  assert.equal(result.items[0].payee.name, 'Fuyo LLC');
   assert.equal(result.items[0].paymentRequest.amountRaw, '15000');
   assert.equal(result.items[0].paymentRequest.state, 'converted_to_order');
-  assert.equal(result.items[0].paymentRequest.payeeId, result.items[0].payee.payeeId);
+  assert.equal(result.items[0].paymentRequest.destinationId, setup.destination.destinationId);
 
   const paymentOrder = await get(
     `/workspaces/${setup.workspace.workspaceId}/payment-orders/${result.items[0].paymentRequest.paymentOrder.paymentOrderId}`,
     setup.sessionToken,
   );
-  assert.equal(paymentOrder.payee.name, 'Fuyo LLC');
-  assert.equal(paymentOrder.payeeId, result.items[0].payee.payeeId);
   assert.equal(paymentOrder.amountRaw, '15000');
   assert.equal(paymentOrder.externalReference, 'INV-CSV-1');
+  assert.equal(paymentOrder.destinationId, setup.destination.destinationId);
   assert.equal(paymentOrder.derivedState, 'ready_for_execution');
-
-  const payees = await get(`/workspaces/${setup.workspace.workspaceId}/payees`, setup.sessionToken);
-  assert.equal(payees.items.length, 1);
-  assert.equal(payees.items[0].defaultDestinationId, setup.destination.destinationId);
 });
 
 test('CSV import creates unreviewed destinations for raw wallet addresses', async () => {
@@ -199,7 +192,7 @@ test('CSV import creates unreviewed destinations for raw wallet addresses', asyn
   const firstWallet = Keypair.generate().publicKey.toBase58();
   const secondWallet = Keypair.generate().publicKey.toBase58();
   const csv = [
-    'payee,destination,amount,reference,due_date',
+    'counterparty,destination,amount,reference,due_date',
     `Acme Corp,${firstWallet},0.01,INV-1001,2026-04-15`,
     `Beta Supplies,${secondWallet},0.01,INV-1002,2026-04-18`,
   ].join('\n');
@@ -209,7 +202,7 @@ test('CSV import creates unreviewed destinations for raw wallet addresses', asyn
     {
       csv,
       createOrderNow: true,
-      sourceWorkspaceAddressId: setup.sourceAddress.workspaceAddressId,
+      sourceTreasuryWalletId: setup.sourceAddress.treasuryWalletId,
       submitOrderNow: false,
     },
     setup.sessionToken,
@@ -217,8 +210,6 @@ test('CSV import creates unreviewed destinations for raw wallet addresses', asyn
 
   assert.equal(result.imported, 2);
   assert.equal(result.failed, 0);
-  assert.equal(result.items[0].payee.name, 'Acme Corp');
-  assert.equal(result.items[1].payee.name, 'Beta Supplies');
   assert.equal(result.items[0].paymentRequest.amountRaw, '10000');
   assert.equal(result.items[1].paymentRequest.externalReference, 'INV-1002');
 
@@ -230,16 +221,15 @@ test('CSV import creates unreviewed destinations for raw wallet addresses', asyn
     ['unreviewed', 'unreviewed'],
   );
 
-  const addresses = await get(`/workspaces/${setup.workspace.workspaceId}/addresses`, setup.sessionToken);
+  const addresses = await get(`/workspaces/${setup.workspace.workspaceId}/treasury-wallets`, setup.sessionToken);
   const importedAddresses = addresses.items.filter((item: { address: string }) => [firstWallet, secondWallet].includes(item.address));
-  assert.equal(importedAddresses.length, 2);
-  assert.ok(importedAddresses.every((item: { source: string; usdcAtaAddress: string | null }) => item.source === 'csv_import' && item.usdcAtaAddress));
+  assert.equal(importedAddresses.length, 0);
 });
 
 test('payment runs import CSV rows and prepare one batch execution packet', async () => {
   const setup = await createPaymentOrderSetup();
   const secondDestinationAddress = await post(
-    `/workspaces/${setup.workspace.workspaceId}/addresses`,
+    `/workspaces/${setup.workspace.workspaceId}/treasury-wallets`,
     {
       chain: 'solana',
       address: Keypair.generate().publicKey.toBase58(),
@@ -250,7 +240,8 @@ test('payment runs import CSV rows and prepare one batch execution packet', asyn
   const secondDestination = await post(
     `/workspaces/${setup.workspace.workspaceId}/destinations`,
     {
-      linkedWorkspaceAddressId: secondDestinationAddress.workspaceAddressId,
+      walletAddress: secondDestinationAddress.address,
+      tokenAccountAddress: secondDestinationAddress.usdcAtaAddress ?? undefined,
       label: `Second payout ${crypto.randomUUID().slice(0, 8)}`,
       trustState: 'trusted',
       destinationType: 'vendor_wallet',
@@ -259,7 +250,7 @@ test('payment runs import CSV rows and prepare one batch execution packet', asyn
     setup.sessionToken,
   );
   const csv = [
-    'payee,destination,amount,reference,due_date',
+    'counterparty,destination,amount,reference,due_date',
     `Acme Corp,${setup.destination.label},0.01,RUN-1001,2026-04-15`,
     `Beta Supplies,${secondDestination.label},0.02,RUN-1002,2026-04-18`,
   ].join('\n');
@@ -269,7 +260,7 @@ test('payment runs import CSV rows and prepare one batch execution packet', asyn
     {
       runName: 'April payroll run',
       csv,
-      sourceWorkspaceAddressId: setup.sourceAddress.workspaceAddressId,
+      sourceTreasuryWalletId: setup.sourceAddress.treasuryWalletId,
       submitOrderNow: true,
     },
     setup.sessionToken,
@@ -287,7 +278,7 @@ test('payment runs import CSV rows and prepare one batch execution packet', asyn
   const prepared = await post(
     `/workspaces/${setup.workspace.workspaceId}/payment-runs/${imported.paymentRun.paymentRunId}/prepare-execution`,
     {
-      sourceWorkspaceAddressId: setup.sourceAddress.workspaceAddressId,
+      sourceTreasuryWalletId: setup.sourceAddress.treasuryWalletId,
     },
     setup.sessionToken,
   );
@@ -302,7 +293,7 @@ test('payment runs import CSV rows and prepare one batch execution packet', asyn
   const preparedAgain = await post(
     `/workspaces/${setup.workspace.workspaceId}/payment-runs/${imported.paymentRun.paymentRunId}/prepare-execution`,
     {
-      sourceWorkspaceAddressId: setup.sourceAddress.workspaceAddressId,
+      sourceTreasuryWalletId: setup.sourceAddress.treasuryWalletId,
     },
     setup.sessionToken,
   );
@@ -386,11 +377,11 @@ test('payment runs import CSV rows and prepare one batch execution packet', asyn
 test('payment run CSV preview detects duplicate rows and import is idempotent by key', async () => {
   const setup = await createPaymentOrderSetup();
   const csv = [
-    'payee,destination,amount,reference,due_date',
+    'counterparty,destination,amount,reference,due_date',
     `Acme Corp,${setup.destination.label},0.01,RUN-IDEMP-1,2026-04-15`,
   ].join('\n');
   const duplicateCsv = [
-    'payee,destination,amount,reference,due_date',
+    'counterparty,destination,amount,reference,due_date',
     `Acme Corp,${setup.destination.label},0.01,RUN-DUP-1,2026-04-15`,
     `Acme Corp,${setup.destination.label},0.01,RUN-DUP-1,2026-04-15`,
   ].join('\n');
@@ -401,8 +392,9 @@ test('payment run CSV preview detects duplicate rows and import is idempotent by
     setup.sessionToken,
   );
   assert.equal(preview.totalRows, 2);
-  assert.equal(preview.ready, 0);
-  assert.equal(preview.warnings, 2);
+  // Row 1 clean against an existing destination; row 2 flagged as duplicate.
+  assert.equal(preview.ready, 1);
+  assert.equal(preview.warnings, 1);
   assert.equal(preview.failed, 0);
   assert.equal(preview.canImport, true);
   assert.match(preview.csvFingerprint, /^[a-f0-9]{64}$/);
@@ -414,7 +406,7 @@ test('payment run CSV preview detects duplicate rows and import is idempotent by
       runName: 'Idempotent run',
       csv,
       importKey: 'idem-run-1',
-      sourceWorkspaceAddressId: setup.sourceAddress.workspaceAddressId,
+      sourceTreasuryWalletId: setup.sourceAddress.treasuryWalletId,
       submitOrderNow: true,
     },
     setup.sessionToken,
@@ -425,7 +417,7 @@ test('payment run CSV preview detects duplicate rows and import is idempotent by
       runName: 'Should not create another run',
       csv,
       importKey: 'idem-run-1',
-      sourceWorkspaceAddressId: setup.sourceAddress.workspaceAddressId,
+      sourceTreasuryWalletId: setup.sourceAddress.treasuryWalletId,
       submitOrderNow: true,
     },
     setup.sessionToken,
@@ -444,7 +436,7 @@ test('payment run CSV preview detects duplicate rows and import is idempotent by
 test('payment run cancellation and close are explicit lifecycle actions', async () => {
   const setup = await createPaymentOrderSetup();
   const cancellableCsv = [
-    'payee,destination,amount,reference,due_date',
+    'counterparty,destination,amount,reference,due_date',
     `Cancel Corp,${setup.destination.label},0.01,RUN-CANCEL-1,2026-04-15`,
   ].join('\n');
   const cancellable = await post(
@@ -452,7 +444,7 @@ test('payment run cancellation and close are explicit lifecycle actions', async 
     {
       runName: 'Cancellable run',
       csv: cancellableCsv,
-      sourceWorkspaceAddressId: setup.sourceAddress.workspaceAddressId,
+      sourceTreasuryWalletId: setup.sourceAddress.treasuryWalletId,
       submitOrderNow: false,
     },
     setup.sessionToken,
@@ -469,7 +461,7 @@ test('payment run cancellation and close are explicit lifecycle actions', async 
   assert.equal(cancelled.paymentOrders[0].derivedState, 'cancelled');
 
   const closableCsv = [
-    'payee,destination,amount,reference,due_date',
+    'counterparty,destination,amount,reference,due_date',
     `Close Corp,${setup.destination.label},0.01,RUN-CLOSE-1,2026-04-15`,
   ].join('\n');
   const closable = await post(
@@ -477,7 +469,7 @@ test('payment run cancellation and close are explicit lifecycle actions', async 
     {
       runName: 'Closable run',
       csv: closableCsv,
-      sourceWorkspaceAddressId: setup.sourceAddress.workspaceAddressId,
+      sourceTreasuryWalletId: setup.sourceAddress.treasuryWalletId,
       submitOrderNow: true,
     },
     setup.sessionToken,
@@ -514,7 +506,7 @@ test('payment order duplicate references and unsafe source wallets are rejected'
     `/workspaces/${setup.workspace.workspaceId}/payment-orders`,
     {
       destinationId: setup.destination.destinationId,
-      sourceWorkspaceAddressId: setup.sourceAddress.workspaceAddressId,
+      sourceTreasuryWalletId: setup.sourceAddress.treasuryWalletId,
       amountRaw: '10000',
       externalReference: 'DUP-1',
     },
@@ -529,7 +521,7 @@ test('payment order duplicate references and unsafe source wallets are rejected'
     },
     body: JSON.stringify({
       destinationId: setup.destination.destinationId,
-      sourceWorkspaceAddressId: setup.sourceAddress.workspaceAddressId,
+      sourceTreasuryWalletId: setup.sourceAddress.treasuryWalletId,
       amountRaw: '10000',
       externalReference: 'dup-1',
     }),
@@ -545,7 +537,7 @@ test('payment order duplicate references and unsafe source wallets are rejected'
     },
     body: JSON.stringify({
       destinationId: setup.destination.destinationId,
-      sourceWorkspaceAddressId: setup.destinationAddress.workspaceAddressId,
+      sourceTreasuryWalletId: setup.destinationAddress.treasuryWalletId,
       amountRaw: '10000',
       externalReference: 'SRC-SAME',
     }),
@@ -566,7 +558,7 @@ test('payment order duplicate references and unsafe source wallets are rejected'
     },
     body: JSON.stringify({
       destinationId: setup.destination.destinationId,
-      sourceWorkspaceAddressId: outsider.sourceAddress.workspaceAddressId,
+      sourceTreasuryWalletId: outsider.sourceAddress.treasuryWalletId,
       amountRaw: '10000',
       externalReference: 'OUTSIDER-SOURCE',
     }),
@@ -582,7 +574,7 @@ test('unreviewed destinations route payment orders to the approval inbox without
     `/workspaces/${setup.workspace.workspaceId}/payment-orders`,
     {
       destinationId: setup.destination.destinationId,
-      sourceWorkspaceAddressId: setup.sourceAddress.workspaceAddressId,
+      sourceTreasuryWalletId: setup.sourceAddress.treasuryWalletId,
       amountRaw: '10000',
       memo: 'New vendor review',
       submitNow: true,
@@ -656,7 +648,7 @@ test('payment orders prepare a signer-ready Solana USDC transfer packet', async 
   const prepared = await post(
     `/workspaces/${setup.workspace.workspaceId}/payment-orders/${draftOrder.paymentOrderId}/prepare-execution`,
     {
-      sourceWorkspaceAddressId: setup.sourceAddress.workspaceAddressId,
+      sourceTreasuryWalletId: setup.sourceAddress.treasuryWalletId,
     },
     setup.sessionToken,
   );
@@ -680,7 +672,7 @@ test('payment orders prepare a signer-ready Solana USDC transfer packet', async 
   const preparedAgain = await post(
     `/workspaces/${setup.workspace.workspaceId}/payment-orders/${draftOrder.paymentOrderId}/prepare-execution`,
     {
-      sourceWorkspaceAddressId: setup.sourceAddress.workspaceAddressId,
+      sourceTreasuryWalletId: setup.sourceAddress.treasuryWalletId,
     },
     setup.sessionToken,
   );
@@ -689,7 +681,7 @@ test('payment orders prepare a signer-ready Solana USDC transfer packet', async 
   const transferRequest = await prisma.transferRequest.findUniqueOrThrow({
     where: { transferRequestId: prepared.paymentOrder.transferRequestId },
   });
-  assert.equal(transferRequest.sourceWorkspaceAddressId, setup.sourceAddress.workspaceAddressId);
+  assert.equal(transferRequest.sourceTreasuryWalletId, setup.sourceAddress.treasuryWalletId);
   assert.equal(transferRequest.status, 'ready_for_execution');
 
   const events = await prisma.paymentOrderEvent.findMany({
@@ -706,7 +698,7 @@ test('payment order execution preparation cannot bypass approval', async () => {
     `/workspaces/${setup.workspace.workspaceId}/payment-orders`,
     {
       destinationId: setup.destination.destinationId,
-      sourceWorkspaceAddressId: setup.sourceAddress.workspaceAddressId,
+      sourceTreasuryWalletId: setup.sourceAddress.treasuryWalletId,
       amountRaw: '10000',
       externalReference: 'PREPARE-APPROVAL',
       submitNow: false,
@@ -828,7 +820,7 @@ async function createSubmittedPaymentOrder(
     `/workspaces/${setup.workspace.workspaceId}/payment-orders`,
     {
       destinationId: setup.destination.destinationId,
-      sourceWorkspaceAddressId: setup.sourceAddress.workspaceAddressId,
+      sourceTreasuryWalletId: setup.sourceAddress.treasuryWalletId,
       amountRaw: '10000',
       externalReference: reference,
       sourceBalanceSnapshotJson: {
@@ -869,7 +861,7 @@ async function createPaymentOrderSetup(options?: {
   );
 
   const sourceAddress = await post(
-    `/workspaces/${workspace.workspaceId}/addresses`,
+    `/workspaces/${workspace.workspaceId}/treasury-wallets`,
     {
       chain: 'solana',
       address: 'PGm4dkZcqPTkYKqAjNtAokVwJirJB8XQcGpYWBVcFMW',
@@ -879,7 +871,7 @@ async function createPaymentOrderSetup(options?: {
   );
 
   const destinationAddress = await post(
-    `/workspaces/${workspace.workspaceId}/addresses`,
+    `/workspaces/${workspace.workspaceId}/treasury-wallets`,
     {
       chain: 'solana',
       address: 'VhfmPjvQxSiQW2FjnvoghewGGVYaWcz4cmDxpFPQEti',
@@ -900,7 +892,8 @@ async function createPaymentOrderSetup(options?: {
   const destination = await post(
     `/workspaces/${workspace.workspaceId}/destinations`,
     {
-      linkedWorkspaceAddressId: destinationAddress.workspaceAddressId,
+      walletAddress: destinationAddress.address,
+      tokenAccountAddress: destinationAddress.usdcAtaAddress ?? undefined,
       counterpartyId: counterparty.counterpartyId,
       label: `Vendor payout ${crypto.randomUUID().slice(0, 8)}`,
       trustState: options?.destinationTrustState ?? 'trusted',

@@ -109,11 +109,11 @@ internalRouter.get('/internal/ops-metrics', (_req, res) => {
 });
 
 async function buildWorkspaceMatchingSnapshot(workspaceId: string) {
-  const [workspace, addresses, transferRequests] = await prisma.$transaction([
+  const [workspace, treasuryWallets, transferRequests] = await prisma.$transaction([
     prisma.workspace.findUniqueOrThrow({
       where: { workspaceId },
     }),
-    prisma.workspaceAddress.findMany({
+    prisma.treasuryWallet.findMany({
       where: { workspaceId, isActive: true },
       orderBy: { createdAt: 'desc' },
     }),
@@ -126,8 +126,7 @@ async function buildWorkspaceMatchingSnapshot(workspaceId: string) {
         },
       },
       include: {
-        sourceWorkspaceAddress: true,
-        destinationWorkspaceAddress: true,
+        sourceTreasuryWallet: true,
         executionRecords: {
           orderBy: { createdAt: 'desc' },
           take: 1,
@@ -142,83 +141,62 @@ async function buildWorkspaceMatchingSnapshot(workspaceId: string) {
     }),
   ]);
 
+  const serializedTreasuryWallets = treasuryWallets.map((wallet) => ({
+    workspaceId: wallet.workspaceId,
+    treasuryWalletId: wallet.treasuryWalletId,
+    address: wallet.address,
+    usdcAtaAddress: wallet.usdcAtaAddress,
+  }));
+  const serializedMatches = transferRequests.map((request) => ({
+    transferRequestId: request.transferRequestId,
+    workspaceId: request.workspaceId,
+    paymentOrderId: request.paymentOrderId,
+    sourceTreasuryWalletId: request.sourceTreasuryWalletId,
+    requestType: request.requestType,
+    asset: request.asset,
+    amountRaw: request.amountRaw.toString(),
+    reason: request.reason,
+    externalReference: request.externalReference,
+    status: request.status,
+    requestedAt: request.requestedAt,
+    dueAt: request.dueAt,
+    sourceTreasuryWallet: request.sourceTreasuryWallet
+      ? {
+          treasuryWalletId: request.sourceTreasuryWallet.treasuryWalletId,
+          address: request.sourceTreasuryWallet.address,
+          usdcAtaAddress: request.sourceTreasuryWallet.usdcAtaAddress,
+        }
+      : null,
+    destination: {
+      destinationId: request.destination.destinationId,
+      walletAddress: request.destination.walletAddress,
+      tokenAccountAddress: request.destination.tokenAccountAddress,
+      label: request.destination.label,
+      trustState: request.destination.trustState,
+      isInternal: request.destination.isInternal,
+      counterparty: request.destination.counterparty
+        ? {
+            counterpartyId: request.destination.counterparty.counterpartyId,
+            displayName: request.destination.counterparty.displayName,
+          }
+        : null,
+    },
+    latestExecution: request.executionRecords[0]
+      ? {
+          executionRecordId: request.executionRecords[0].executionRecordId,
+          submittedSignature: request.executionRecords[0].submittedSignature,
+          executionSource: request.executionRecords[0].executionSource,
+          state: request.executionRecords[0].state,
+          submittedAt: request.executionRecords[0].submittedAt,
+        }
+      : null,
+  }));
+
   return {
     workspace,
-    addresses: addresses.map((address) => ({
-      workspaceAddressId: address.workspaceAddressId,
-      workspaceId: address.workspaceId,
-      chain: address.chain,
-      address: address.address,
-      usdcAtaAddress: address.usdcAtaAddress,
-      addressKind: address.addressKind,
-      displayName: address.displayName,
-      notes: address.notes,
-      createdAt: address.createdAt,
-      updatedAt: address.updatedAt,
-    })),
-    transferRequests: transferRequests.map((request) => ({
-      transferRequestId: request.transferRequestId,
-      workspaceId: request.workspaceId,
-      paymentOrderId: request.paymentOrderId,
-      sourceWorkspaceAddressId: request.sourceWorkspaceAddressId,
-      destinationWorkspaceAddressId: request.destinationWorkspaceAddressId,
-      requestType: request.requestType,
-      asset: request.asset,
-      amountRaw: request.amountRaw.toString(),
-      reason: request.reason,
-      externalReference: request.externalReference,
-      status: request.status,
-      requestedAt: request.requestedAt,
-      dueAt: request.dueAt,
-      sourceWorkspaceAddress: request.sourceWorkspaceAddress
-        ? {
-            workspaceAddressId: request.sourceWorkspaceAddress.workspaceAddressId,
-            address: request.sourceWorkspaceAddress.address,
-            usdcAtaAddress: request.sourceWorkspaceAddress.usdcAtaAddress,
-            addressKind: request.sourceWorkspaceAddress.addressKind,
-            displayName: request.sourceWorkspaceAddress.displayName,
-          }
-        : null,
-      destination: request.destination
-        ? {
-            destinationId: request.destination.destinationId,
-            counterpartyId: request.destination.counterpartyId,
-            linkedWorkspaceAddressId: request.destination.linkedWorkspaceAddressId,
-            label: request.destination.label,
-            destinationType: request.destination.destinationType,
-            trustState: request.destination.trustState,
-            isInternal: request.destination.isInternal,
-            isActive: request.destination.isActive,
-            walletAddress: request.destination.walletAddress,
-            tokenAccountAddress: request.destination.tokenAccountAddress,
-            counterparty: request.destination.counterparty
-              ? {
-                  counterpartyId: request.destination.counterparty.counterpartyId,
-                  displayName: request.destination.counterparty.displayName,
-                  category: request.destination.counterparty.category,
-                  status: request.destination.counterparty.status,
-                }
-              : null,
-          }
-        : null,
-      destinationWorkspaceAddress: request.destinationWorkspaceAddress
-        ? {
-            workspaceAddressId: request.destinationWorkspaceAddress.workspaceAddressId,
-            address: request.destinationWorkspaceAddress.address,
-            usdcAtaAddress: request.destinationWorkspaceAddress.usdcAtaAddress,
-            addressKind: request.destinationWorkspaceAddress.addressKind,
-            displayName: request.destinationWorkspaceAddress.displayName,
-          }
-        : null,
-      latestExecution: request.executionRecords[0]
-        ? {
-            executionRecordId: request.executionRecords[0].executionRecordId,
-            submittedSignature: request.executionRecords[0].submittedSignature,
-            executionSource: request.executionRecords[0].executionSource,
-            state: request.executionRecords[0].state,
-            submittedAt: request.executionRecords[0].submittedAt,
-          }
-        : null,
-    })),
+    treasuryWallets: serializedTreasuryWallets,
+    matches: serializedMatches,
+    addresses: serializedTreasuryWallets,
+    transferRequests: serializedMatches,
   };
 }

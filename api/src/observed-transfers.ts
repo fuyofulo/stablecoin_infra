@@ -25,7 +25,7 @@ type ObservedTransferRow = {
 };
 
 export async function listObservedTransfersForWorkspace(workspaceId: string, options: { limit: number }) {
-  const addresses = await prisma.workspaceAddress.findMany({
+  const addresses = await prisma.treasuryWallet.findMany({
     where: { workspaceId, isActive: true },
     select: {
       address: true,

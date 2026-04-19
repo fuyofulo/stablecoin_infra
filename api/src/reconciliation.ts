@@ -10,7 +10,7 @@ import {
   TransferRequestEvent,
   TransferRequestNote,
   User,
-  WorkspaceAddress,
+  TreasuryWallet,
 } from '@prisma/client';
 import {
   buildApprovalEvaluationSummary,
@@ -42,11 +42,10 @@ import {
 } from './transfer-request-lifecycle.js';
 
 type TransferRequestWithRelations = TransferRequest & {
-  sourceWorkspaceAddress: WorkspaceAddress | null;
-  destinationWorkspaceAddress: WorkspaceAddress | null;
+  sourceTreasuryWallet: TreasuryWallet | null;
   destination: (Destination & {
     counterparty: Counterparty | null;
-  }) | null;
+  });
   requestedByUser: User | null;
   events?: TransferRequestEvent[];
   notes?: (TransferRequestNote & {
@@ -347,8 +346,7 @@ export async function listReconciliationQueue(workspaceId: string, options: Queu
       asset: 'usdc',
     },
     include: {
-      destinationWorkspaceAddress: true,
-      sourceWorkspaceAddress: true,
+      sourceTreasuryWallet: true,
       destination: {
         include: {
           counterparty: true,
@@ -416,8 +414,7 @@ export async function listApprovalInbox(args: {
         },
       },
       include: {
-        destinationWorkspaceAddress: true,
-        sourceWorkspaceAddress: true,
+        sourceTreasuryWallet: true,
         destination: {
           include: {
             counterparty: true,
@@ -476,11 +473,7 @@ export async function listApprovalInbox(args: {
               trustState: item.destination.trustState,
               isInternal: item.destination.isInternal,
             }
-          : {
-              label: item.destinationWorkspaceAddress?.displayName ?? item.destinationWorkspaceAddress?.address ?? 'unnamed destination',
-              trustState: 'unreviewed',
-              isInternal: false,
-            },
+          : { label: 'unnamed destination', trustState: 'unreviewed', isInternal: false },
       }),
     })),
   };
@@ -490,8 +483,7 @@ export async function getReconciliationDetail(workspaceId: string, transferReque
   const requestWithTimeline = await prisma.transferRequest.findFirstOrThrow({
     where: { workspaceId, transferRequestId },
     include: {
-      sourceWorkspaceAddress: true,
-      destinationWorkspaceAddress: true,
+      sourceTreasuryWallet: true,
       destination: {
         include: {
           counterparty: true,
@@ -605,7 +597,6 @@ export async function getReconciliationDetail(workspaceId: string, transferReque
 
   const expectedDestinationWallet =
     requestWithTimeline.destination?.walletAddress
-    ?? requestWithTimeline.destinationWorkspaceAddress?.address
     ?? null;
   const addressLabels = await getOrResolveAddressLabels(
     'solana',
@@ -636,10 +627,7 @@ export async function getReconciliationDetail(workspaceId: string, transferReque
           isInternal: requestWithTimeline.destination.isInternal,
         }
       : {
-          label:
-            requestWithTimeline.destinationWorkspaceAddress?.displayName
-            ?? requestWithTimeline.destinationWorkspaceAddress?.address
-            ?? 'unnamed destination',
+          label: 'unnamed destination',
           trustState: 'unreviewed',
           isInternal: false,
         },
@@ -1218,8 +1206,7 @@ export function serializeTransferRequest(request: TransferRequestWithRelations) 
     transferRequestId: request.transferRequestId,
     workspaceId: request.workspaceId,
     paymentOrderId: request.paymentOrderId,
-    sourceWorkspaceAddressId: request.sourceWorkspaceAddressId,
-    destinationWorkspaceAddressId: request.destinationWorkspaceAddressId,
+    sourceTreasuryWalletId: request.sourceTreasuryWalletId,
     destinationId: request.destinationId,
     requestType: request.requestType,
     asset: request.asset,
@@ -1231,11 +1218,8 @@ export function serializeTransferRequest(request: TransferRequestWithRelations) 
     requestedAt: request.requestedAt,
     dueAt: request.dueAt,
     propertiesJson: request.propertiesJson,
-    sourceWorkspaceAddress: request.sourceWorkspaceAddress
-      ? serializeWorkspaceAddress(request.sourceWorkspaceAddress)
-      : null,
-    destinationWorkspaceAddress: request.destinationWorkspaceAddress
-      ? serializeWorkspaceAddress(request.destinationWorkspaceAddress)
+    sourceTreasuryWallet: request.sourceTreasuryWallet
+      ? serializeTreasuryWallet(request.sourceTreasuryWallet)
       : null,
     destination: request.destination
       ? serializeDestination(request.destination)
@@ -1284,12 +1268,11 @@ function serializeUserRef(user: Pick<User, 'userId' | 'email' | 'displayName'> |
     : null;
 }
 
-function serializeWorkspaceAddress(address: WorkspaceAddress) {
+function serializeTreasuryWallet(address: TreasuryWallet) {
   return {
-    workspaceAddressId: address.workspaceAddressId,
+    treasuryWalletId: address.treasuryWalletId,
     address: address.address,
     usdcAtaAddress: address.usdcAtaAddress,
-    addressKind: address.addressKind,
     displayName: address.displayName,
     notes: address.notes,
   };
@@ -1318,7 +1301,6 @@ function serializeDestination(
     destinationId: destination.destinationId,
     workspaceId: destination.workspaceId,
     counterpartyId: destination.counterpartyId,
-    linkedWorkspaceAddressId: destination.linkedWorkspaceAddressId,
     chain: destination.chain,
     asset: destination.asset,
     walletAddress: destination.walletAddress,
@@ -1470,8 +1452,6 @@ function buildReconciliationSummary(
   const matched = detail.match ? `${formatRawUsdc(detail.match.matchedAmountRaw)} ${detail.asset.toUpperCase()}` : null;
   const destinationLabel =
     detail.destination?.label
-    ?? detail.destinationWorkspaceAddress?.displayName
-    ?? detail.destinationWorkspaceAddress?.address
     ?? 'destination';
 
   switch (outcome) {
@@ -2067,7 +2047,7 @@ async function hydrateAddressLabelsForQueueItems(
   const relatedPayments = await queryObservedPaymentsBySignatures(signaturesToHydrate);
   const expectedDestinationWallets = new Set(
     items
-      .map((item) => item.destination?.walletAddress ?? item.destinationWorkspaceAddress?.address ?? null)
+      .map((item) => item.destination?.walletAddress ?? null)
       .filter((value): value is string => Boolean(value)),
   );
   const destinationWallets = uniqueValues(

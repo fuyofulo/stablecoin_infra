@@ -98,13 +98,12 @@ CREATE TABLE IF NOT EXISTS idempotency_records
   UNIQUE (actor_type, actor_id, request_method, request_path, key)
 );
 
-CREATE TABLE IF NOT EXISTS workspace_addresses
+CREATE TABLE IF NOT EXISTS treasury_wallets
 (
-  workspace_address_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  treasury_wallet_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   workspace_id UUID NOT NULL REFERENCES workspaces(workspace_id) ON DELETE CASCADE,
   chain TEXT NOT NULL,
   address TEXT NOT NULL,
-  address_kind TEXT NOT NULL DEFAULT 'wallet',
   asset_scope TEXT NOT NULL DEFAULT 'usdc',
   usdc_ata_address TEXT,
   is_active BOOLEAN NOT NULL DEFAULT TRUE,
@@ -118,10 +117,10 @@ CREATE TABLE IF NOT EXISTS workspace_addresses
   UNIQUE (workspace_id, address)
 );
 
-ALTER TABLE workspace_addresses
+ALTER TABLE treasury_wallets
   ADD COLUMN IF NOT EXISTS usdc_ata_address TEXT;
 
-ALTER TABLE workspace_addresses
+ALTER TABLE treasury_wallets
   ADD COLUMN IF NOT EXISTS display_name TEXT;
 
 ALTER TABLE organizations
@@ -134,9 +133,8 @@ CREATE TABLE IF NOT EXISTS transfer_requests
 (
   transfer_request_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   workspace_id UUID NOT NULL REFERENCES workspaces(workspace_id) ON DELETE CASCADE,
-  source_workspace_address_id UUID REFERENCES workspace_addresses(workspace_address_id) ON DELETE SET NULL,
-  destination_workspace_address_id UUID NOT NULL REFERENCES workspace_addresses(workspace_address_id) ON DELETE RESTRICT,
-  destination_id UUID,
+  source_treasury_wallet_id UUID REFERENCES treasury_wallets(treasury_wallet_id) ON DELETE SET NULL,
+  destination_id UUID NOT NULL,
   request_type TEXT NOT NULL,
   asset TEXT NOT NULL DEFAULT 'usdc',
   amount_raw BIGINT NOT NULL,
@@ -237,15 +235,6 @@ CREATE TABLE IF NOT EXISTS address_labels
   UNIQUE (chain, address)
 );
 
-ALTER TABLE transfer_requests
-  ADD COLUMN IF NOT EXISTS source_workspace_address_id UUID;
-
-ALTER TABLE transfer_requests
-  ADD COLUMN IF NOT EXISTS destination_workspace_address_id UUID;
-
-ALTER TABLE transfer_requests
-  ADD COLUMN IF NOT EXISTS payment_order_id UUID;
-
 ALTER TABLE exception_states
   ADD COLUMN IF NOT EXISTS assigned_to_user_id UUID REFERENCES users(user_id) ON DELETE SET NULL;
 
@@ -273,7 +262,6 @@ CREATE TABLE IF NOT EXISTS destinations
   destination_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   counterparty_id UUID REFERENCES counterparties(counterparty_id) ON DELETE SET NULL,
   workspace_id UUID NOT NULL REFERENCES workspaces(workspace_id) ON DELETE CASCADE,
-  linked_workspace_address_id UUID REFERENCES workspace_addresses(workspace_address_id) ON DELETE SET NULL,
   chain TEXT NOT NULL,
   asset TEXT NOT NULL DEFAULT 'usdc',
   wallet_address TEXT NOT NULL,
@@ -287,22 +275,7 @@ CREATE TABLE IF NOT EXISTS destinations
   metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  UNIQUE (workspace_id, linked_workspace_address_id)
-);
-
-CREATE TABLE IF NOT EXISTS payees
-(
-  payee_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  workspace_id UUID NOT NULL REFERENCES workspaces(workspace_id) ON DELETE CASCADE,
-  default_destination_id UUID REFERENCES destinations(destination_id) ON DELETE SET NULL,
-  name TEXT NOT NULL,
-  external_reference TEXT,
-  status TEXT NOT NULL DEFAULT 'active',
-  notes TEXT,
-  metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  UNIQUE (workspace_id, name)
+  UNIQUE (workspace_id, wallet_address)
 );
 
 CREATE TABLE IF NOT EXISTS approval_policies
@@ -351,10 +324,9 @@ CREATE TABLE IF NOT EXISTS payment_orders
   workspace_id UUID NOT NULL REFERENCES workspaces(workspace_id) ON DELETE CASCADE,
   payment_request_id UUID,
   payment_run_id UUID,
-  payee_id UUID REFERENCES payees(payee_id) ON DELETE SET NULL,
   destination_id UUID NOT NULL REFERENCES destinations(destination_id) ON DELETE RESTRICT,
   counterparty_id UUID REFERENCES counterparties(counterparty_id) ON DELETE SET NULL,
-  source_workspace_address_id UUID REFERENCES workspace_addresses(workspace_address_id) ON DELETE SET NULL,
+  source_treasury_wallet_id UUID REFERENCES treasury_wallets(treasury_wallet_id) ON DELETE SET NULL,
   amount_raw BIGINT NOT NULL,
   asset TEXT NOT NULL DEFAULT 'usdc',
   memo TEXT,
@@ -374,7 +346,7 @@ CREATE TABLE IF NOT EXISTS payment_runs
 (
   payment_run_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   workspace_id UUID NOT NULL REFERENCES workspaces(workspace_id) ON DELETE CASCADE,
-  source_workspace_address_id UUID REFERENCES workspace_addresses(workspace_address_id) ON DELETE SET NULL,
+  source_treasury_wallet_id UUID REFERENCES treasury_wallets(treasury_wallet_id) ON DELETE SET NULL,
   run_name TEXT NOT NULL,
   input_source TEXT NOT NULL DEFAULT 'manual',
   state TEXT NOT NULL DEFAULT 'draft',
@@ -389,7 +361,6 @@ CREATE TABLE IF NOT EXISTS payment_requests
   payment_request_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   workspace_id UUID NOT NULL REFERENCES workspaces(workspace_id) ON DELETE CASCADE,
   payment_run_id UUID,
-  payee_id UUID REFERENCES payees(payee_id) ON DELETE SET NULL,
   destination_id UUID NOT NULL REFERENCES destinations(destination_id) ON DELETE RESTRICT,
   counterparty_id UUID REFERENCES counterparties(counterparty_id) ON DELETE SET NULL,
   requested_by_user_id UUID REFERENCES users(user_id) ON DELETE SET NULL,
@@ -432,13 +403,13 @@ ALTER TABLE payment_orders
   ADD COLUMN IF NOT EXISTS payment_run_id UUID;
 
 ALTER TABLE payment_orders
-  ADD COLUMN IF NOT EXISTS payee_id UUID REFERENCES payees(payee_id) ON DELETE SET NULL;
+  ADD COLUMN IF NOT EXISTS source_treasury_wallet_id UUID REFERENCES treasury_wallets(treasury_wallet_id) ON DELETE SET NULL;
+
+ALTER TABLE payment_runs
+  ADD COLUMN IF NOT EXISTS source_treasury_wallet_id UUID REFERENCES treasury_wallets(treasury_wallet_id) ON DELETE SET NULL;
 
 ALTER TABLE payment_requests
   ADD COLUMN IF NOT EXISTS payment_run_id UUID;
-
-ALTER TABLE payment_requests
-  ADD COLUMN IF NOT EXISTS payee_id UUID REFERENCES payees(payee_id) ON DELETE SET NULL;
 
 ALTER TABLE payment_orders
   DROP CONSTRAINT IF EXISTS payment_orders_payment_run_id_fkey;
@@ -473,7 +444,7 @@ ALTER TABLE transfer_requests
 
 ALTER TABLE transfer_requests
   ADD CONSTRAINT transfer_requests_destination_id_fkey
-  FOREIGN KEY (destination_id) REFERENCES destinations(destination_id) ON DELETE SET NULL;
+  FOREIGN KEY (destination_id) REFERENCES destinations(destination_id) ON DELETE RESTRICT;
 
 ALTER TABLE transfer_requests
   DROP COLUMN IF EXISTS counterparty_id;
@@ -645,8 +616,6 @@ ALTER TABLE address_labels
     confidence IN ('seeded', 'verified', 'operator', 'unverified', 'unresolved')
   );
 
-DROP TABLE IF EXISTS workspace_address_object_mappings CASCADE;
-DROP TABLE IF EXISTS workspace_address_labels CASCADE;
 DROP TABLE IF EXISTS workspace_objects CASCADE;
 DROP TABLE IF EXISTS workspace_labels CASCADE;
 DROP TABLE IF EXISTS global_entity_addresses CASCADE;
@@ -664,20 +633,17 @@ CREATE INDEX IF NOT EXISTS idx_idempotency_records_actor_created_at
 CREATE INDEX IF NOT EXISTS idx_idempotency_records_expires_at
   ON idempotency_records(expires_at);
 CREATE INDEX IF NOT EXISTS idx_workspaces_organization_id ON workspaces(organization_id);
-CREATE INDEX IF NOT EXISTS idx_workspace_addresses_workspace_id ON workspace_addresses(workspace_id);
-CREATE INDEX IF NOT EXISTS idx_workspace_addresses_address ON workspace_addresses(address);
-CREATE INDEX IF NOT EXISTS idx_workspace_addresses_usdc_ata ON workspace_addresses(usdc_ata_address);
+CREATE INDEX IF NOT EXISTS idx_treasury_wallets_workspace_id ON treasury_wallets(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_treasury_wallets_address ON treasury_wallets(address);
+CREATE INDEX IF NOT EXISTS idx_treasury_wallets_usdc_ata ON treasury_wallets(usdc_ata_address);
 CREATE INDEX IF NOT EXISTS idx_transfer_requests_workspace_id ON transfer_requests(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_transfer_requests_payment_order_id ON transfer_requests(payment_order_id);
-CREATE INDEX IF NOT EXISTS idx_transfer_requests_source_address_id ON transfer_requests(source_workspace_address_id);
-CREATE INDEX IF NOT EXISTS idx_transfer_requests_destination_address_id ON transfer_requests(destination_workspace_address_id);
+CREATE INDEX IF NOT EXISTS idx_transfer_requests_source_treasury_wallet_id ON transfer_requests(source_treasury_wallet_id);
 CREATE INDEX IF NOT EXISTS idx_transfer_requests_status ON transfer_requests(status);
 CREATE INDEX IF NOT EXISTS idx_transfer_requests_workspace_status_requested_at
   ON transfer_requests(workspace_id, status, requested_at DESC);
-CREATE INDEX IF NOT EXISTS idx_transfer_requests_destination_status_requested_at
-  ON transfer_requests(destination_workspace_address_id, status, requested_at DESC);
 CREATE INDEX IF NOT EXISTS idx_transfer_requests_destination_id
-  ON transfer_requests(destination_id);
+  ON transfer_requests(destination_id, status, requested_at DESC);
 CREATE INDEX IF NOT EXISTS idx_counterparties_organization_created_at
   ON counterparties(organization_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_destinations_workspace_created_at
@@ -686,10 +652,6 @@ CREATE INDEX IF NOT EXISTS idx_destinations_counterparty_created_at
   ON destinations(counterparty_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_destinations_wallet_address
   ON destinations(wallet_address);
-CREATE INDEX IF NOT EXISTS idx_payees_workspace_status_created_at
-  ON payees(workspace_id, status, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_payees_default_destination_created_at
-  ON payees(default_destination_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_approval_policies_workspace_id
   ON approval_policies(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_approval_decisions_workspace_created_at
@@ -703,7 +665,7 @@ CREATE INDEX IF NOT EXISTS idx_execution_records_request_created_at
 CREATE INDEX IF NOT EXISTS idx_payment_runs_workspace_state_created_at
   ON payment_runs(workspace_id, state, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_payment_runs_source_created_at
-  ON payment_runs(source_workspace_address_id, created_at DESC);
+  ON payment_runs(source_treasury_wallet_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_payment_orders_workspace_state_created_at
   ON payment_orders(workspace_id, state, created_at DESC);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_payment_orders_payment_request_id_unique
@@ -713,12 +675,10 @@ CREATE INDEX IF NOT EXISTS idx_payment_orders_payment_request_id
   ON payment_orders(payment_request_id);
 CREATE INDEX IF NOT EXISTS idx_payment_orders_payment_run_created_at
   ON payment_orders(payment_run_id, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_payment_orders_payee_created_at
-  ON payment_orders(payee_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_payment_orders_destination_created_at
   ON payment_orders(destination_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_payment_orders_source_created_at
-  ON payment_orders(source_workspace_address_id, created_at DESC);
+  ON payment_orders(source_treasury_wallet_id, created_at DESC);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_payment_orders_unique_active_reference
   ON payment_orders(workspace_id, destination_id, amount_raw, lower(coalesce(external_reference, invoice_number)))
   WHERE coalesce(external_reference, invoice_number) IS NOT NULL
@@ -731,8 +691,6 @@ CREATE INDEX IF NOT EXISTS idx_payment_requests_workspace_state_created_at
   ON payment_requests(workspace_id, state, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_payment_requests_payment_run_created_at
   ON payment_requests(payment_run_id, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_payment_requests_payee_created_at
-  ON payment_requests(payee_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_payment_requests_destination_created_at
   ON payment_requests(destination_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_payment_requests_counterparty_created_at
@@ -788,9 +746,9 @@ CREATE TRIGGER trg_idempotency_records_updated_at
 BEFORE UPDATE ON idempotency_records
 FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
-DROP TRIGGER IF EXISTS trg_workspace_addresses_updated_at ON workspace_addresses;
-CREATE TRIGGER trg_workspace_addresses_updated_at
-BEFORE UPDATE ON workspace_addresses
+DROP TRIGGER IF EXISTS trg_treasury_wallets_updated_at ON treasury_wallets;
+CREATE TRIGGER trg_treasury_wallets_updated_at
+BEFORE UPDATE ON treasury_wallets
 FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 DROP TRIGGER IF EXISTS trg_transfer_requests_updated_at ON transfer_requests;
@@ -806,11 +764,6 @@ FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 DROP TRIGGER IF EXISTS trg_destinations_updated_at ON destinations;
 CREATE TRIGGER trg_destinations_updated_at
 BEFORE UPDATE ON destinations
-FOR EACH ROW EXECUTE FUNCTION set_updated_at();
-
-DROP TRIGGER IF EXISTS trg_payees_updated_at ON payees;
-CREATE TRIGGER trg_payees_updated_at
-BEFORE UPDATE ON payees
 FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 DROP TRIGGER IF EXISTS trg_approval_policies_updated_at ON approval_policies;

@@ -159,7 +159,7 @@ impl WorkspaceRegistryCache {
 #[derive(Clone, Default)]
 pub struct WorkspaceRegistry {
     version: u64,
-    wallet_matches_by_address: HashMap<String, Vec<WorkspaceAddressMatch>>,
+    workspace_matches_by_destination: HashMap<String, Vec<WorkspacePaymentMatch>>,
     watched_addresses: HashSet<String>,
     submitted_signatures: HashSet<String>,
     pending_requests_by_workspace_wallet:
@@ -168,7 +168,7 @@ pub struct WorkspaceRegistry {
 
 impl WorkspaceRegistry {
     fn new(version: u64, raw_snapshots: Vec<WorkspaceMatchingSnapshot>) -> Self {
-        let mut wallet_matches_by_address: HashMap<String, Vec<WorkspaceAddressMatch>> =
+        let mut workspace_matches_by_destination: HashMap<String, Vec<WorkspacePaymentMatch>> =
             HashMap::new();
         let mut watched_addresses = HashSet::new();
         let mut submitted_signatures = HashSet::new();
@@ -178,47 +178,15 @@ impl WorkspaceRegistry {
         > = HashMap::new();
 
         for raw_snapshot in raw_snapshots {
-            for address in &raw_snapshot.addresses {
-                watched_addresses.insert(address.address.clone());
-                if let Some(usdc_ata_address) = &address.usdc_ata_address {
+            for wallet in &raw_snapshot.treasury_wallets {
+                watched_addresses.insert(wallet.address.clone());
+                if let Some(usdc_ata_address) = &wallet.usdc_ata_address {
                     watched_addresses.insert(usdc_ata_address.clone());
                 }
-
-                let matched = WorkspaceAddressMatch {
-                    workspace_id: raw_snapshot.workspace.workspace_id.clone(),
-                    #[cfg(test)]
-                    wallet_address: address.address.clone(),
-                };
-
-                wallet_matches_by_address
-                    .entry(address.address.clone())
-                    .or_default()
-                    .push(matched.clone());
             }
 
-            for request in &raw_snapshot.transfer_requests {
-                let Some(destination_workspace_address) = &request.destination_workspace_address
-                else {
-                    continue;
-                };
-
-                let destination_wallet_address = destination_workspace_address.address.clone();
-                watched_addresses.insert(destination_wallet_address.clone());
-                if let Some(usdc_ata_address) = &destination_workspace_address.usdc_ata_address {
-                    watched_addresses.insert(usdc_ata_address.clone());
-                }
-                if let Some(source_workspace_address) = &request.source_workspace_address {
-                    watched_addresses.insert(source_workspace_address.address.clone());
-                    if let Some(usdc_ata_address) = &source_workspace_address.usdc_ata_address {
-                        watched_addresses.insert(usdc_ata_address.clone());
-                    }
-                }
-                if let Some(destination) = &request.destination {
-                    watched_addresses.insert(destination.wallet_address.clone());
-                    if let Some(token_account_address) = &destination.token_account_address {
-                        watched_addresses.insert(token_account_address.clone());
-                    }
-                }
+            for request in &raw_snapshot.matches {
+                let destination_wallet_address = request.destination.wallet_address.clone();
                 if let Some(submitted_signature) = request
                     .latest_execution
                     .as_ref()
@@ -226,6 +194,17 @@ impl WorkspaceRegistry {
                 {
                     submitted_signatures.insert(submitted_signature);
                 }
+
+                let matched = WorkspacePaymentMatch {
+                    workspace_id: raw_snapshot.workspace.workspace_id.clone(),
+                    #[cfg(test)]
+                    wallet_address: destination_wallet_address.clone(),
+                };
+
+                workspace_matches_by_destination
+                    .entry(destination_wallet_address.clone())
+                    .or_default()
+                    .push(matched);
 
                 let request_match = WorkspaceTransferRequestMatch {
                     transfer_request_id: request.transfer_request_id.clone(),
@@ -253,7 +232,7 @@ impl WorkspaceRegistry {
 
         Self {
             version,
-            wallet_matches_by_address,
+            workspace_matches_by_destination,
             watched_addresses,
             submitted_signatures,
             pending_requests_by_workspace_wallet,
@@ -272,8 +251,11 @@ impl WorkspaceRegistry {
         self.submitted_signatures.contains(signature)
     }
 
-    pub fn matches_for_wallet(&self, address: &str) -> Option<&[WorkspaceAddressMatch]> {
-        self.wallet_matches_by_address
+    pub fn matches_for_destination_wallet(
+        &self,
+        address: &str,
+    ) -> Option<&[WorkspacePaymentMatch]> {
+        self.workspace_matches_by_destination
             .get(address)
             .map(Vec::as_slice)
     }
@@ -292,8 +274,8 @@ impl WorkspaceRegistry {
 
 #[cfg(test)]
 impl WorkspaceRegistry {
-    pub fn from_matches(matches: Vec<WorkspaceAddressMatch>) -> Self {
-        let mut wallet_matches_by_address: HashMap<String, Vec<WorkspaceAddressMatch>> =
+    pub fn from_matches(matches: Vec<WorkspacePaymentMatch>) -> Self {
+        let mut workspace_matches_by_destination: HashMap<String, Vec<WorkspacePaymentMatch>> =
             HashMap::new();
         let mut watched_addresses = HashSet::new();
 
@@ -302,7 +284,7 @@ impl WorkspaceRegistry {
             let wallet_address = matched.wallet_address.clone();
             #[cfg(test)]
             watched_addresses.insert(wallet_address.clone());
-            wallet_matches_by_address
+            workspace_matches_by_destination
                 .entry(wallet_address)
                 .or_default()
                 .push(matched);
@@ -310,7 +292,7 @@ impl WorkspaceRegistry {
 
         Self {
             version: 1,
-            wallet_matches_by_address,
+            workspace_matches_by_destination,
             watched_addresses,
             submitted_signatures: HashSet::new(),
             pending_requests_by_workspace_wallet: HashMap::new(),
@@ -318,7 +300,7 @@ impl WorkspaceRegistry {
     }
 
     pub fn with_transfer_requests(
-        matches: Vec<WorkspaceAddressMatch>,
+        matches: Vec<WorkspacePaymentMatch>,
         transfer_requests: Vec<WorkspaceTransferRequestMatch>,
     ) -> Self {
         let mut registry = Self::from_matches(matches);
@@ -351,7 +333,7 @@ impl WorkspaceRegistry {
 }
 
 #[derive(Clone)]
-pub struct WorkspaceAddressMatch {
+pub struct WorkspacePaymentMatch {
     pub workspace_id: String,
     #[cfg(test)]
     pub wallet_address: String,
@@ -420,7 +402,10 @@ pub async fn run_matching_index_event_listener(registry_cache: Arc<Mutex<Workspa
                                         .report_worker_stage(
                                             "matching_index_refresh",
                                             "ok",
-                                            Some(&format!("version={}", cache.registry().version())),
+                                            Some(&format!(
+                                                "version={}",
+                                                cache.registry().version()
+                                            )),
                                         )
                                         .await;
                                 }
@@ -468,9 +453,9 @@ struct MatchingIndexResponse {
 #[derive(Deserialize)]
 struct WorkspaceMatchingSnapshot {
     workspace: WorkspaceView,
-    addresses: Vec<WorkspaceAddressView>,
-    #[serde(rename = "transferRequests")]
-    transfer_requests: Vec<TransferRequestDetails>,
+    #[serde(rename = "treasuryWallets")]
+    treasury_wallets: Vec<TreasuryWalletView>,
+    matches: Vec<TransferRequestDetails>,
 }
 
 #[derive(Deserialize)]
@@ -480,7 +465,7 @@ struct WorkspaceView {
 }
 
 #[derive(Deserialize)]
-struct WorkspaceAddressView {
+struct TreasuryWalletView {
     address: String,
     #[serde(rename = "usdcAtaAddress")]
     usdc_ata_address: Option<String>,
@@ -496,28 +481,15 @@ struct TransferRequestDetails {
     amount_raw: String,
     #[serde(rename = "requestedAt")]
     requested_at: DateTime<Utc>,
-    #[serde(rename = "destinationWorkspaceAddress")]
-    destination_workspace_address: Option<TransferRequestWorkspaceAddressDetails>,
-    #[serde(rename = "sourceWorkspaceAddress")]
-    source_workspace_address: Option<TransferRequestWorkspaceAddressDetails>,
-    destination: Option<TransferRequestDestinationDetails>,
+    destination: TransferRequestDestinationDetails,
     #[serde(rename = "latestExecution")]
     latest_execution: Option<TransferRequestExecutionDetails>,
-}
-
-#[derive(Deserialize)]
-struct TransferRequestWorkspaceAddressDetails {
-    address: String,
-    #[serde(rename = "usdcAtaAddress")]
-    usdc_ata_address: Option<String>,
 }
 
 #[derive(Deserialize)]
 struct TransferRequestDestinationDetails {
     #[serde(rename = "walletAddress")]
     wallet_address: String,
-    #[serde(rename = "tokenAccountAddress")]
-    token_account_address: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -538,21 +510,18 @@ mod tests {
                 workspace: WorkspaceView {
                     workspace_id: "workspace-1".to_string(),
                 },
-                addresses: vec![WorkspaceAddressView {
-                    address: "Wallet111".to_string(),
-                    usdc_ata_address: Some("Ata111".to_string()),
+                treasury_wallets: vec![TreasuryWalletView {
+                    address: "SourceWallet111".to_string(),
+                    usdc_ata_address: Some("SourceAta111".to_string()),
                 }],
-                transfer_requests: vec![TransferRequestDetails {
+                matches: vec![TransferRequestDetails {
                     transfer_request_id: "request-1".to_string(),
                     request_type: "wallet_transfer".to_string(),
                     amount_raw: "10000".to_string(),
                     requested_at: Utc::now(),
-                    destination_workspace_address: Some(TransferRequestWorkspaceAddressDetails {
-                        address: "Wallet111".to_string(),
-                        usdc_ata_address: Some("Ata111".to_string()),
-                    }),
-                    source_workspace_address: None,
-                    destination: None,
+                    destination: TransferRequestDestinationDetails {
+                        wallet_address: "Wallet111".to_string(),
+                    },
                     latest_execution: Some(TransferRequestExecutionDetails {
                         submitted_signature: Some("signature-1".to_string()),
                     }),
@@ -561,7 +530,7 @@ mod tests {
         );
 
         let wallet_matches = registry
-            .matches_for_wallet("Wallet111")
+            .matches_for_destination_wallet("Wallet111")
             .expect("wallet should be indexed");
         assert_eq!(wallet_matches.len(), 1);
         assert_eq!(wallet_matches[0].workspace_id, "workspace-1");
@@ -577,8 +546,10 @@ mod tests {
             Some("signature-1")
         );
         assert_eq!(registry.version(), 42);
-        assert!(registry.is_watched_address("Wallet111"));
-        assert!(registry.is_watched_address("Ata111"));
+        assert!(registry.is_watched_address("SourceWallet111"));
+        assert!(registry.is_watched_address("SourceAta111"));
+        assert!(!registry.is_watched_address("Wallet111"));
+        assert!(!registry.is_watched_address("Ata111"));
         assert!(registry.is_submitted_signature("signature-1"));
     }
 }

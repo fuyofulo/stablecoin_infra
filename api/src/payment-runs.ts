@@ -4,7 +4,7 @@ import type {
   Prisma,
   TransferRequest,
   User,
-  WorkspaceAddress,
+  TreasuryWallet,
 } from '@prisma/client';
 import { createHash } from 'node:crypto';
 import { serializeExecutionRecord } from './execution-records.js';
@@ -26,7 +26,7 @@ import {
 const MAX_BATCH_TRANSFERS_PER_TRANSACTION = 8;
 
 type PaymentRunWithRelations = PaymentRun & {
-  sourceWorkspaceAddress: WorkspaceAddress | null;
+  sourceTreasuryWallet: TreasuryWallet | null;
   createdByUser: Pick<User, 'userId' | 'email' | 'displayName'> | null;
 };
 
@@ -34,20 +34,17 @@ type RunOrderForExecution = {
   paymentOrderId: string;
   workspaceId: string;
   paymentRunId: string | null;
-  sourceWorkspaceAddressId: string | null;
+  sourceTreasuryWalletId: string | null;
   amountRaw: bigint;
   asset: string;
   memo: string | null;
   externalReference: string | null;
   invoiceNumber: string | null;
   state: string;
-  destination: Destination & {
-    linkedWorkspaceAddress: WorkspaceAddress | null;
-  };
-  sourceWorkspaceAddress: WorkspaceAddress | null;
+  destination: Destination;
+  sourceTreasuryWallet: TreasuryWallet | null;
   transferRequests: Array<TransferRequest & {
-    sourceWorkspaceAddress: WorkspaceAddress | null;
-    destinationWorkspaceAddress: WorkspaceAddress | null;
+    sourceTreasuryWallet: TreasuryWallet | null;
     executionRecords: Array<{
       executionRecordId: string;
       transferRequestId: string;
@@ -126,7 +123,7 @@ export async function importPaymentRunFromCsv(args: {
   actorUserId: string;
   csv: string;
   runName?: string | null;
-  sourceWorkspaceAddressId?: string | null;
+  sourceTreasuryWalletId?: string | null;
   submitOrderNow?: boolean;
   importKey?: string | null;
 }) {
@@ -165,7 +162,7 @@ export async function importPaymentRunFromCsv(args: {
   const run = await prisma.paymentRun.create({
     data: {
       workspaceId: args.workspaceId,
-      sourceWorkspaceAddressId: args.sourceWorkspaceAddressId ?? null,
+      sourceTreasuryWalletId: args.sourceTreasuryWalletId ?? null,
       runName: normalizeOptionalText(args.runName) ?? `CSV payment run ${new Date().toISOString().slice(0, 10)}`,
       inputSource: 'csv_import',
       state: 'draft',
@@ -184,7 +181,7 @@ export async function importPaymentRunFromCsv(args: {
     csv: args.csv,
     createOrderNow: true,
     submitOrderNow: args.submitOrderNow ?? false,
-    sourceWorkspaceAddressId: args.sourceWorkspaceAddressId,
+    sourceTreasuryWalletId: args.sourceTreasuryWalletId,
     paymentRunId: run.paymentRunId,
   });
 
@@ -358,22 +355,22 @@ export async function preparePaymentRunExecution(args: {
   workspaceId: string;
   paymentRunId: string;
   actorUserId: string;
-  sourceWorkspaceAddressId?: string | null;
+  sourceTreasuryWalletId?: string | null;
 }) {
   const run = await prisma.paymentRun.findFirstOrThrow({
     where: { workspaceId: args.workspaceId, paymentRunId: args.paymentRunId },
     include: paymentRunInclude,
   });
 
-  const sourceWorkspaceAddressId = args.sourceWorkspaceAddressId ?? run.sourceWorkspaceAddressId;
-  if (!sourceWorkspaceAddressId) {
+  const sourceTreasuryWalletId = args.sourceTreasuryWalletId ?? run.sourceTreasuryWalletId;
+  if (!sourceTreasuryWalletId) {
     throw new Error('Choose a source wallet before preparing a payment run');
   }
 
-  const source = await prisma.workspaceAddress.findFirst({
+  const source = await prisma.treasuryWallet.findFirst({
     where: {
       workspaceId: args.workspaceId,
-      workspaceAddressId: sourceWorkspaceAddressId,
+      treasuryWalletId: sourceTreasuryWalletId,
       isActive: true,
     },
   });
@@ -393,11 +390,11 @@ export async function preparePaymentRunExecution(args: {
   await prisma.$transaction(async (tx) => {
     await tx.paymentRun.update({
       where: { paymentRunId: args.paymentRunId },
-      data: { sourceWorkspaceAddressId: source.workspaceAddressId },
+      data: { sourceTreasuryWalletId: source.treasuryWalletId },
     });
 
     for (const order of initialOrders) {
-      if (order.sourceWorkspaceAddressId && order.sourceWorkspaceAddressId !== source.workspaceAddressId) {
+      if (order.sourceTreasuryWalletId && order.sourceTreasuryWalletId !== source.treasuryWalletId) {
         throw new Error(`Payment order ${order.paymentOrderId} already uses a different source wallet`);
       }
       if (order.destination.walletAddress === source.address) {
@@ -405,12 +402,12 @@ export async function preparePaymentRunExecution(args: {
       }
       await tx.paymentOrder.update({
         where: { paymentOrderId: order.paymentOrderId },
-        data: { sourceWorkspaceAddressId: source.workspaceAddressId },
+        data: { sourceTreasuryWalletId: source.treasuryWalletId },
       });
       for (const request of order.transferRequests) {
         await tx.transferRequest.update({
           where: { transferRequestId: request.transferRequestId },
-          data: { sourceWorkspaceAddressId: source.workspaceAddressId },
+          data: { sourceTreasuryWalletId: source.treasuryWalletId },
         });
       }
     }
@@ -691,7 +688,7 @@ async function serializePaymentRunSummary(run: PaymentRunWithRelations) {
   return {
     paymentRunId: run.paymentRunId,
     workspaceId: run.workspaceId,
-    sourceWorkspaceAddressId: run.sourceWorkspaceAddressId,
+    sourceTreasuryWalletId: run.sourceTreasuryWalletId,
     runName: run.runName,
     inputSource: run.inputSource,
     state: run.state,
@@ -700,7 +697,7 @@ async function serializePaymentRunSummary(run: PaymentRunWithRelations) {
     createdByUserId: run.createdByUserId,
     createdAt: run.createdAt,
     updatedAt: run.updatedAt,
-    sourceWorkspaceAddress: run.sourceWorkspaceAddress ? serializeWorkspaceAddress(run.sourceWorkspaceAddress) : null,
+    sourceTreasuryWallet: run.sourceTreasuryWallet ? serializeTreasuryWallet(run.sourceTreasuryWallet) : null,
     createdByUser: run.createdByUser ? {
       userId: run.createdByUser.userId,
       email: run.createdByUser.email,
@@ -833,16 +830,11 @@ async function loadRunOrdersForExecution(workspaceId: string, paymentRunId: stri
       state: { not: 'cancelled' },
     },
     include: {
-      destination: {
-        include: {
-          linkedWorkspaceAddress: true,
-        },
-      },
-      sourceWorkspaceAddress: true,
+      destination: true,
+      sourceTreasuryWallet: true,
       transferRequests: {
         include: {
-          sourceWorkspaceAddress: true,
-          destinationWorkspaceAddress: true,
+          sourceTreasuryWallet: true,
           executionRecords: {
             include: executionRecordInclude,
             orderBy: { createdAt: 'desc' },
@@ -856,14 +848,13 @@ async function loadRunOrdersForExecution(workspaceId: string, paymentRunId: stri
   }) as Promise<RunOrderForExecution[]>;
 }
 
-function buildBatchTransferDraft(order: RunOrderForExecution, source: WorkspaceAddress) {
+function buildBatchTransferDraft(order: RunOrderForExecution, source: TreasuryWallet) {
   const request = getPrimaryTransferRequest(order);
   if (!request) {
     throw new Error(`Payment order ${order.paymentOrderId} has no submitted transfer request`);
   }
   const sourceTokenAccount = source.usdcAtaAddress ?? deriveUsdcAtaForWallet(source.address);
   const destinationTokenAccount = order.destination.tokenAccountAddress
-    ?? order.destination.linkedWorkspaceAddress?.usdcAtaAddress
     ?? deriveUsdcAtaForWallet(order.destination.walletAddress);
 
   return {
@@ -892,7 +883,7 @@ function buildBatchTransferDraft(order: RunOrderForExecution, source: WorkspaceA
 
 function buildPaymentRunExecutionPacket(args: {
   run: PaymentRun;
-  source: WorkspaceAddress;
+  source: TreasuryWallet;
   transferDrafts: ReturnType<typeof buildBatchTransferDraft>[];
   executionRecordIds: string[];
 }) {
@@ -908,7 +899,7 @@ function buildPaymentRunExecutionPacket(args: {
     executionRecordIds: args.executionRecordIds,
     createdAt: new Date().toISOString(),
     source: {
-      workspaceAddressId: args.source.workspaceAddressId,
+      treasuryWalletId: args.source.treasuryWalletId,
       walletAddress: args.source.address,
       tokenAccountAddress: sourceTokenAccount,
       label: args.source.displayName,
@@ -975,13 +966,12 @@ function hasSubmittedExecution(order: RunOrderForExecution) {
     || request.status === 'submitted_onchain';
 }
 
-function serializeWorkspaceAddress(address: WorkspaceAddress) {
+function serializeTreasuryWallet(address: TreasuryWallet) {
   return {
-    workspaceAddressId: address.workspaceAddressId,
+    treasuryWalletId: address.treasuryWalletId,
     workspaceId: address.workspaceId,
     chain: address.chain,
     address: address.address,
-    addressKind: address.addressKind,
     assetScope: address.assetScope,
     usdcAtaAddress: address.usdcAtaAddress,
     isActive: address.isActive,
@@ -1052,7 +1042,7 @@ function isRecordLike(value: unknown): value is Record<string, unknown> {
 }
 
 const paymentRunInclude = {
-  sourceWorkspaceAddress: true,
+  sourceTreasuryWallet: true,
   createdByUser: {
     select: {
       userId: true,

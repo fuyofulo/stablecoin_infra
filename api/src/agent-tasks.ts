@@ -49,7 +49,7 @@ export async function listAgentTasks(args: {
       ],
       context: {
         amountRaw: item.amountRaw,
-        destination: item.destination?.label ?? item.destinationWorkspaceAddress?.displayName ?? null,
+        destination: item.destination?.label ?? null,
         counterparty: item.destination?.counterparty?.displayName ?? null,
         requestedAt: item.requestedAt,
       },
@@ -82,9 +82,8 @@ export async function listAgentTasks(args: {
           availableActions: buildPaymentOrderActions(args.workspaceId, order.paymentOrderId, order.derivedState),
           context: {
             amountRaw: order.amountRaw,
-            sourceWallet: order.sourceWorkspaceAddress?.displayName ?? order.sourceWorkspaceAddress?.address ?? null,
+            sourceWallet: order.sourceTreasuryWallet?.displayName ?? order.sourceTreasuryWallet?.address ?? null,
             destination: order.destination.label,
-            payee: order.payee?.name ?? null,
             externalReference: order.externalReference ?? order.invoiceNumber ?? null,
             dueAt: order.dueAt ?? null,
             transferRequestId: order.transferRequestId,
