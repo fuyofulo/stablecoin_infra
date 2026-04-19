@@ -1,0 +1,967 @@
+/*
+ * Canonical component rules — the single source of truth for legacy classes
+ * that exist across the app (button, input, panel, modal, metric, etc.).
+ *
+ * These rules REPLACE the equivalent hardcoded rules in styles.css. They use
+ * --ax-* tokens exclusively so the same classes render with identical SHAPE
+ * in light and dark, differing only in COLOR. This file loads AFTER styles.css
+ * so its rules win on conflict.
+ *
+ * If you find yourself adding a theme-specific override here, stop and add
+ * the proper token to design-tokens.css instead.
+ */
+
+/* ── Focus ring (unified, accent-aware) ────────────────── */
+
+:where(a, button, input, select, textarea):focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--ax-surface-0), 0 0 0 4px var(--ax-accent-ring);
+  border-color: var(--ax-accent) !important;
+}
+
+/* ── Body typography baseline ──────────────────────────── */
+
+body {
+  font-family: var(--ax-font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+button,
+input,
+select,
+textarea {
+  font-family: var(--ax-font-sans);
+}
+
+/* ── Button ────────────────────────────────────────────── */
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 9px 16px;
+  border: 1px solid transparent;
+  border-radius: var(--ax-r-sm);
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.005em;
+  cursor: pointer;
+  transition: background var(--ax-dur-micro) var(--ax-ease-out),
+    border-color var(--ax-dur-micro) var(--ax-ease-out),
+    color var(--ax-dur-micro) var(--ax-ease-out),
+    transform var(--ax-dur-micro) var(--ax-ease-out);
+}
+
+.button:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.button-primary {
+  background: var(--ax-accent);
+  color: var(--ax-on-accent);
+  border-color: transparent;
+  font-weight: 600;
+}
+.button-primary:hover:not(:disabled) {
+  background: var(--ax-accent-hover);
+}
+
+.button-secondary {
+  background: var(--ax-surface-1);
+  border-color: var(--ax-border);
+  color: var(--ax-text);
+}
+.button-secondary:hover:not(:disabled) {
+  background: var(--ax-surface-2);
+  border-color: var(--ax-border-strong);
+}
+
+.button-full {
+  width: 100%;
+}
+
+.button-small {
+  min-height: 30px;
+  padding: 5px 10px;
+  font-size: 12px;
+}
+
+/* ── Form field (label + input/select/textarea) ────────── */
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ax-text-secondary);
+}
+
+.field input:not([type='checkbox']):not([type='radio']),
+.field select,
+.field textarea,
+.login-form input,
+.sidebar-switcher-select {
+  min-height: 40px;
+  width: 100%;
+  border: 1px solid var(--ax-border);
+  border-radius: var(--ax-r-sm);
+  padding: 9px 12px;
+  background: var(--ax-surface-1);
+  color: var(--ax-text);
+  font-size: 13px;
+  font-weight: 400;
+  font-family: var(--ax-font-sans);
+  transition: border-color var(--ax-dur-micro) var(--ax-ease-out),
+    background var(--ax-dur-micro) var(--ax-ease-out);
+}
+
+/* Proper institutional checkbox — 16×16, accent when checked.
+   Applied globally (not just inside .field) so no legacy rule can pin it to
+   "width: auto" and let the label stretch it into a giant pill. */
+input[type='checkbox'],
+input[type='checkbox'].ax-checkbox {
+  appearance: none !important;
+  -webkit-appearance: none !important;
+  width: 16px !important;
+  height: 16px !important;
+  min-height: 16px !important;
+  min-width: 16px !important;
+  max-width: 16px;
+  max-height: 16px;
+  margin: 0;
+  padding: 0 !important;
+  border: 1px solid var(--ax-border-strong);
+  border-radius: 4px;
+  background: var(--ax-surface-1);
+  cursor: pointer;
+  display: inline-block;
+  flex-shrink: 0;
+  transition: background var(--ax-dur-micro) var(--ax-ease-out),
+    border-color var(--ax-dur-micro) var(--ax-ease-out);
+  position: relative;
+  box-sizing: border-box;
+}
+input[type='checkbox']:hover {
+  border-color: var(--ax-accent);
+}
+input[type='checkbox']:checked {
+  background: var(--ax-accent);
+  border-color: var(--ax-accent);
+}
+input[type='checkbox']:checked::after {
+  content: '';
+  position: absolute;
+  left: 4px;
+  top: 1px;
+  width: 5px;
+  height: 9px;
+  border-right: 2px solid var(--ax-on-accent);
+  border-bottom: 2px solid var(--ax-on-accent);
+  transform: rotate(45deg);
+}
+
+.checkbox-field {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--ax-text);
+}
+
+.field select,
+.sidebar-switcher-select {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 34px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none' stroke='%23888' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 8l4 4 4-4' /%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  background-size: 16px;
+}
+
+.field input::placeholder,
+.field textarea::placeholder,
+.login-form input::placeholder {
+  color: var(--ax-text-faint);
+}
+
+.field input:hover,
+.field select:hover,
+.field textarea:hover {
+  border-color: var(--ax-border-strong);
+}
+
+.field textarea {
+  min-height: 160px;
+  padding: 10px 12px;
+  resize: vertical;
+  font-family: var(--ax-font-mono);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.form-stack,
+.form-grid {
+  display: grid;
+  gap: 14px;
+}
+
+.form-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.form-error {
+  color: var(--ax-danger);
+  font-size: 12px;
+}
+
+/* ── Card containers (panel, hero, info-section, side-panel) ── */
+
+.panel,
+.payment-hero,
+.workflow-rail,
+.info-section,
+.side-panel,
+.allocation-panel,
+.packet-box {
+  border: 1px solid var(--ax-border);
+  border-radius: var(--ax-r-md);
+  background: var(--ax-surface-1);
+  box-shadow: none;
+}
+
+.panel {
+  padding: 24px;
+}
+
+.packet-box {
+  padding: 16px;
+  background: var(--ax-surface-2);
+}
+
+.panel-spaced {
+  margin-top: 24px;
+}
+
+/* ── Metric strip ──────────────────────────────────────── */
+
+.metric-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 24px;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  overflow: visible;
+}
+
+.metric-strip-four {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.metric-strip-three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.metric-strip-five {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.metric,
+.metric-institutional {
+  padding: 18px 20px;
+  background: var(--ax-surface-1);
+  border: 1px solid var(--ax-border);
+  border-radius: var(--ax-r-md);
+  border-left-width: 1px;
+}
+
+.metric span,
+.metric-institutional span {
+  display: block;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ax-text-muted);
+}
+
+.metric strong,
+.metric-institutional strong {
+  display: block;
+  margin-top: 6px;
+  font-size: 26px;
+  font-weight: 500;
+  color: var(--ax-text);
+  font-family: var(--ax-font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+/* ── Section headers ───────────────────────────────────── */
+
+.section-header {
+  margin-bottom: 14px;
+}
+
+.section-header-institutional {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  padding-bottom: 0;
+  border-bottom: none;
+}
+
+.section-header h2,
+.info-section h2,
+.side-panel h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--ax-text);
+  letter-spacing: -0.005em;
+}
+
+.section-header p,
+.section-copy,
+.info-section p,
+.side-panel p {
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: var(--ax-text-muted);
+}
+
+/* ── Empty state / screen state ────────────────────────── */
+
+.empty-state,
+.screen-state {
+  display: grid;
+  place-items: center;
+  text-align: center;
+  color: var(--ax-text-secondary);
+}
+
+.empty-state {
+  min-height: 160px;
+  padding: 40px 32px;
+  border: 1px dashed var(--ax-border-strong);
+  border-radius: var(--ax-r-md);
+  background: var(--ax-surface-1);
+}
+
+.empty-state strong {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ax-text);
+}
+
+.empty-state p {
+  max-width: 440px;
+  margin: 6px 0 0;
+  font-size: 13px;
+  color: var(--ax-text-muted);
+  line-height: 1.5;
+}
+
+.empty-state-institutional {
+  padding-top: 40px;
+  padding-bottom: 40px;
+}
+
+.empty-state-actions {
+  margin-top: 14px;
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+}
+
+.screen-state {
+  min-height: 100vh;
+  padding: 32px;
+  background: var(--ax-surface-0);
+}
+
+/* ── Data tables ───────────────────────────────────────── */
+
+.data-table {
+  border: 1px solid var(--ax-border);
+  border-radius: var(--ax-r-md);
+  overflow: hidden;
+  background: var(--ax-surface-1);
+}
+
+.data-table-row {
+  border-bottom: 1px solid var(--ax-border);
+}
+
+.data-table-head {
+  background: var(--ax-surface-2);
+  color: var(--ax-text-muted);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.data-table-row-clickable {
+  cursor: pointer;
+  transition: background var(--ax-dur-micro) var(--ax-ease-out);
+}
+.data-table-row-clickable:hover,
+.data-table-link:hover {
+  background: var(--ax-surface-2);
+}
+
+.data-table strong {
+  color: var(--ax-text);
+  font-weight: 500;
+}
+.data-table small {
+  color: var(--ax-text-muted);
+}
+
+/* ── CSV preview table ─────────────────────────────────── */
+
+.csv-preview-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--ax-font-mono);
+  font-size: 12px;
+  background: var(--ax-surface-1);
+  border: 1px solid var(--ax-border);
+  border-radius: var(--ax-r-sm);
+  overflow: hidden;
+}
+
+.csv-preview-table th,
+.csv-preview-table td {
+  padding: 8px 12px;
+  text-align: left;
+  border-bottom: 1px solid var(--ax-border);
+  color: var(--ax-text);
+}
+.csv-preview-table th {
+  background: var(--ax-surface-2);
+  color: var(--ax-text-muted);
+  font-weight: 500;
+}
+
+/* ── Notice (info / warning / danger banner) ───────────── */
+
+.notice {
+  padding: 10px 14px;
+  background: var(--ax-info-dim);
+  color: var(--ax-info);
+  border: 1px solid transparent;
+  border-radius: var(--ax-r-sm);
+  font-size: 13px;
+}
+
+/* ── Tabs ──────────────────────────────────────────────── */
+
+.tabs {
+  display: inline-flex;
+  padding: 3px;
+  background: var(--ax-surface-1);
+  border: 1px solid var(--ax-border);
+  border-radius: var(--ax-r-sm);
+  gap: 2px;
+}
+
+.tabs-tab {
+  padding: 6px 12px;
+  font-size: 13px;
+  color: var(--ax-text-secondary);
+  background: transparent;
+  border: none;
+  border-radius: calc(var(--ax-r-sm) - 3px);
+  cursor: pointer;
+  font-family: inherit;
+  transition: background var(--ax-dur-micro) var(--ax-ease-out),
+    color var(--ax-dur-micro) var(--ax-ease-out);
+}
+.tabs-tab:hover {
+  color: var(--ax-text);
+}
+.tabs-tab-active {
+  background: var(--ax-surface-3);
+  color: var(--ax-text);
+}
+
+/* ── Modal ─────────────────────────────────────────────── */
+
+.modal-root {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+.modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(4px);
+  border: none;
+  cursor: default;
+}
+.modal-dialog {
+  position: relative;
+  width: 100%;
+  max-width: 520px;
+  background: var(--ax-surface-1);
+  border: 1px solid var(--ax-border-strong);
+  border-radius: var(--ax-r-md);
+  box-shadow: var(--ax-shadow-lg);
+  padding: 24px;
+  color: var(--ax-text);
+}
+.modal-dialog-wide {
+  max-width: 760px;
+}
+.modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+.modal-header h2 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--ax-text);
+}
+.modal-close {
+  background: transparent;
+  border: none;
+  color: var(--ax-text-muted);
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: var(--ax-r-xs);
+  transition: color var(--ax-dur-micro) var(--ax-ease-out),
+    background var(--ax-dur-micro) var(--ax-ease-out);
+}
+.modal-close:hover {
+  background: var(--ax-surface-2);
+  color: var(--ax-text);
+}
+.modal-body {
+  color: var(--ax-text);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.modal-footer {
+  margin-top: 20px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+/* Vertical rhythm inside dialog/modal forms — consecutive fields stack
+   cleanly instead of jamming against each other. Applies to the short
+   dialogs we use for add-wallet / add-destination / policy edit etc. */
+.rd-dialog form,
+.modal-body form,
+.modal-body .form-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.rd-dialog form .rd-dialog-actions,
+.rd-dialog form .modal-footer,
+.modal-body form .modal-footer {
+  margin-top: 8px;
+}
+.rd-dialog-body {
+  margin-bottom: 4px;
+}
+
+/* Modal-friendly form section — no nested panel backgrounds, just a quiet
+   divider line between groups. Used in the Policy edit modal. */
+.rd-form-section {
+  padding-top: 16px;
+  border-top: 1px solid var(--ax-border);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.rd-form-section:first-of-type {
+  padding-top: 0;
+  border-top: 0;
+}
+.rd-form-section-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.rd-form-section-head h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--ax-text);
+}
+.rd-form-section-head p {
+  margin: 0;
+  font-size: 12px;
+  color: var(--ax-text-muted);
+  line-height: 1.4;
+}
+
+/* ── Drawer ────────────────────────────────────────────── */
+
+.drawer-panel {
+  background: var(--ax-surface-1);
+  border-left: 1px solid var(--ax-border-strong);
+  color: var(--ax-text);
+}
+.drawer-backdrop {
+  background: rgba(0, 0, 0, 0.5);
+}
+
+/* ── Info grid (details key/value pairs) ───────────────── */
+
+.info-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 18px;
+}
+.info-grid div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.info-grid dt {
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ax-text-muted);
+}
+.info-grid dd {
+  margin: 0;
+  font-size: 13px;
+  color: var(--ax-text);
+}
+
+/* ── Page frame ────────────────────────────────────────── */
+
+.page-frame {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 40px 40px 80px;
+  background: var(--ax-surface-0);
+  color: var(--ax-text);
+}
+.page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 24px;
+  margin-bottom: 28px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid var(--ax-border);
+}
+.page-header h1 {
+  margin: 6px 0 0;
+  font-size: 28px;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  color: var(--ax-text);
+}
+.page-header p {
+  margin: 8px 0 0;
+  max-width: 640px;
+  font-size: 13px;
+  color: var(--ax-text-muted);
+  line-height: 1.5;
+}
+.eyebrow,
+.page-eyebrow {
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ax-text-muted);
+  margin: 0 0 4px;
+}
+
+/* ── Vertical timeline (legacy payment detail) ─────────── */
+
+.vertical-timeline-marker {
+  background: var(--ax-surface-2);
+  border: 1px solid var(--ax-border-strong);
+}
+.vertical-timeline-item-complete .vertical-timeline-marker {
+  background: var(--ax-accent);
+  border-color: var(--ax-accent);
+}
+.vertical-timeline-item-current .vertical-timeline-marker {
+  background: var(--ax-surface-1);
+  border-color: var(--ax-accent);
+}
+.vertical-timeline-item-blocked .vertical-timeline-marker {
+  background: var(--ax-danger);
+  border-color: var(--ax-danger);
+}
+.vertical-timeline-item-pending .vertical-timeline-marker {
+  background: var(--ax-surface-2);
+  border-color: var(--ax-border);
+}
+
+/* ── Run progress dots (legacy run tracker) ────────────── */
+
+.run-progress-dot {
+  background: var(--ax-surface-1);
+  border: 1px solid var(--ax-border-strong);
+}
+.run-progress-dot-complete {
+  background: var(--ax-accent);
+  border-color: var(--ax-accent);
+}
+.run-progress-dot-current {
+  background: var(--ax-surface-1);
+  border-color: var(--ax-accent);
+  box-shadow: 0 0 0 3px var(--ax-accent-dim);
+}
+.run-progress-dot-blocked {
+  background: var(--ax-danger);
+  border-color: var(--ax-danger);
+}
+.run-progress-line {
+  background: var(--ax-border);
+}
+.run-progress-line-complete,
+.run-progress-line-current {
+  background: var(--ax-accent);
+}
+.run-progress-line-blocked {
+  background: var(--ax-danger);
+}
+
+/* ── Wallet picker ─────────────────────────────────────── */
+
+.wallet-picker-row {
+  border: 1px solid var(--ax-border);
+  border-radius: var(--ax-r-sm);
+  background: var(--ax-surface-1);
+  padding: 12px 14px;
+}
+.wallet-picker-row:hover:not(:disabled) {
+  background: var(--ax-surface-2);
+  border-color: var(--ax-border-strong);
+}
+.wallet-picker-row-active {
+  border-color: var(--ax-accent);
+  box-shadow: inset 0 0 0 1px var(--ax-accent);
+  background: var(--ax-accent-dim);
+}
+.wallet-picker-icon {
+  background: var(--ax-surface-2);
+  border: 1px solid var(--ax-border);
+  color: var(--ax-text-muted);
+}
+.wallet-picker-copy strong {
+  color: var(--ax-text);
+}
+.wallet-picker-copy small {
+  color: var(--ax-text-muted);
+}
+.wallet-picker-badge {
+  border-radius: 999px;
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  background: var(--ax-accent-dim);
+  color: var(--ax-accent);
+}
+
+/* ── Sidebar-switcher-create-link (unused in new sidebar, safety) ── */
+
+.sidebar-switcher-create-link {
+  color: var(--ax-accent);
+}
+
+/* ── Brand mark (legacy, if still referenced) ──────────── */
+
+.brand-mark {
+  background: var(--ax-accent);
+  box-shadow: none;
+}
+
+/* ── Legacy section "allocation-panel" ─────────────────── */
+
+.allocation-summary {
+  color: var(--ax-text-secondary);
+}
+.allocation-summary strong {
+  color: var(--ax-text);
+}
+.allocation-bar-track {
+  background: var(--ax-surface-2);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.allocation-bar-fill {
+  background: var(--ax-accent);
+  display: block;
+  height: 100%;
+}
+
+/* ── Table heads and cells when used outside .data-table ── */
+
+th,
+td {
+  color: var(--ax-text);
+}
+
+/* ── Legacy csv-preview-table compatibility ────────────── */
+
+table.csv-preview-table {
+  color: var(--ax-text);
+}
+
+/* ── Toast viewport + cards ────────────────────────────── */
+
+.ax-toast-viewport {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  z-index: 100;
+  pointer-events: none;
+  max-width: 380px;
+}
+
+.ax-toast {
+  display: grid;
+  grid-template-columns: 18px 1fr auto;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 12px 14px;
+  border-radius: var(--ax-r-md);
+  background: var(--ax-surface-1);
+  border: 1px solid var(--ax-border-strong);
+  box-shadow: var(--ax-shadow-lg);
+  pointer-events: auto;
+  min-width: 280px;
+  font-size: 13px;
+  color: var(--ax-text);
+  animation: ax-toast-in 180ms var(--ax-ease-out);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ax-toast {
+    animation: none;
+  }
+}
+
+@keyframes ax-toast-in {
+  from {
+    transform: translateX(12px);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+.ax-toast[data-tone='success'] {
+  border-color: transparent;
+  background: var(--ax-accent-dim);
+  color: var(--ax-accent);
+}
+.ax-toast[data-tone='success'] .ax-toast-title,
+.ax-toast[data-tone='success'] .ax-toast-message {
+  color: var(--ax-accent);
+}
+
+.ax-toast[data-tone='danger'] {
+  border-color: transparent;
+  background: var(--ax-danger-dim);
+  color: var(--ax-danger);
+}
+.ax-toast[data-tone='danger'] .ax-toast-title,
+.ax-toast[data-tone='danger'] .ax-toast-message {
+  color: var(--ax-danger);
+}
+
+.ax-toast[data-tone='info'] {
+  border-color: transparent;
+  background: var(--ax-info-dim);
+  color: var(--ax-info);
+}
+.ax-toast[data-tone='info'] .ax-toast-title,
+.ax-toast[data-tone='info'] .ax-toast-message {
+  color: var(--ax-info);
+}
+
+.ax-toast-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  margin-top: 1px;
+  color: inherit;
+}
+
+.ax-toast-body {
+  min-width: 0;
+}
+.ax-toast-title {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+.ax-toast-message {
+  font-size: 13px;
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+.ax-toast-close {
+  background: transparent;
+  border: none;
+  color: inherit;
+  opacity: 0.6;
+  cursor: pointer;
+  padding: 2px;
+  border-radius: var(--ax-r-xs);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: opacity var(--ax-dur-micro) var(--ax-ease-out),
+    background var(--ax-dur-micro) var(--ax-ease-out);
+}
+.ax-toast-close:hover {
+  opacity: 1;
+  background: rgba(0, 0, 0, 0.08);
+}
+:root[data-theme='dark'] .ax-toast-close:hover {
+  background: rgba(255, 255, 255, 0.08);
+}

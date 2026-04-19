@@ -7,19 +7,17 @@ import type {
   ExceptionNote,
   LoginResponse,
   ObservedTransfer,
-  OrganizationDirectoryItem,
   OrganizationMembership,
   PaymentExecutionPreparation,
   PaymentOrder,
   PaymentProofPacket,
-  Payee,
   PaymentRequest,
   PaymentRun,
   PaymentRunExecutionPreparation,
   PaymentRunImportResult,
   ReconciliationRow,
   Workspace,
-  WorkspaceAddress,
+  TreasuryWallet,
 } from './types';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:3100';
@@ -115,9 +113,6 @@ export const api = {
       method: 'POST',
     });
   },
-  listOrganizations() {
-    return request<{ items: OrganizationDirectoryItem[] }>('/organizations');
-  },
   createOrganization(input: { organizationName: string }) {
     return request<OrganizationMembership>('/organizations', {
       method: 'POST',
@@ -136,14 +131,25 @@ export const api = {
       body: JSON.stringify(input),
     });
   },
-  createDemoWorkspace(organizationId: string) {
-    return request<Workspace>(`/organizations/${organizationId}/demo-workspace`, {
-      method: 'POST',
-      body: JSON.stringify({}),
-    });
+  listTreasuryWallets(workspaceId: string) {
+    return request<{ items: TreasuryWallet[] }>(`/workspaces/${workspaceId}/treasury-wallets`);
   },
-  listAddresses(workspaceId: string) {
-    return request<{ items: WorkspaceAddress[] }>(`/workspaces/${workspaceId}/addresses`);
+  listTreasuryWalletBalances(workspaceId: string) {
+    return request<{
+      fetchedAt: string;
+      solUsdPrice: number | null;
+      priceSource: string | null;
+      items: Array<{
+        treasuryWalletId: string;
+        address: string;
+        usdcAtaAddress: string | null;
+        displayName: string | null;
+        isActive: boolean;
+        solLamports: string;
+        usdcRaw: string | null;
+        rpcError: string | null;
+      }>;
+    }>(`/workspaces/${workspaceId}/treasury-wallets/balances`);
   },
   listCounterparties(workspaceId: string) {
     return request<{ items: Counterparty[] }>(`/workspaces/${workspaceId}/counterparties`);
@@ -169,7 +175,8 @@ export const api = {
     workspaceId: string,
     input: {
       counterpartyId?: string;
-      linkedWorkspaceAddressId: string;
+      walletAddress: string;
+      tokenAccountAddress?: string;
       destinationType?: string;
       trustState?: Destination['trustState'];
       label: string;
@@ -183,7 +190,25 @@ export const api = {
       body: JSON.stringify(input),
     });
   },
-  createAddress(
+  updateDestination(
+    workspaceId: string,
+    destinationId: string,
+    input: {
+      counterpartyId?: string | null;
+      walletAddress?: string;
+      trustState?: Destination['trustState'];
+      label?: string;
+      notes?: string;
+      isInternal?: boolean;
+      isActive?: boolean;
+    },
+  ) {
+    return request<Destination>(`/workspaces/${workspaceId}/destinations/${destinationId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(input),
+    });
+  },
+  createTreasuryWallet(
     workspaceId: string,
     input: {
       address: string;
@@ -192,7 +217,7 @@ export const api = {
       notes?: string;
     },
   ) {
-    return request(`/workspaces/${workspaceId}/addresses`, {
+    return request(`/workspaces/${workspaceId}/treasury-wallets`, {
       method: 'POST',
       body: JSON.stringify({
         chain: 'solana',
@@ -291,31 +316,6 @@ export const api = {
       `/workspaces/${workspaceId}/payment-requests?${params.toString()}`,
     );
   },
-  listPayees(workspaceId: string, status?: Payee['status']) {
-    const params = new URLSearchParams({ limit: '100' });
-    if (status) {
-      params.set('status', status);
-    }
-    return request<{ servedAt: string; items: Payee[] }>(
-      `/workspaces/${workspaceId}/payees?${params.toString()}`,
-    );
-  },
-  createPayee(
-    workspaceId: string,
-    input: {
-      name: string;
-      defaultDestinationId?: string | null;
-      externalReference?: string | null;
-      status?: string;
-      notes?: string | null;
-      metadataJson?: Record<string, unknown>;
-    },
-  ) {
-    return request<Payee>(`/workspaces/${workspaceId}/payees`, {
-      method: 'POST',
-      body: JSON.stringify(input),
-    });
-  },
   listPaymentRuns(workspaceId: string) {
     return request<{ servedAt: string; items: PaymentRun[] }>(`/workspaces/${workspaceId}/payment-runs`);
   },
@@ -332,7 +332,7 @@ export const api = {
     input: {
       csv: string;
       runName?: string;
-      sourceWorkspaceAddressId?: string;
+      sourceTreasuryWalletId?: string;
       submitOrderNow?: boolean;
     },
   ) {
@@ -344,7 +344,6 @@ export const api = {
   createPaymentRequest(
     workspaceId: string,
     input: {
-      payeeId?: string;
       destinationId: string;
       amountRaw: string;
       asset?: string;
@@ -353,7 +352,7 @@ export const api = {
       dueAt?: string;
       metadataJson?: Record<string, unknown>;
       createOrderNow?: boolean;
-      sourceWorkspaceAddressId?: string;
+      sourceTreasuryWalletId?: string;
       submitOrderNow?: boolean;
     },
   ) {
@@ -381,7 +380,7 @@ export const api = {
     workspaceId: string,
     paymentOrderId: string,
     input?: {
-      sourceWorkspaceAddressId?: string;
+      sourceTreasuryWalletId?: string;
     },
   ) {
     return request<PaymentExecutionPreparation>(
@@ -396,7 +395,7 @@ export const api = {
     workspaceId: string,
     paymentRunId: string,
     input?: {
-      sourceWorkspaceAddressId?: string;
+      sourceTreasuryWalletId?: string;
     },
   ) {
     return request<PaymentRunExecutionPreparation>(

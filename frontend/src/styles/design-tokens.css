@@ -1,0 +1,140 @@
+/*
+ * Axoria institutional design tokens — both themes.
+ *
+ * :root defaults to LIGHT (institutional norm).
+ * :root[data-theme="dark"] overrides to the dark palette.
+ *
+ * The accent green shifts between modes so contrast stays AA on both surfaces:
+ *   dark mode uses #2EE6A8 (bright verified-green on near-black)
+ *   light mode uses #059669 (deeper verified-green for 4.5:1 on white)
+ */
+
+:root {
+  color-scheme: light;
+  font-family: 'Geist Variable', Geist, Inter, ui-sans-serif, system-ui, sans-serif;
+
+  --ax-surface-0: #ffffff;
+  --ax-surface-1: #fafafa;
+  --ax-surface-2: #f3f3f1;
+  --ax-surface-3: #ebebe8;
+
+  --ax-text: #0a0a0b;
+  --ax-text-secondary: rgba(0, 0, 0, 0.68);
+  --ax-text-muted: rgba(0, 0, 0, 0.52);
+  --ax-text-faint: rgba(0, 0, 0, 0.32);
+
+  --ax-border: rgba(0, 0, 0, 0.08);
+  --ax-border-strong: rgba(0, 0, 0, 0.16);
+
+  --ax-accent: #059669;
+  --ax-accent-hover: #047857;
+  --ax-accent-press: #065f46;
+  --ax-accent-dim: rgba(5, 150, 105, 0.08);
+  --ax-accent-ring: rgba(5, 150, 105, 0.35);
+  --ax-on-accent: #ffffff;
+
+  --ax-warning: #b45309;
+  --ax-warning-dim: rgba(180, 83, 9, 0.08);
+  --ax-danger: #b91c1c;
+  --ax-danger-dim: rgba(185, 28, 28, 0.08);
+  --ax-info: #1d4ed8;
+  --ax-info-dim: rgba(29, 78, 216, 0.08);
+
+  --ax-font-sans: 'Geist Variable', Geist, Inter, ui-sans-serif, system-ui, sans-serif;
+  --ax-font-mono: ui-monospace, 'SF Mono', Monaco, 'JetBrains Mono', Menlo, Consolas, monospace;
+
+  --ax-r-xs: 3px;
+  --ax-r-sm: 6px;
+  --ax-r-md: 10px;
+  --ax-r-lg: 14px;
+
+  --ax-s1: 4px;
+  --ax-s2: 8px;
+  --ax-s3: 12px;
+  --ax-s4: 16px;
+  --ax-s5: 20px;
+  --ax-s6: 24px;
+  --ax-s7: 32px;
+  --ax-s8: 48px;
+  --ax-s9: 64px;
+
+  --ax-ease-out: cubic-bezier(0, 0, 0.2, 1);
+  --ax-ease-in: cubic-bezier(0.4, 0, 1, 1);
+  --ax-ease-io: cubic-bezier(0.4, 0, 0.2, 1);
+  --ax-dur-micro: 100ms;
+  --ax-dur-short: 150ms;
+  --ax-dur-med: 220ms;
+  --ax-dur-long: 320ms;
+
+  --ax-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04), 0 1px 3px rgba(0, 0, 0, 0.05);
+  --ax-shadow-md: 0 2px 6px rgba(0, 0, 0, 0.06), 0 8px 24px rgba(0, 0, 0, 0.06);
+  --ax-shadow-lg: 0 8px 40px rgba(0, 0, 0, 0.1);
+
+  /* Legacy variable aliases — redirect every legacy token to the ax system.
+     Any class using var(--bg), var(--text), etc. automatically becomes
+     theme-aware because these aliases chain through var(--ax-*). */
+  --bg: var(--ax-surface-0);
+  --bg-subtle: var(--ax-surface-1);
+  --surface: var(--ax-surface-1);
+  --surface-muted: var(--ax-surface-2);
+  --text: var(--ax-text);
+  --text-muted: var(--ax-text-muted);
+  --text-soft: var(--ax-text-secondary);
+  --border: var(--ax-border);
+  --border-strong: var(--ax-border-strong);
+  --accent: var(--ax-accent);
+  --accent-hover: var(--ax-accent-hover);
+  --success: var(--ax-accent);
+  --warning: var(--ax-warning);
+  --danger: var(--ax-danger);
+}
+
+html,
+body {
+  background: var(--ax-surface-0);
+  color: var(--ax-text);
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+
+  --ax-surface-0: #0a0a0b;
+  --ax-surface-1: #111114;
+  --ax-surface-2: #17171b;
+  --ax-surface-3: #1e1e22;
+
+  --ax-text: #ededed;
+  --ax-text-secondary: rgba(255, 255, 255, 0.64);
+  --ax-text-muted: rgba(255, 255, 255, 0.46);
+  --ax-text-faint: rgba(255, 255, 255, 0.28);
+
+  --ax-border: rgba(255, 255, 255, 0.07);
+  --ax-border-strong: rgba(255, 255, 255, 0.14);
+
+  --ax-accent: #2ee6a8;
+  --ax-accent-hover: #3bf0b2;
+  --ax-accent-press: #22c38e;
+  --ax-accent-dim: rgba(46, 230, 168, 0.12);
+  --ax-accent-ring: rgba(46, 230, 168, 0.45);
+  --ax-on-accent: #0a0a0b;
+
+  --ax-warning: #f5b041;
+  --ax-warning-dim: rgba(245, 176, 65, 0.12);
+  --ax-danger: #f76464;
+  --ax-danger-dim: rgba(247, 100, 100, 0.12);
+  --ax-info: #6ba6ff;
+  --ax-info-dim: rgba(107, 166, 255, 0.12);
+
+  --ax-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.5);
+  --ax-shadow-md: 0 12px 40px rgba(0, 0, 0, 0.5);
+  --ax-shadow-lg: 0 20px 60px rgba(0, 0, 0, 0.6);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --ax-dur-micro: 0ms;
+    --ax-dur-short: 0ms;
+    --ax-dur-med: 0ms;
+    --ax-dur-long: 0ms;
+  }
+}

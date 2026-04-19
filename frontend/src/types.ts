@@ -28,15 +28,6 @@ export type WorkspaceMember = {
   user: User;
 };
 
-export type OrganizationDirectoryItem = {
-  organizationId: string;
-  organizationName: string;
-  status: string;
-  workspaceCount: number;
-  isMember: boolean;
-  membershipRole: string | null;
-};
-
 export type AuthenticatedSession = {
   authenticated: true;
   user: User;
@@ -50,12 +41,11 @@ export type LoginResponse = {
   organizations: OrganizationMembership[];
 };
 
-export type WorkspaceAddress = {
-  workspaceAddressId: string;
+export type TreasuryWallet = {
+  treasuryWalletId: string;
   workspaceId: string;
   chain: string;
   address: string;
-  addressKind: string;
   assetScope: string;
   usdcAtaAddress: string | null;
   isActive: boolean;
@@ -68,11 +58,10 @@ export type WorkspaceAddress = {
   updatedAt: string;
 };
 
-export type WorkspaceAddressLite = {
-  workspaceAddressId: string;
+export type TreasuryWalletLite = {
+  treasuryWalletId: string;
   address: string;
   usdcAtaAddress: string | null;
-  addressKind: string;
   displayName: string | null;
   notes: string | null;
 };
@@ -93,7 +82,6 @@ export type Destination = {
   destinationId: string;
   workspaceId: string;
   counterpartyId: string | null;
-  linkedWorkspaceAddressId: string | null;
   chain: string;
   asset: string;
   walletAddress: string;
@@ -108,7 +96,6 @@ export type Destination = {
   createdAt: string;
   updatedAt: string;
   counterparty: Counterparty | null;
-  linkedWorkspaceAddress: WorkspaceAddressLite | null;
 };
 
 export type ApprovalPolicyRule = {
@@ -162,9 +149,8 @@ export type TransferRequest = {
   transferRequestId: string;
   workspaceId: string;
   paymentOrderId: string | null;
-  sourceWorkspaceAddressId: string | null;
-  destinationWorkspaceAddressId: string;
-  destinationId: string | null;
+  sourceTreasuryWalletId: string | null;
+  destinationId: string;
   requestType: string;
   asset: string;
   amountRaw: string;
@@ -175,8 +161,7 @@ export type TransferRequest = {
   requestedAt: string;
   dueAt: string | null;
   propertiesJson: Record<string, unknown>;
-  sourceWorkspaceAddress: WorkspaceAddressLite | null;
-  destinationWorkspaceAddress: WorkspaceAddressLite | null;
+  sourceTreasuryWallet: TreasuryWalletLite | null;
   destination: Destination | null;
 };
 
@@ -261,9 +246,8 @@ export type ReconciliationRow = {
   transferRequestId: string;
   workspaceId: string;
   paymentOrderId: string | null;
-  sourceWorkspaceAddressId: string | null;
-  destinationWorkspaceAddressId: string;
-  destinationId: string | null;
+  sourceTreasuryWalletId: string | null;
+  destinationId: string;
   requestType: string;
   asset: string;
   amountRaw: string;
@@ -274,8 +258,7 @@ export type ReconciliationRow = {
   externalReference: string | null;
   propertiesJson: Record<string, unknown>;
   requestedByUser: User | null;
-  sourceWorkspaceAddress: WorkspaceAddressLite | null;
-  destinationWorkspaceAddress: WorkspaceAddressLite | null;
+  sourceTreasuryWallet: TreasuryWalletLite | null;
   destination: Destination | null;
   approvalState: 'draft' | 'submitted' | 'pending_approval' | 'escalated' | 'approved' | 'closed' | 'rejected';
   executionState:
@@ -352,32 +335,10 @@ export type PaymentOrderEvent = {
 
 export type PaymentRequestState = 'submitted' | 'converted_to_order' | 'cancelled';
 
-export type Payee = {
-  payeeId: string;
-  workspaceId: string;
-  defaultDestinationId: string | null;
-  name: string;
-  externalReference: string | null;
-  status: string;
-  notes: string | null;
-  metadataJson: Record<string, unknown>;
-  createdAt: string;
-  updatedAt: string;
-  defaultDestination: {
-    destinationId: string;
-    label: string;
-    walletAddress: string;
-    tokenAccountAddress: string | null;
-    trustState: Destination['trustState'];
-    isActive: boolean;
-  } | null;
-};
-
 export type PaymentRequest = {
   paymentRequestId: string;
   workspaceId: string;
   paymentRunId: string | null;
-  payeeId: string | null;
   destinationId: string;
   counterpartyId: string | null;
   requestedByUserId: string | null;
@@ -390,7 +351,6 @@ export type PaymentRequest = {
   metadataJson: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
-  payee: Payee | null;
   destination: Destination;
   counterparty: Counterparty | null;
   requestedByUser: User | null;
@@ -425,7 +385,7 @@ export type PaymentExecutionPacket = {
   executionRecordIds?: string[];
   createdAt: string;
   source: {
-    workspaceAddressId: string;
+    treasuryWalletId: string;
     walletAddress: string;
     tokenAccountAddress: string;
     label: string | null;
@@ -479,7 +439,7 @@ export type PaymentExecutionPreparation = {
 export type PaymentRun = {
   paymentRunId: string;
   workspaceId: string;
-  sourceWorkspaceAddressId: string | null;
+  sourceTreasuryWalletId: string | null;
   runName: string;
   inputSource: string;
   state: string;
@@ -488,7 +448,7 @@ export type PaymentRun = {
   createdByUserId: string | null;
   createdAt: string;
   updatedAt: string;
-  sourceWorkspaceAddress: WorkspaceAddress | null;
+  sourceTreasuryWallet: TreasuryWallet | null;
   createdByUser: User | null;
   totals: {
     orderCount: number;
@@ -520,10 +480,9 @@ export type PaymentOrder = {
   workspaceId: string;
   paymentRequestId: string | null;
   paymentRunId: string | null;
-  payeeId: string | null;
   destinationId: string;
   counterpartyId: string | null;
-  sourceWorkspaceAddressId: string | null;
+  sourceTreasuryWalletId: string | null;
   transferRequestId: string | null;
   amountRaw: string;
   asset: string;
@@ -545,9 +504,8 @@ export type PaymentOrder = {
   createdAt: string;
   updatedAt: string;
   destination: Destination;
-  payee: Payee | null;
   counterparty: Counterparty | null;
-  sourceWorkspaceAddress: WorkspaceAddress | null;
+  sourceTreasuryWallet: TreasuryWallet | null;
   createdByUser: User | null;
   paymentRequest: Omit<PaymentRequest, 'destination' | 'counterparty' | 'paymentOrder'> | null;
   transferRequests: Array<{
@@ -567,7 +525,6 @@ export type PaymentRequestsCsvImportResult = {
     rowNumber: number;
     status: 'imported' | 'failed';
     error?: string;
-    payee?: Payee | null;
     paymentRequest?: PaymentRequest;
   }>;
 };

@@ -4,13 +4,23 @@ import { Link, Navigate, Route, Routes, useLocation, useNavigate, useParams } fr
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AppSidebar } from './Sidebar';
 import { api } from './api';
+import { PaymentRunDetailPage as PaymentRunDetailPageV2 } from './pages/PaymentRunDetail';
+import { CommandCenterPage as CommandCenterPageV2 } from './pages/CommandCenter';
+import { PaymentsPage as PaymentsPageV2 } from './pages/Payments';
+import { PaymentDetailPage as PaymentDetailPageV2 } from './pages/PaymentDetail';
+import { WalletsPage } from './pages/Wallets';
+import { CounterpartiesPage } from './pages/Counterparties';
+import { ProofsPage as ProofsPageV2 } from './pages/Proofs';
+import { ExecutionPage as ExecutionPageV2 } from './pages/Execution';
+import { SettlementPage as SettlementPageV2 } from './pages/Settlement';
+import { ApprovalsPage as ApprovalsPageV2 } from './pages/Approvals';
+import { useToast } from './ui/Toast';
 import type {
   ApprovalPolicy,
   AuthenticatedSession,
   Counterparty,
   Destination,
   ExceptionItem,
-  Payee,
   PaymentExecutionPacket,
   PaymentOrder,
   PaymentOrderState,
@@ -20,7 +30,7 @@ import type {
   ReconciliationRow,
   ReconciliationTimelineItem,
   ObservedTransfer,
-  WorkspaceAddress,
+  TreasuryWallet,
   Workspace,
 } from './api';
 import {
@@ -70,7 +80,6 @@ function queryKeys(workspaceId?: string, paymentOrderId?: string) {
     addresses: ['addresses', workspaceId] as const,
     counterparties: ['counterparties', workspaceId] as const,
     destinations: ['destinations', workspaceId] as const,
-    payees: ['payees', workspaceId] as const,
     paymentRequests: ['payment-requests', workspaceId] as const,
     paymentRuns: ['payment-runs', workspaceId] as const,
     paymentRun: ['payment-run', workspaceId, paymentOrderId] as const,
@@ -309,17 +318,19 @@ function AppShell({ session }: { session: AuthenticatedSession }) {
           <Route path="/" element={<HomeRedirect session={session} />} />
           <Route path="/setup" element={<SetupPage session={session} />} />
           <Route path="/profile" element={<ProfilePage session={session} />} />
-          <Route path="/workspaces/:workspaceId" element={<CommandCenterPage session={session} />} />
+          <Route path="/workspaces/:workspaceId" element={<CommandCenterPageV2 session={session} />} />
+          <Route path="/workspaces/:workspaceId/wallets" element={<WalletsPage session={session} />} />
+          <Route path="/workspaces/:workspaceId/counterparties" element={<CounterpartiesPage session={session} />} />
           <Route path="/workspaces/:workspaceId/registry" element={<AddressBookPage session={session} />} />
           <Route path="/workspaces/:workspaceId/requests" element={<PaymentRequestsPage session={session} />} />
-          <Route path="/workspaces/:workspaceId/runs" element={<PaymentRunsPage session={session} />} />
-          <Route path="/workspaces/:workspaceId/runs/:paymentRunId" element={<PaymentRunDetailPage session={session} />} />
-          <Route path="/workspaces/:workspaceId/payments" element={<PaymentsPage session={session} />} />
-          <Route path="/workspaces/:workspaceId/payments/:paymentOrderId" element={<PaymentDetailPage session={session} />} />
-          <Route path="/workspaces/:workspaceId/approvals" element={<ApprovalsPage session={session} />} />
-          <Route path="/workspaces/:workspaceId/execution" element={<ExecutionPage session={session} />} />
-          <Route path="/workspaces/:workspaceId/settlement" element={<SettlementPage session={session} />} />
-          <Route path="/workspaces/:workspaceId/proofs" element={<ProofsPage session={session} />} />
+          <Route path="/workspaces/:workspaceId/runs" element={<PaymentsPageV2 session={session} />} />
+          <Route path="/workspaces/:workspaceId/runs/:paymentRunId" element={<PaymentRunDetailPageV2 />} />
+          <Route path="/workspaces/:workspaceId/payments" element={<PaymentsPageV2 session={session} />} />
+          <Route path="/workspaces/:workspaceId/payments/:paymentOrderId" element={<PaymentDetailPageV2 />} />
+          <Route path="/workspaces/:workspaceId/approvals" element={<ApprovalsPageV2 session={session} />} />
+          <Route path="/workspaces/:workspaceId/execution" element={<ExecutionPageV2 session={session} />} />
+          <Route path="/workspaces/:workspaceId/settlement" element={<SettlementPageV2 session={session} />} />
+          <Route path="/workspaces/:workspaceId/proofs" element={<ProofsPageV2 session={session} />} />
           <Route path="/workspaces/:workspaceId/policy" element={<PolicyPage session={session} />} />
           <Route path="/workspaces/:workspaceId/exceptions" element={<ExceptionsPage session={session} />} />
           <Route path="/workspaces/:workspaceId/exceptions/:exceptionId" element={<ExceptionDetailPage session={session} />} />
@@ -418,93 +429,92 @@ function HomeRedirect({ session }: { session: AuthenticatedSession }) {
 function SetupPage({ session }: { session: AuthenticatedSession }) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
-  const [message, setMessage] = useState<string | null>(null);
-  const organizationsQuery = useQuery({
-    queryKey: ['organizations'],
-    queryFn: () => api.listOrganizations(),
-  });
+  const { success, error: toastError } = useToast();
   const createWorkspaceMutation = useMutation({
     mutationFn: async (formData: FormData) => {
       const organizationName = String(formData.get('organizationName') ?? '').trim();
       const existingOrganizationId = String(formData.get('existingOrganizationId') ?? '').trim();
       const workspaceName = String(formData.get('workspaceName') ?? '').trim();
-      const useDemo = formData.get('useDemo') === 'on';
-      if (!workspaceName && !useDemo) {
+      if (!workspaceName) {
         throw new Error('Workspace name is required.');
       }
       const organization = existingOrganizationId
         ? session.organizations.find((candidate) => candidate.organizationId === existingOrganizationId)
         : await api.createOrganization({ organizationName });
       if (!organization) {
-        throw new Error('Choose an organization or create one.');
+        throw new Error('Pick an existing organization or give a new organization name.');
       }
-      const workspace = useDemo
-        ? await api.createDemoWorkspace(organization.organizationId)
-        : await api.createWorkspace(organization.organizationId, { workspaceName });
+      const workspace = await api.createWorkspace(organization.organizationId, { workspaceName });
       return workspace;
     },
     onSuccess: async (workspace) => {
+      success('Workspace created.');
       await queryClient.invalidateQueries({ queryKey: queryKeys().session });
       navigate(`/workspaces/${workspace.workspaceId}`, { replace: true });
     },
-    onError: (error) => setMessage(error instanceof Error ? error.message : 'Unable to create workspace.'),
+    onError: (err) => toastError(err instanceof Error ? err.message : 'Unable to create workspace.'),
   });
+
+  const hasOrganizations = session.organizations.length > 0;
 
   return (
     <PageFrame
       eyebrow="Setup"
-      title="Create the workspace in v2"
-      description="Start with an organization and workspace."
+      title={hasOrganizations ? 'New workspace' : 'Create your first workspace'}
+      description={
+        hasOrganizations
+          ? 'Add another workspace under an organization you belong to, or start a new organization.'
+          : 'An organization holds your workspaces. A workspace is where you track payments.'
+      }
     >
-      <div className="split-panels">
-        <section className="panel">
-          <SectionHeader title="New operating workspace" description="Create a production workspace name, or provision a sample workspace for evaluation." />
-          <form
-            className="form-grid"
-            onSubmit={(event) => {
-              event.preventDefault();
-              createWorkspaceMutation.mutate(new FormData(event.currentTarget));
-            }}
-          >
+      <section className="panel" style={{ maxWidth: 560 }}>
+        <form
+          className="form-stack"
+          onSubmit={(event) => {
+            event.preventDefault();
+            createWorkspaceMutation.mutate(new FormData(event.currentTarget));
+          }}
+        >
+          {hasOrganizations ? (
             <label className="field">
-              Existing organization
+              Organization
               <select name="existingOrganizationId" defaultValue="">
                 <option value="">Create a new organization</option>
                 {session.organizations.map((organization) => (
-                  <option key={organization.organizationId} value={organization.organizationId}>{organization.organizationName}</option>
+                  <option key={organization.organizationId} value={organization.organizationId}>
+                    {organization.organizationName}
+                  </option>
                 ))}
               </select>
             </label>
-            <label className="field">
-              New organization name
-              <input name="organizationName" placeholder="Acme Treasury" />
-            </label>
-            <label className="field">
-              Workspace name
-              <input name="workspaceName" placeholder="Main stablecoin desk" />
-            </label>
-            <label className="field checkbox-field">
-              <input name="useDemo" type="checkbox" />
-              Provision sample workspace
-            </label>
-            <button className="button button-primary" disabled={createWorkspaceMutation.isPending} type="submit">
-              {createWorkspaceMutation.isPending ? 'Creating...' : 'Create workspace'}
-            </button>
-          </form>
-          {message ? <div className="notice">{message}</div> : null}
-        </section>
-        <section className="panel">
-          <SectionHeader title="Organizations" description="Available organizations from this session." />
-          <SimpleList
-            items={(organizationsQuery.data?.items ?? []).map((organization) => ({
-              id: organization.organizationId,
-              title: organization.organizationName,
-              meta: `${organization.workspaceCount} workspace(s) / ${organization.isMember ? organization.membershipRole ?? 'member' : 'not joined'}`,
-            }))}
-            empty="No organizations found yet."
-          />
-        </section>
-      </div>
+          ) : null}
+          <label className="field">
+            New organization name
+            <input
+              name="organizationName"
+              placeholder="Acme Treasury"
+              autoComplete="organization"
+            />
+          </label>
+          <label className="field">
+            Workspace name
+            <input
+              name="workspaceName"
+              placeholder="Main stablecoin desk"
+              required
+              autoComplete="off"
+            />
+          </label>
+          <button
+            className="button button-primary"
+            disabled={createWorkspaceMutation.isPending}
+            type="submit"
+            aria-busy={createWorkspaceMutation.isPending}
+          >
+            {createWorkspaceMutation.isPending ? 'Creating…' : 'Create workspace'}
+          </button>
+        </form>
+      </section>
     </PageFrame>
   );
 }
@@ -512,11 +522,7 @@ function SetupPage({ session }: { session: AuthenticatedSession }) {
 function ProfilePage({ session }: { session: AuthenticatedSession }) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
-  const [message, setMessage] = useState<string | null>(null);
-  const organizationsQuery = useQuery({
-    queryKey: ['organizations'],
-    queryFn: () => api.listOrganizations(),
-  });
+  const { success, error: toastError } = useToast();
   const createWorkspaceMutation = useMutation({
     mutationFn: async (formData: FormData) => {
       const organizationId = getFormString(formData, 'organizationId');
@@ -526,11 +532,11 @@ function ProfilePage({ session }: { session: AuthenticatedSession }) {
       return api.createWorkspace(organizationId, { workspaceName });
     },
     onSuccess: async (workspace) => {
-      setMessage('Workspace created.');
+      success('Workspace created.');
       await queryClient.invalidateQueries({ queryKey: queryKeys().session });
       navigate(`/workspaces/${workspace.workspaceId}`);
     },
-    onError: (error) => setMessage(error instanceof Error ? error.message : 'Unable to create workspace.'),
+    onError: (err) => toastError(err instanceof Error ? err.message : 'Unable to create workspace.'),
   });
   const createOrganizationMutation = useMutation({
     mutationFn: async (formData: FormData) => {
@@ -545,22 +551,21 @@ function ProfilePage({ session }: { session: AuthenticatedSession }) {
       return { organization, workspace: null };
     },
     onSuccess: async (result) => {
-      setMessage(result.workspace ? 'Organization and workspace created.' : 'Organization created.');
+      success(result.workspace ? 'Organization and workspace created.' : 'Organization created.');
       await queryClient.invalidateQueries({ queryKey: queryKeys().session });
       if (result.workspace) {
         navigate(`/workspaces/${result.workspace.workspaceId}`);
       }
     },
-    onError: (error) => setMessage(error instanceof Error ? error.message : 'Unable to create organization.'),
+    onError: (err) => toastError(err instanceof Error ? err.message : 'Unable to create organization.'),
   });
 
   return (
     <PageFrame
       eyebrow="Account"
-      title="Profile and organization access"
-      description="Manage your operator identity, create organizations, and add workspaces without leaving the app."
+      title="Profile"
+      description="Manage your identity, organizations, and workspaces."
     >
-      {message ? <div className="notice">{message}</div> : null}
       <div className="metric-strip metric-strip-three">
         <Metric label="Organizations" value={String(session.organizations.length)} />
         <Metric label="Workspaces" value={String(getWorkspaces(session).length)} />
@@ -590,7 +595,7 @@ function ProfilePage({ session }: { session: AuthenticatedSession }) {
               <input name="workspaceName" placeholder="Treasury Ops APAC" />
             </label>
             <button className="button button-primary" disabled={createWorkspaceMutation.isPending} type="submit">
-              {createWorkspaceMutation.isPending ? 'Creating...' : 'Create workspace'}
+              {createWorkspaceMutation.isPending ? 'Creating…' : 'Create workspace'}
             </button>
           </form>
         </section>
@@ -612,20 +617,20 @@ function ProfilePage({ session }: { session: AuthenticatedSession }) {
               <input name="firstWorkspaceName" placeholder="Main desk" />
             </label>
             <button className="button button-primary" disabled={createOrganizationMutation.isPending} type="submit">
-              {createOrganizationMutation.isPending ? 'Creating...' : 'Create organization'}
+              {createOrganizationMutation.isPending ? 'Creating…' : 'Create organization'}
             </button>
           </form>
         </section>
       </div>
       <section className="panel panel-spaced">
-        <SectionHeader title="Your organizations" description="Current organization and workspace access from this session." />
+        <SectionHeader title="Your organizations" description="Organizations and workspaces you're a member of." />
         <SimpleList
-          items={(organizationsQuery.data?.items ?? []).map((organization) => ({
-            id: organization.organizationId,
-            title: organization.organizationName,
-            meta: `${organization.workspaceCount} workspace(s) / ${organization.isMember ? organization.membershipRole ?? 'member' : 'not joined'}`,
+          items={session.organizations.map((org) => ({
+            id: org.organizationId,
+            title: org.organizationName,
+            meta: `${org.workspaces.length} workspace${org.workspaces.length === 1 ? '' : 's'}`,
           }))}
-          empty="No organizations found yet."
+          empty="You don't belong to any organization yet."
         />
       </section>
     </PageFrame>
@@ -747,7 +752,7 @@ function PaymentsPage({ session }: { session: AuthenticatedSession }) {
   const [importStep, setImportStep] = useState<'edit' | 'preview'>('edit');
   const [csvText, setCsvText] = useState('');
   const [runName, setRunName] = useState('');
-  const [sourceWorkspaceAddressId, setSourceWorkspaceAddressId] = useState('');
+  const [sourceTreasuryWalletId, setSourceTreasuryWalletId] = useState('');
   const workspace = findWorkspace(session, workspaceId);
   const paymentOrdersQuery = useQuery({
     queryKey: queryKeys(workspaceId).paymentOrders,
@@ -761,17 +766,12 @@ function PaymentsPage({ session }: { session: AuthenticatedSession }) {
   });
   const addressesQuery = useQuery({
     queryKey: queryKeys(workspaceId).addresses,
-    queryFn: () => api.listAddresses(workspaceId!),
+    queryFn: () => api.listTreasuryWallets(workspaceId!),
     enabled: Boolean(workspaceId),
   });
   const destinationsQuery = useQuery({
     queryKey: queryKeys(workspaceId).destinations,
     queryFn: () => api.listDestinations(workspaceId!),
-    enabled: Boolean(workspaceId),
-  });
-  const payeesQuery = useQuery({
-    queryKey: queryKeys(workspaceId).payees,
-    queryFn: () => api.listPayees(workspaceId!),
     enabled: Boolean(workspaceId),
   });
   const csvPreview = useMemo(() => parseCsvPreview(csvText, 15), [csvText]);
@@ -782,7 +782,7 @@ function PaymentsPage({ session }: { session: AuthenticatedSession }) {
       return api.importPaymentRunCsv(workspaceId!, {
         csv,
         runName: runName.trim() || undefined,
-        sourceWorkspaceAddressId: sourceWorkspaceAddressId || undefined,
+        sourceTreasuryWalletId: sourceTreasuryWalletId || undefined,
         submitOrderNow: true,
       });
     },
@@ -809,14 +809,13 @@ function PaymentsPage({ session }: { session: AuthenticatedSession }) {
         throw new Error('Destination, amount, and reason are required.');
       }
       return api.createPaymentRequest(workspaceId!, {
-        payeeId: getOptionalFormString(formData, 'payeeId') ?? undefined,
         destinationId,
         amountRaw: usdcToRaw(amount),
         reason,
         externalReference: getOptionalFormString(formData, 'externalReference') ?? undefined,
         dueAt: normalizeDateInput(getOptionalFormString(formData, 'dueAt')),
         createOrderNow: true,
-        sourceWorkspaceAddressId: getOptionalFormString(formData, 'sourceWorkspaceAddressId') ?? undefined,
+        sourceTreasuryWalletId: getOptionalFormString(formData, 'sourceTreasuryWalletId') ?? undefined,
         submitOrderNow: true,
       });
     },
@@ -840,7 +839,6 @@ function PaymentsPage({ session }: { session: AuthenticatedSession }) {
   const paymentRuns = paymentRunsQuery.data?.items ?? [];
   const addresses = addressesQuery.data?.items ?? [];
   const destinations = destinationsQuery.data?.items ?? [];
-  const payees = payeesQuery.data?.items ?? [];
   const standaloneNeedsAction = standaloneOrders.filter(isActionableOrder).length;
   const runNeedsAction = paymentRuns.filter((run) => ['draft', 'pending_approval', 'ready_for_execution', 'execution_recorded', 'partially_settled', 'exception'].includes(run.derivedState)).length;
   const standaloneReadyToSign = standaloneOrders.filter((order) => order.derivedState === 'ready_for_execution').length;
@@ -851,9 +849,9 @@ function PaymentsPage({ session }: { session: AuthenticatedSession }) {
     ...standaloneOrders.map((order) => ({
       kind: 'payment' as const,
       id: order.paymentOrderId,
-      name: order.payee?.name ?? order.destination.label,
+      name: order.destination.label,
       amountLabel: `${formatRawUsdcCompact(order.amountRaw)} ${assetSymbol(order.asset)}`,
-      sourceLabel: order.sourceWorkspaceAddress?.displayName ?? shortenAddress(order.sourceWorkspaceAddress?.address),
+      sourceLabel: order.sourceTreasuryWallet?.displayName ?? shortenAddress(order.sourceTreasuryWallet?.address),
       refLabel: order.externalReference ?? order.invoiceNumber ?? order.memo ?? 'N/A',
       stateLabel: displayPaymentStatus(order.derivedState),
       tone: statusToneForPayment(order.derivedState),
@@ -865,7 +863,7 @@ function PaymentsPage({ session }: { session: AuthenticatedSession }) {
       id: run.paymentRunId,
       name: run.runName,
       amountLabel: `${formatRawUsdcCompact(run.totals.totalAmountRaw)} USDC`,
-      sourceLabel: run.sourceWorkspaceAddress ? (walletLabel(run.sourceWorkspaceAddress) ?? 'N/A') : 'N/A',
+      sourceLabel: run.sourceTreasuryWallet ? (walletLabel(run.sourceTreasuryWallet) ?? 'N/A') : 'N/A',
       refLabel: `${run.totals.orderCount} rows`,
       stateLabel: displayRunStatus(run.derivedState),
       tone: statusToneForPayment(run.derivedState),
@@ -923,10 +921,10 @@ function PaymentsPage({ session }: { session: AuthenticatedSession }) {
                 </label>
                 <label className="field">
                   Source wallet
-                  <select value={sourceWorkspaceAddressId} onChange={(e) => setSourceWorkspaceAddressId(e.target.value)}>
+                  <select value={sourceTreasuryWalletId} onChange={(e) => setSourceTreasuryWalletId(e.target.value)}>
                     <option value="">Optional until execution</option>
                     {addresses.filter((address) => address.isActive).map((address) => (
-                      <option key={address.workspaceAddressId} value={address.workspaceAddressId}>{walletLabel(address)}</option>
+                      <option key={address.treasuryWalletId} value={address.treasuryWalletId}>{walletLabel(address)}</option>
                     ))}
                   </select>
                 </label>
@@ -942,7 +940,7 @@ function PaymentsPage({ session }: { session: AuthenticatedSession }) {
                     onChange={(e) => setCsvText(e.target.value)}
                     rows={16}
                     placeholder={[
-                      'payee,destination,amount,reference,due_date',
+                      'counterparty,destination,amount,reference,due_date',
                       'Acme Corp,8cZ65A8ERdVsXq3YnEdMNimwG7DhGe1tPszysJwh43Zx,0.01,INV-1001,2026-04-15',
                     ].join('\n')}
                   />
@@ -1016,13 +1014,6 @@ function PaymentsPage({ session }: { session: AuthenticatedSession }) {
           }}
         >
           <label className="field">
-            Payee
-            <select name="payeeId" defaultValue="">
-              <option value="">Optional</option>
-              {payees.map((payee) => <option key={payee.payeeId} value={payee.payeeId}>{payee.name}</option>)}
-            </select>
-          </label>
-          <label className="field">
             Destination
             <select name="destinationId" required defaultValue="">
               <option value="" disabled>Select destination</option>
@@ -1033,10 +1024,10 @@ function PaymentsPage({ session }: { session: AuthenticatedSession }) {
           </label>
           <label className="field">
             Source wallet
-            <select name="sourceWorkspaceAddressId" defaultValue="">
+            <select name="sourceTreasuryWalletId" defaultValue="">
               <option value="">Optional until execution</option>
               {addresses.filter((address) => address.isActive).map((address) => (
-                <option key={address.workspaceAddressId} value={address.workspaceAddressId}>{walletLabel(address)}</option>
+                <option key={address.treasuryWalletId} value={address.treasuryWalletId}>{walletLabel(address)}</option>
               ))}
             </select>
           </label>
@@ -1088,12 +1079,7 @@ function PaymentRequestsPage({ session }: { session: AuthenticatedSession }) {
   });
   const addressesQuery = useQuery({
     queryKey: queryKeys(workspaceId).addresses,
-    queryFn: () => api.listAddresses(workspaceId!),
-    enabled: Boolean(workspaceId),
-  });
-  const payeesQuery = useQuery({
-    queryKey: queryKeys(workspaceId).payees,
-    queryFn: () => api.listPayees(workspaceId!),
+    queryFn: () => api.listTreasuryWallets(workspaceId!),
     enabled: Boolean(workspaceId),
   });
   const createRequestMutation = useMutation({
@@ -1105,14 +1091,13 @@ function PaymentRequestsPage({ session }: { session: AuthenticatedSession }) {
         throw new Error('Destination, amount, and reason are required.');
       }
       return api.createPaymentRequest(workspaceId!, {
-        payeeId: getOptionalFormString(formData, 'payeeId') ?? undefined,
         destinationId,
         amountRaw: usdcToRaw(amount),
         reason,
         externalReference: getOptionalFormString(formData, 'externalReference') ?? undefined,
         dueAt: normalizeDateInput(getOptionalFormString(formData, 'dueAt')),
         createOrderNow: true,
-        sourceWorkspaceAddressId: getOptionalFormString(formData, 'sourceWorkspaceAddressId') ?? undefined,
+        sourceTreasuryWalletId: getOptionalFormString(formData, 'sourceTreasuryWalletId') ?? undefined,
         submitOrderNow: formData.get('submitOrderNow') === 'on',
       });
     },
@@ -1135,7 +1120,6 @@ function PaymentRequestsPage({ session }: { session: AuthenticatedSession }) {
   const ordersByRequest = new Map((ordersQuery.data?.items ?? []).map((order) => [order.paymentRequestId, order]));
   const destinations = destinationsQuery.data?.items ?? [];
   const addresses = addressesQuery.data?.items ?? [];
-  const payees = payeesQuery.data?.items ?? [];
 
   return (
     <PageFrame
@@ -1163,13 +1147,6 @@ function PaymentRequestsPage({ session }: { session: AuthenticatedSession }) {
           }}
         >
           <label className="field">
-            Payee
-            <select name="payeeId" defaultValue="">
-              <option value="">Optional</option>
-              {payees.map((payee) => <option key={payee.payeeId} value={payee.payeeId}>{payee.name}</option>)}
-            </select>
-          </label>
-          <label className="field">
             Destination
             <select name="destinationId" required defaultValue="">
               <option value="" disabled>Select destination</option>
@@ -1180,10 +1157,10 @@ function PaymentRequestsPage({ session }: { session: AuthenticatedSession }) {
           </label>
           <label className="field">
             Source wallet
-            <select name="sourceWorkspaceAddressId" defaultValue="">
+            <select name="sourceTreasuryWalletId" defaultValue="">
               <option value="">Optional until execution</option>
               {addresses.filter((address) => address.isActive).map((address) => (
-                <option key={address.workspaceAddressId} value={address.workspaceAddressId}>{walletLabel(address)}</option>
+                <option key={address.treasuryWalletId} value={address.treasuryWalletId}>{walletLabel(address)}</option>
               ))}
             </select>
           </label>
@@ -1224,7 +1201,7 @@ function PaymentRunsPage({ session }: { session: AuthenticatedSession }) {
   const [importStep, setImportStep] = useState<'edit' | 'preview'>('edit');
   const [csvText, setCsvText] = useState('');
   const [runName, setRunName] = useState('');
-  const [sourceWorkspaceAddressId, setSourceWorkspaceAddressId] = useState('');
+  const [sourceTreasuryWalletId, setSourceTreasuryWalletId] = useState('');
   const workspace = findWorkspace(session, workspaceId);
   const runsQuery = useQuery({
     queryKey: queryKeys(workspaceId).paymentRuns,
@@ -1234,7 +1211,7 @@ function PaymentRunsPage({ session }: { session: AuthenticatedSession }) {
   });
   const addressesQuery = useQuery({
     queryKey: queryKeys(workspaceId).addresses,
-    queryFn: () => api.listAddresses(workspaceId!),
+    queryFn: () => api.listTreasuryWallets(workspaceId!),
     enabled: Boolean(workspaceId),
   });
   const csvPreview = useMemo(() => parseCsvPreview(csvText, 15), [csvText]);
@@ -1251,7 +1228,7 @@ function PaymentRunsPage({ session }: { session: AuthenticatedSession }) {
       return api.importPaymentRunCsv(workspaceId!, {
         csv,
         runName: runName.trim() || undefined,
-        sourceWorkspaceAddressId: sourceWorkspaceAddressId || undefined,
+        sourceTreasuryWalletId: sourceTreasuryWalletId || undefined,
         submitOrderNow: true,
       });
     },
@@ -1309,10 +1286,10 @@ function PaymentRunsPage({ session }: { session: AuthenticatedSession }) {
                 </label>
                 <label className="field">
                   Source wallet
-                  <select value={sourceWorkspaceAddressId} onChange={(e) => setSourceWorkspaceAddressId(e.target.value)}>
+                  <select value={sourceTreasuryWalletId} onChange={(e) => setSourceTreasuryWalletId(e.target.value)}>
                     <option value="">Optional until execution</option>
                     {addresses.filter((address) => address.isActive).map((address) => (
-                      <option key={address.workspaceAddressId} value={address.workspaceAddressId}>{walletLabel(address)}</option>
+                      <option key={address.treasuryWalletId} value={address.treasuryWalletId}>{walletLabel(address)}</option>
                     ))}
                   </select>
                 </label>
@@ -1331,7 +1308,7 @@ function PaymentRunsPage({ session }: { session: AuthenticatedSession }) {
                     onChange={(e) => setCsvText(e.target.value)}
                     rows={16}
                     placeholder={[
-                      'payee,destination,amount,reference,due_date',
+                      'counterparty,destination,amount,reference,due_date',
                       'Acme Corp,8cZ65A8ERdVsXq3YnEdMNimwG7DhGe1tPszysJwh43Zx,0.01,INV-1001,2026-04-15',
                     ].join('\n')}
                   />
@@ -1434,7 +1411,7 @@ function PaymentRunDetailPage({ session }: { session: AuthenticatedSession }) {
   const workspace = findWorkspace(session, workspaceId);
   const addressesQuery = useQuery({
     queryKey: queryKeys(workspaceId).addresses,
-    queryFn: () => api.listAddresses(workspaceId!),
+    queryFn: () => api.listTreasuryWallets(workspaceId!),
     enabled: Boolean(workspaceId),
     refetchInterval: 15_000,
   });
@@ -1452,12 +1429,12 @@ function PaymentRunDetailPage({ session }: { session: AuthenticatedSession }) {
   const sourceAddresses = addressesQuery.data?.items ?? [];
   const effectiveSourceAddressId =
     selectedSourceAddressId
-    || runQuery.data?.sourceWorkspaceAddressId
-    || sourceAddresses[0]?.workspaceAddressId
+    || runQuery.data?.sourceTreasuryWalletId
+    || sourceAddresses[0]?.treasuryWalletId
     || '';
   const prepareMutation = useMutation({
-    mutationFn: (sourceWorkspaceAddressId: string) => api.preparePaymentRunExecution(workspaceId!, paymentRunId!, {
-      sourceWorkspaceAddressId,
+    mutationFn: (sourceTreasuryWalletId: string) => api.preparePaymentRunExecution(workspaceId!, paymentRunId!, {
+      sourceTreasuryWalletId,
     }),
     onSuccess: async (result) => {
       setPrepared(result);
@@ -1481,18 +1458,18 @@ function PaymentRunDetailPage({ session }: { session: AuthenticatedSession }) {
   const signMutation = useMutation({
     mutationFn: async () => {
       if (!effectiveSourceAddressId) throw new Error('Choose a source wallet before executing this run.');
-      const sourceAddressRow = sourceAddresses.find((row) => row.workspaceAddressId === effectiveSourceAddressId);
+      const sourceAddressRow = sourceAddresses.find((row) => row.treasuryWalletId === effectiveSourceAddressId);
       if (!sourceAddressRow?.address) {
         throw new Error('Source wallet is still loading or unavailable. Wait a moment and try again.');
       }
       let preparation = prepared;
       const sourceMismatch =
         !preparation
-        || preparation.paymentRun.sourceWorkspaceAddressId !== effectiveSourceAddressId
+        || preparation.paymentRun.sourceTreasuryWalletId !== effectiveSourceAddressId
         || preparation.executionPacket.signerWallet !== sourceAddressRow.address;
       if (sourceMismatch) {
         preparation = await api.preparePaymentRunExecution(workspaceId!, paymentRunId!, {
-          sourceWorkspaceAddressId: effectiveSourceAddressId,
+          sourceTreasuryWalletId: effectiveSourceAddressId,
         });
         setPrepared(preparation);
       }
@@ -1594,7 +1571,7 @@ function PaymentRunDetailPage({ session }: { session: AuthenticatedSession }) {
     return ['approved', 'ready_for_execution', 'execution_recorded'].includes(order.derivedState);
   });
   const selectedWallet = wallets.find((wallet) => wallet.id === selectedWalletId);
-  const selectedSourceAddress = sourceAddresses.find((address) => address.workspaceAddressId === effectiveSourceAddressId) ?? null;
+  const selectedSourceAddress = sourceAddresses.find((address) => address.treasuryWalletId === effectiveSourceAddressId) ?? null;
   const canExecuteBatch = executableOrders.length > 0;
   const totalExecutableAmountRaw = executableOrders.reduce((sum, order) => sum + BigInt(order.amountRaw || '0'), 0n);
   const allocationPreview = executableOrders
@@ -1603,7 +1580,7 @@ function PaymentRunDetailPage({ session }: { session: AuthenticatedSession }) {
       const ratio = totalExecutableAmountRaw > 0n ? amountRaw / Number(totalExecutableAmountRaw) : 0;
       return {
         paymentOrderId: order.paymentOrderId,
-        label: order.payee?.name ?? order.destination.label,
+        label: order.destination.label,
         detail: order.externalReference ?? order.invoiceNumber ?? shortenAddress(order.destination.walletAddress),
         amountLabel: `${formatRawUsdcCompact(order.amountRaw)} ${assetSymbol(order.asset)}`,
         ratio,
@@ -1749,7 +1726,7 @@ function PaymentRunDetailPage({ session }: { session: AuthenticatedSession }) {
                   resolvedApprovalEvents.length ? (
                     <CompactStageEvents
                       items={resolvedApprovalEvents.map(({ order, decision }) => ({
-                        title: `${decision.action.replaceAll('_', ' ')} · ${order.payee?.name ?? order.destination.label}`,
+                        title: `${decision.action.replaceAll('_', ' ')} · ${order.destination.label}`,
                         body: `${decision.actorUser?.email ?? decision.actorType} · ${order.externalReference ?? order.invoiceNumber ?? 'No reference'}`,
                         time: decision.createdAt,
                       }))}
@@ -1762,7 +1739,7 @@ function PaymentRunDetailPage({ session }: { session: AuthenticatedSession }) {
                   submissionEvents.length ? (
                     <CompactStageEvents
                       items={submissionEvents.map((event) => ({
-                        title: `${event.order.payee?.name ?? event.order.destination.label}`,
+                        title: `${event.order.destination.label}`,
                         body: `Signature ${shortenAddress(event.signature, 10, 8)}`,
                         time: event.submittedAt,
                       }))}
@@ -1775,7 +1752,7 @@ function PaymentRunDetailPage({ session }: { session: AuthenticatedSession }) {
                   settlementEvents.length ? (
                     <CompactStageEvents
                       items={settlementEvents.map((event) => ({
-                        title: `${event.order.payee?.name ?? event.order.destination.label}`,
+                        title: `${event.order.destination.label}`,
                         body: event.matchStatus.replaceAll('_', ' '),
                         time: event.matchedAt,
                       }))}
@@ -1822,8 +1799,8 @@ function PaymentRunDetailPage({ session }: { session: AuthenticatedSession }) {
                 value={effectiveSourceAddressId}
                 onChange={(event) => setSelectedSourceAddressId(event.target.value)}
               >
-                {sourceAddresses.map((address: WorkspaceAddress) => (
-                  <option key={address.workspaceAddressId} value={address.workspaceAddressId}>
+                {sourceAddresses.map((address: TreasuryWallet) => (
+                  <option key={address.treasuryWalletId} value={address.treasuryWalletId}>
                     {walletLabel(address)}
                   </option>
                 ))}
@@ -1947,14 +1924,25 @@ function PaymentRunDetailPage({ session }: { session: AuthenticatedSession }) {
 
 function ApprovalsPage({ session }: { session: AuthenticatedSession }) {
   const { workspaceId } = useParams<{ workspaceId: string }>();
+  const location = useLocation();
   const queryClient = useQueryClient();
   const [message, setMessage] = useState<string | null>(null);
   const workspace = findWorkspace(session, workspaceId);
+  const runIdFilter = useMemo(() => {
+    const params = new URLSearchParams(location.search);
+    return params.get('runId');
+  }, [location.search]);
+
   const ordersQuery = useQuery({
     queryKey: queryKeys(workspaceId).paymentOrders,
     queryFn: () => api.listPaymentOrders(workspaceId!),
     enabled: Boolean(workspaceId),
     refetchInterval: 5_000,
+  });
+  const runQuery = useQuery({
+    queryKey: ['payment-run', workspaceId, runIdFilter] as const,
+    queryFn: () => api.getPaymentRunDetail(workspaceId!, runIdFilter!),
+    enabled: Boolean(workspaceId && runIdFilter),
   });
   const approvalMutation = useMutation({
     mutationFn: ({ order, action }: { order: PaymentOrder; action: 'approve' | 'reject' }) => {
@@ -1970,8 +1958,11 @@ function ApprovalsPage({ session }: { session: AuthenticatedSession }) {
 
   if (!workspaceId || !workspace) return <ScreenState title="Workspace unavailable" description="Choose a workspace from the sidebar." />;
   const allOrders = ordersQuery.data?.items ?? [];
-  const pending = allOrders.filter((order) => order.derivedState === 'pending_approval');
-  const history = allOrders.filter((order) => {
+  const scopedOrders = runIdFilter
+    ? allOrders.filter((o) => o.paymentRunId === runIdFilter)
+    : allOrders;
+  const pending = scopedOrders.filter((order) => order.derivedState === 'pending_approval');
+  const history = scopedOrders.filter((order) => {
     const decisions = order.reconciliationDetail?.approvalDecisions ?? [];
     return decisions.some((decision) => ['approve', 'reject', 'escalate'].includes(decision.action));
   });
@@ -1987,8 +1978,56 @@ function ApprovalsPage({ session }: { session: AuthenticatedSession }) {
   const rejectedCount = latestDecisions.filter((decision) => decision.action === 'reject').length;
   const escalatedCount = latestDecisions.filter((decision) => decision.action === 'escalate').length;
 
+  const batchRun = runQuery.data;
+  const batchBanner = runIdFilter ? (
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: 16,
+        padding: '14px 16px',
+        borderRadius: 12,
+        border: '1px solid var(--ax-border)',
+        background: 'var(--ax-surface-2)',
+        marginBottom: 16,
+      }}
+    >
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+        <span style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--ax-text-muted)' }}>
+          Reviewing batch
+        </span>
+        <strong style={{ color: 'var(--ax-text)' }}>
+          {batchRun?.runName ?? 'Loading batch…'}
+        </strong>
+        <span style={{ fontSize: 12, color: 'var(--ax-text-muted)' }}>
+          {batchRun
+            ? `${pending.length} of ${batchRun.totals.orderCount} awaiting individual review`
+            : ''}
+        </span>
+      </div>
+      <div style={{ display: 'flex', gap: 8 }}>
+        <Link
+          to={`/workspaces/${workspaceId}/runs/${runIdFilter}`}
+          className="rd-btn rd-btn-secondary"
+          style={{ textDecoration: 'none' }}
+        >
+          ← Back to run
+        </Link>
+        <Link
+          to={`/workspaces/${workspaceId}/approvals`}
+          className="rd-btn rd-btn-ghost"
+          style={{ textDecoration: 'none' }}
+        >
+          Clear filter
+        </Link>
+      </div>
+    </div>
+  ) : null;
+
   return (
     <PageFrame eyebrow="Approvals" title={`Approval queue [${pending.length}]`} description="Live approval queue and full decision history for audit visibility.">
+      {batchBanner}
       {message ? <div className="notice">{message}</div> : null}
       <div className="metric-strip metric-strip-four">
         <Metric label="Pending" value={String(pending.length)} />
@@ -2030,7 +2069,7 @@ function ApprovalsTable({
   return (
     <div className="data-table">
       <div className="data-table-row data-table-head data-table-row-approvals data-table-sticky-head">
-        <span>Payee</span>
+        <span>Recipient</span>
         <span>Amount</span>
         <span>Reason</span>
         <span>Age</span>
@@ -2040,7 +2079,7 @@ function ApprovalsTable({
         <div className="data-table-row data-table-row-approvals" key={order.paymentOrderId}>
           <span>
             <Link to={`/workspaces/${workspaceId}/payments/${order.paymentOrderId}#approval`}>
-              <strong>{order.payee?.name ?? order.destination.label}</strong>
+              <strong>{order.destination.label}</strong>
             </Link>
             <small>{shortenAddress(order.paymentOrderId, 8, 6)}</small>
           </span>
@@ -2050,10 +2089,20 @@ function ApprovalsTable({
           </span>
           <span>{formatRelativeTime(order.createdAt)}</span>
           <span className="table-actions">
-            <button className="button button-secondary button-small" onClick={() => onApprove(order)} type="button">
+            <button
+              className="rd-btn rd-btn-primary"
+              style={{ minHeight: 32, padding: '6px 12px', fontSize: 12 }}
+              onClick={() => onApprove(order)}
+              type="button"
+            >
               Approve
             </button>
-            <button className="button button-secondary button-small danger-text" onClick={() => onReject(order)} type="button">
+            <button
+              className="rd-btn rd-btn-danger"
+              style={{ minHeight: 32, padding: '6px 12px', fontSize: 12 }}
+              onClick={() => onReject(order)}
+              type="button"
+            >
               Reject
             </button>
           </span>
@@ -2076,7 +2125,7 @@ function ApprovalHistoryTable({
   return (
     <div className="data-table">
       <div className="data-table-row data-table-head data-table-row-approval-history data-table-sticky-head">
-        <span>Payee</span>
+        <span>Recipient</span>
         <span>Amount</span>
         <span>Approval decision</span>
         <span>Actor</span>
@@ -2102,7 +2151,7 @@ function ApprovalHistoryTable({
           <div className="data-table-row data-table-row-approval-history" key={order.paymentOrderId}>
             <span>
               <Link to={`/workspaces/${workspaceId}/payments/${order.paymentOrderId}#approval`}>
-                <strong>{order.payee?.name ?? order.destination.label}</strong>
+                <strong>{order.destination.label}</strong>
               </Link>
               <small>{shortenAddress(order.paymentOrderId, 8, 6)}</small>
             </span>
@@ -2307,10 +2356,10 @@ function SettlementReconciliationTable({
           <span>
             {row.paymentOrderId ? (
               <Link to={`/workspaces/${workspaceId}/payments/${row.paymentOrderId}`}>
-                <strong>{row.destination?.label ?? walletLabel(row.destinationWorkspaceAddress) ?? 'Destination'}</strong>
+                <strong>{row.destination?.label ?? row.destination?.walletAddress ?? 'Destination'}</strong>
               </Link>
             ) : (
-              <strong>{row.destination?.label ?? walletLabel(row.destinationWorkspaceAddress) ?? 'Destination'}</strong>
+              <strong>{row.destination?.label ?? row.destination?.walletAddress ?? 'Destination'}</strong>
             )}
             <small>{shortenAddress(row.transferRequestId, 8, 6)}</small>
           </span>
@@ -2466,7 +2515,7 @@ function ProofsPage({ session }: { session: AuthenticatedSession }) {
                       proofPreviewMutation.mutate({
                         kind: 'order',
                         id: order.paymentOrderId,
-                        title: `Payment proof · ${order.payee?.name ?? order.destination.label}`,
+                        title: `Payment proof · ${order.destination.label}`,
                       })
                     }
                     type="button"
@@ -2532,11 +2581,11 @@ function ProofsPage({ session }: { session: AuthenticatedSession }) {
 function AddressBookPage({ session }: { session: AuthenticatedSession }) {
   const { workspaceId } = useParams<{ workspaceId: string }>();
   const queryClient = useQueryClient();
-  const [message, setMessage] = useState<string | null>(null);
+  const { success, error: toastError } = useToast();
   const workspace = findWorkspace(session, workspaceId);
-  const addressesQuery = useQuery({
+  const walletsQuery = useQuery({
     queryKey: queryKeys(workspaceId).addresses,
-    queryFn: () => api.listAddresses(workspaceId!),
+    queryFn: () => api.listTreasuryWallets(workspaceId!),
     enabled: Boolean(workspaceId),
   });
   const counterpartiesQuery = useQuery({
@@ -2549,34 +2598,28 @@ function AddressBookPage({ session }: { session: AuthenticatedSession }) {
     queryFn: () => api.listDestinations(workspaceId!),
     enabled: Boolean(workspaceId),
   });
-  const payeesQuery = useQuery({
-    queryKey: queryKeys(workspaceId).payees,
-    queryFn: () => api.listPayees(workspaceId!),
-    enabled: Boolean(workspaceId),
-  });
 
   async function invalidateRegistry() {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: queryKeys(workspaceId).addresses }),
       queryClient.invalidateQueries({ queryKey: queryKeys(workspaceId).counterparties }),
       queryClient.invalidateQueries({ queryKey: queryKeys(workspaceId).destinations }),
-      queryClient.invalidateQueries({ queryKey: queryKeys(workspaceId).payees }),
     ]);
   }
 
-  const createAddressMutation = useMutation({
+  const createTreasuryWalletMutation = useMutation({
     mutationFn: async (formData: FormData) => {
-      return api.createAddress(workspaceId!, {
+      return api.createTreasuryWallet(workspaceId!, {
         displayName: getOptionalFormString(formData, 'displayName') ?? undefined,
         address: getFormString(formData, 'address'),
         notes: getOptionalFormString(formData, 'notes') ?? undefined,
       });
     },
     onSuccess: async () => {
-      setMessage('Wallet saved.');
+      success('Wallet saved.');
       await invalidateRegistry();
     },
-    onError: (error) => setMessage(error instanceof Error ? error.message : 'Unable to save wallet.'),
+    onError: (err) => toastError(err instanceof Error ? err.message : 'Unable to save wallet.'),
   });
   const createCounterpartyMutation = useMutation({
     mutationFn: async (formData: FormData) => {
@@ -2586,64 +2629,46 @@ function AddressBookPage({ session }: { session: AuthenticatedSession }) {
       });
     },
     onSuccess: async () => {
-      setMessage('Counterparty saved.');
+      success('Counterparty saved.');
       await invalidateRegistry();
     },
-    onError: (error) => setMessage(error instanceof Error ? error.message : 'Unable to save counterparty.'),
+    onError: (err) => toastError(err instanceof Error ? err.message : 'Unable to save counterparty.'),
   });
   const createDestinationMutation = useMutation({
     mutationFn: async (formData: FormData) => {
       return api.createDestination(workspaceId!, {
-        linkedWorkspaceAddressId: getFormString(formData, 'linkedWorkspaceAddressId'),
+        walletAddress: getFormString(formData, 'walletAddress'),
         counterpartyId: getOptionalFormString(formData, 'counterpartyId') ?? undefined,
         label: getFormString(formData, 'label'),
         trustState: getFormString(formData, 'trustState') as Destination['trustState'],
-        isInternal: formData.get('isInternal') === 'on',
         notes: getOptionalFormString(formData, 'notes') ?? undefined,
       });
     },
     onSuccess: async () => {
-      setMessage('Destination saved.');
+      success('Destination saved.');
       await invalidateRegistry();
     },
-    onError: (error) => setMessage(error instanceof Error ? error.message : 'Unable to save destination.'),
+    onError: (err) => toastError(err instanceof Error ? err.message : 'Unable to save destination.'),
   });
-  const createPayeeMutation = useMutation({
-    mutationFn: async (formData: FormData) => {
-      return api.createPayee(workspaceId!, {
-        name: getFormString(formData, 'name'),
-        defaultDestinationId: getOptionalFormString(formData, 'defaultDestinationId') ?? null,
-        externalReference: getOptionalFormString(formData, 'externalReference') ?? null,
-        notes: getOptionalFormString(formData, 'notes') ?? null,
-      });
-    },
-    onSuccess: async () => {
-      setMessage('Payee saved.');
-      await invalidateRegistry();
-    },
-    onError: (error) => setMessage(error instanceof Error ? error.message : 'Unable to save payee.'),
-  });
+
+  const [registryDrawer, setRegistryDrawer] = useState<{ title: string; body: ReactNode } | null>(null);
+  const [addWalletOpen, setAddWalletOpen] = useState(false);
+  const [addDestinationOpen, setAddDestinationOpen] = useState(false);
+  const [addCounterpartyOpen, setAddCounterpartyOpen] = useState(false);
 
   if (!workspaceId || !workspace) {
     return <ScreenState title="Workspace unavailable" description="Choose a workspace from the sidebar." />;
   }
 
-  const addresses = addressesQuery.data?.items ?? [];
+  const wallets = walletsQuery.data?.items ?? [];
   const counterparties = counterpartiesQuery.data?.items ?? [];
   const destinations = destinationsQuery.data?.items ?? [];
-  const payees = payeesQuery.data?.items ?? [];
-  const [registryDrawer, setRegistryDrawer] = useState<{ title: string; body: ReactNode } | null>(null);
-  const [addWalletOpen, setAddWalletOpen] = useState(false);
-  const [addDestinationOpen, setAddDestinationOpen] = useState(false);
-  const [addCounterpartyOpen, setAddCounterpartyOpen] = useState(false);
-  const [addPayeeOpen, setAddPayeeOpen] = useState(false);
-  const hasRegistryData = Boolean(addresses.length || destinations.length || counterparties.length || payees.length);
 
   return (
     <PageFrame
-      eyebrow="Support Data"
-      title="Address book"
-      description="Manage saved wallets, destinations, counterparties, and payees used by payment requests and runs."
+      eyebrow="Address book"
+      title="Wallets and destinations"
+      description="Your treasury wallets on the left. Counterparty destinations you pay on the right. Two independent lists — no cross-link."
     >
       <Drawer open={Boolean(registryDrawer)} title={registryDrawer?.title ?? ''} onClose={() => setRegistryDrawer(null)}>
         {registryDrawer?.body}
@@ -2653,16 +2678,16 @@ function AddressBookPage({ session }: { session: AuthenticatedSession }) {
           className="form-stack"
           onSubmit={(event) => {
             event.preventDefault();
-            createAddressMutation.mutate(new FormData(event.currentTarget), {
+            createTreasuryWalletMutation.mutate(new FormData(event.currentTarget), {
               onSuccess: () => setAddWalletOpen(false),
             });
           }}
         >
-          <label className="field">Name<input name="displayName" placeholder="Ops vault" /></label>
-          <label className="field">Solana address<input name="address" required placeholder="Wallet address" /></label>
-          <label className="field">Notes<input name="notes" placeholder="Optional context" /></label>
-          <button className="button button-primary" disabled={createAddressMutation.isPending} type="submit">
-            {createAddressMutation.isPending ? 'Saving...' : 'Save wallet'}
+          <label className="field">Name<input name="displayName" placeholder="Ops vault" autoComplete="off" /></label>
+          <label className="field">Solana address<input name="address" required placeholder="Wallet address" autoComplete="off" /></label>
+          <label className="field">Notes<input name="notes" placeholder="Optional context" autoComplete="off" /></label>
+          <button className="button button-primary" disabled={createTreasuryWalletMutation.isPending} type="submit">
+            {createTreasuryWalletMutation.isPending ? 'Saving…' : 'Save wallet'}
           </button>
         </form>
       </Modal>
@@ -2676,14 +2701,8 @@ function AddressBookPage({ session }: { session: AuthenticatedSession }) {
             });
           }}
         >
-          <label className="field">
-            Linked wallet
-            <select name="linkedWorkspaceAddressId" required defaultValue="">
-              <option value="" disabled>Select wallet</option>
-              {addresses.map((address) => <option key={address.workspaceAddressId} value={address.workspaceAddressId}>{walletLabel(address)}</option>)}
-            </select>
-          </label>
-          <label className="field">Destination label<input name="label" required placeholder="Acme payout wallet" /></label>
+          <label className="field">Label<input name="label" required placeholder="Acme payout wallet" autoComplete="off" /></label>
+          <label className="field">Solana address<input name="walletAddress" required placeholder="Counterparty wallet address" autoComplete="off" /></label>
           <label className="field">
             Counterparty (optional)
             <select name="counterpartyId" defaultValue="">
@@ -2700,9 +2719,9 @@ function AddressBookPage({ session }: { session: AuthenticatedSession }) {
               <option value="blocked">Blocked</option>
             </select>
           </label>
-          <label className="field checkbox-field"><input name="isInternal" type="checkbox" /> Internal destination</label>
-          <button className="button button-primary" disabled={!addresses.length || createDestinationMutation.isPending} type="submit">
-            {createDestinationMutation.isPending ? 'Saving...' : 'Save destination'}
+          <label className="field">Notes<input name="notes" placeholder="Optional context" autoComplete="off" /></label>
+          <button className="button button-primary" disabled={createDestinationMutation.isPending} type="submit">
+            {createDestinationMutation.isPending ? 'Saving…' : 'Save destination'}
           </button>
         </form>
       </Modal>
@@ -2716,329 +2735,109 @@ function AddressBookPage({ session }: { session: AuthenticatedSession }) {
             });
           }}
         >
-          <label className="field">Name<input name="displayName" required placeholder="Acme Corp" /></label>
-          <label className="field">Category<input name="category" placeholder="vendor, contractor, internal" /></label>
+          <label className="field">Name<input name="displayName" required placeholder="Acme Corp" autoComplete="organization" /></label>
+          <label className="field">Category<input name="category" placeholder="vendor, contractor, internal" autoComplete="off" /></label>
           <button className="button button-primary" disabled={createCounterpartyMutation.isPending} type="submit">
-            {createCounterpartyMutation.isPending ? 'Saving...' : 'Save counterparty'}
+            {createCounterpartyMutation.isPending ? 'Saving…' : 'Save counterparty'}
           </button>
         </form>
       </Modal>
-      <Modal open={addPayeeOpen} title="Add payee" onClose={() => setAddPayeeOpen(false)}>
-        <form
-          className="form-stack"
-          onSubmit={(event) => {
-            event.preventDefault();
-            createPayeeMutation.mutate(new FormData(event.currentTarget), {
-              onSuccess: () => setAddPayeeOpen(false),
-            });
-          }}
-        >
-          <label className="field">Payee name<input name="name" required placeholder="Fuyo LLC" /></label>
-          <label className="field">
-            Default destination (optional)
-            <select name="defaultDestinationId" defaultValue="">
-              <option value="">Optional</option>
-              {destinations.map((destination) => <option key={destination.destinationId} value={destination.destinationId}>{destination.label}</option>)}
-            </select>
-          </label>
-          <label className="field">Reference<input name="externalReference" placeholder="Vendor ID" /></label>
-          <label className="field">Notes<input name="notes" placeholder="Optional context" /></label>
-          <button className="button button-primary" disabled={createPayeeMutation.isPending} type="submit">
-            {createPayeeMutation.isPending ? 'Saving...' : 'Save payee'}
-          </button>
-        </form>
-      </Modal>
-      {message ? <div className="notice">{message}</div> : null}
-      {hasRegistryData ? (
-        <>
-          <section className="panel">
-            <SectionHeader
-              title={`Wallets [${addresses.length}]`}
-              description="Saved source wallets used for payment execution and destination linkage."
-            />
-            <div className="action-cluster" style={{ marginBottom: 14 }}>
-              <button className="button button-primary" type="button" onClick={() => setAddWalletOpen(true)}>+ Add wallet</button>
-            </div>
-            <WalletsTable
-              addresses={addresses}
-              destinations={destinations}
-              onSelect={(address) =>
-                setRegistryDrawer({
-                  title: walletLabel(address) ?? shortenAddress(address.address),
-                  body: (
-                    <InfoGrid
-                      items={[
-                        ['Name', walletLabel(address) ?? 'N/A'],
-                        ['Address', <AddressLink key="a" value={address.address} />],
-                        ['Asset scope', address.assetScope],
-                        ['Status', address.isActive ? 'Active' : 'Inactive'],
-                        ['Notes', address.notes ?? 'N/A'],
-                      ]}
-                    />
-                  ),
-                })
-              }
-            />
-          </section>
 
-          <section className="panel panel-spaced">
-            <SectionHeader
-              title={`Destinations [${destinations.length}]`}
-              description="Operator-facing payout endpoints derived from wallets."
-            />
-            <div className="action-cluster" style={{ marginBottom: 14 }}>
-              <button className="button button-primary" type="button" onClick={() => setAddDestinationOpen(true)} disabled={!addresses.length}>
-                + Add destination
-              </button>
-            </div>
-            <DestinationsTable
-              destinations={destinations}
-              onSelect={(destination) =>
-                setRegistryDrawer({
-                  title: destination.label,
-                  body: (
-                    <InfoGrid
-                      items={[
-                        ['Label', destination.label],
-                        ['Wallet', <AddressLink key="w" value={destination.walletAddress} />],
-                        ['Trust', trustDisplay(destination.trustState)],
-                        ['Scope', destination.isInternal ? 'Internal' : 'External'],
-                        ['Counterparty', destination.counterparty?.displayName ?? 'N/A'],
-                        ['Status', destination.isActive ? 'Active' : 'Inactive'],
-                        ['Notes', destination.notes ?? 'N/A'],
-                      ]}
-                    />
-                  ),
-                })
-              }
-            />
-          </section>
-
-          <div className="split-panels panel-spaced">
-            <section className="panel">
-              <SectionHeader title={`Payees [${payees.length}]`} description="Optional recipient profiles mapped to destinations." />
-              <div className="action-cluster" style={{ marginBottom: 14 }}>
-                <button className="button button-primary" type="button" onClick={() => setAddPayeeOpen(true)}>+ Add payee</button>
-              </div>
-              <PayeesTable
-                payees={payees}
-                onSelect={(payee) =>
-                  setRegistryDrawer({
-                    title: payee.name,
-                    body: (
-                      <InfoGrid
-                        items={[
-                          ['Default destination', payee.defaultDestination?.label ?? 'N/A'],
-                          ['Reference', payee.externalReference ?? 'N/A'],
-                          ['Status', payee.status],
-                          ['Notes', payee.notes ?? 'N/A'],
-                        ]}
-                      />
-                    ),
-                  })
-                }
-              />
-            </section>
-            <section className="panel">
-              <SectionHeader title={`Counterparties [${counterparties.length}]`} description="Optional business ownership metadata." />
-              <div className="action-cluster" style={{ marginBottom: 14 }}>
-                <button className="button button-primary" type="button" onClick={() => setAddCounterpartyOpen(true)}>+ Add counterparty</button>
-              </div>
-              <CounterpartiesTable counterparties={counterparties} destinations={destinations} />
-            </section>
-          </div>
-        </>
-      ) : (
-      <>
-      <section className="panel">
-        <SectionHeader
-          title={`Step 1 · Wallets [${addresses.length}]`}
-          description="Start here. Add source wallets first, then convert them into destinations."
-        />
-        <div className="split-panels">
-          <div>
-            <WalletsTable
-              addresses={addresses}
-              destinations={destinations}
-              onSelect={(address) =>
-                setRegistryDrawer({
-                  title: walletLabel(address) ?? shortenAddress(address.address),
-                  body: (
-                    <InfoGrid
-                      items={[
-                        ['Name', walletLabel(address) ?? 'N/A'],
-                        ['Address', <AddressLink key="a" value={address.address} />],
-                        ['Asset scope', address.assetScope],
-                        ['Status', address.isActive ? 'Active' : 'Inactive'],
-                        ['Notes', address.notes ?? 'N/A'],
-                      ]}
-                    />
-                  ),
-                })
-              }
-            />
-          </div>
-          <div>
-            <SectionHeader title="Add wallet" description="Wallets become selectable sources and destination links." />
-            <form
-              className="form-stack"
-              onSubmit={(event) => {
-                event.preventDefault();
-                createAddressMutation.mutate(new FormData(event.currentTarget));
-              }}
-            >
-              <label className="field">Name<input name="displayName" placeholder="Ops vault" /></label>
-              <label className="field">Solana address<input name="address" required placeholder="Wallet address" /></label>
-              <label className="field">Notes<input name="notes" placeholder="Optional context" /></label>
-              <button className="button button-primary" type="submit">Save wallet</button>
-            </form>
-          </div>
-        </div>
-      </section>
-
-      <section className="panel panel-spaced">
-        <SectionHeader
-          title={`Step 2 · Destinations [${destinations.length}]`}
-          description="Create payout destinations from existing wallets. Counterparty mapping can be added now or later."
-        />
-        <div className="split-panels split-panels-wide-left">
-          <div>
-            <DestinationsTable
-              destinations={destinations}
-              onSelect={(destination) =>
-                setRegistryDrawer({
-                  title: destination.label,
-                  body: (
-                    <InfoGrid
-                      items={[
-                        ['Label', destination.label],
-                        ['Wallet', <AddressLink key="w" value={destination.walletAddress} />],
-                        ['Trust', trustDisplay(destination.trustState)],
-                        ['Scope', destination.isInternal ? 'Internal' : 'External'],
-                        ['Counterparty', destination.counterparty?.displayName ?? 'N/A'],
-                        ['Status', destination.isActive ? 'Active' : 'Inactive'],
-                        ['Notes', destination.notes ?? 'N/A'],
-                      ]}
-                    />
-                  ),
-                })
-              }
-            />
-          </div>
-          <div>
-            <SectionHeader title="Add destination" description="Destinations are operator-facing payout endpoints." />
-            <form
-              className="form-stack"
-              onSubmit={(event) => {
-                event.preventDefault();
-                createDestinationMutation.mutate(new FormData(event.currentTarget));
-              }}
-            >
-              <label className="field">
-                Linked wallet
-                <select name="linkedWorkspaceAddressId" required defaultValue="">
-                  <option value="" disabled>Select wallet</option>
-                  {addresses.map((address) => <option key={address.workspaceAddressId} value={address.workspaceAddressId}>{walletLabel(address)}</option>)}
-                </select>
-              </label>
-              <label className="field">Destination label<input name="label" required placeholder="Acme payout wallet" /></label>
-              <label className="field">
-                Counterparty (optional)
-                <select name="counterpartyId" defaultValue="">
-                  <option value="">Unassigned</option>
-                  {counterparties.map((counterparty) => <option key={counterparty.counterpartyId} value={counterparty.counterpartyId}>{counterparty.displayName}</option>)}
-                </select>
-              </label>
-              <label className="field">
-                Trust state
-                <select name="trustState" defaultValue="unreviewed">
-                  <option value="unreviewed">Unreviewed</option>
-                  <option value="trusted">Trusted</option>
-                  <option value="restricted">Restricted</option>
-                  <option value="blocked">Blocked</option>
-                </select>
-              </label>
-              <label className="field checkbox-field"><input name="isInternal" type="checkbox" /> Internal destination</label>
-              <button className="button button-primary" disabled={!addresses.length} type="submit">Save destination</button>
-            </form>
-          </div>
-        </div>
-      </section>
-
-      <section className="panel panel-spaced">
-        <SectionHeader
-          title="Step 3 · Optional mappings"
-          description="Counterparties and payees are optional metadata layers mapped to destinations."
-        />
-        <div className="split-panels">
-          <section>
-            <SectionHeader title="Add counterparty" description="Business entity metadata for destination ownership." />
-            <form
-              className="form-stack"
-              onSubmit={(event) => {
-                event.preventDefault();
-                createCounterpartyMutation.mutate(new FormData(event.currentTarget));
-              }}
-            >
-              <label className="field">Name<input name="displayName" required placeholder="Acme Corp" /></label>
-              <label className="field">Category<input name="category" placeholder="vendor, contractor, internal" /></label>
-              <button className="button button-primary" type="submit">Save counterparty</button>
-            </form>
-          </section>
-          <section>
-            <SectionHeader title="Add payee" description="Named recipient profile with optional default destination." />
-            <form
-              className="form-stack"
-              onSubmit={(event) => {
-                event.preventDefault();
-                createPayeeMutation.mutate(new FormData(event.currentTarget));
-              }}
-            >
-              <label className="field">Payee name<input name="name" required placeholder="Fuyo LLC" /></label>
-              <label className="field">
-                Default destination (optional)
-                <select name="defaultDestinationId" defaultValue="">
-                  <option value="">Optional</option>
-                  {destinations.map((destination) => <option key={destination.destinationId} value={destination.destinationId}>{destination.label}</option>)}
-                </select>
-              </label>
-              <label className="field">Reference<input name="externalReference" placeholder="Vendor ID" /></label>
-              <label className="field">Notes<input name="notes" placeholder="Optional context" /></label>
-              <button className="button button-primary" type="submit">Save payee</button>
-            </form>
-          </section>
-        </div>
-      </section>
-
-      <div className="split-panels panel-spaced">
+      <div className="split-panels">
         <section className="panel">
-          <SectionHeader title={`Payees [${payees.length}]`} description="Click a row for details." />
-          <PayeesTable
-            payees={payees}
-            onSelect={(payee) =>
-              setRegistryDrawer({
-                title: payee.name,
-                body: (
-                  <InfoGrid
-                    items={[
-                      ['Default destination', payee.defaultDestination?.label ?? 'N/A'],
-                      ['Reference', payee.externalReference ?? 'N/A'],
-                      ['Status', payee.status],
-                      ['Notes', payee.notes ?? 'N/A'],
-                    ]}
-                  />
-                ),
-              })
-            }
+          <SectionHeader
+            title={`Your wallets [${wallets.length}]`}
+            description="Treasury wallets you own and sign with. Monitored on-chain."
           />
+          <div className="action-cluster" style={{ marginBottom: 14 }}>
+            <button className="button button-primary" type="button" onClick={() => setAddWalletOpen(true)}>+ Add wallet</button>
+          </div>
+          {wallets.length ? (
+            <WalletsTable
+              addresses={wallets}
+              destinations={destinations}
+              onSelect={(wallet) =>
+                setRegistryDrawer({
+                  title: walletLabel(wallet) ?? shortenAddress(wallet.address),
+                  body: (
+                    <InfoGrid
+                      items={[
+                        ['Name', walletLabel(wallet) ?? 'N/A'],
+                        ['Address', <AddressLink key="a" value={wallet.address} />],
+                        ['USDC ATA', wallet.usdcAtaAddress ? <AddressLink key="ata" value={wallet.usdcAtaAddress} /> : 'N/A'],
+                        ['Asset scope', wallet.assetScope],
+                        ['Status', wallet.isActive ? 'Active' : 'Inactive'],
+                        ['Notes', wallet.notes ?? 'N/A'],
+                      ]}
+                    />
+                  ),
+                })
+              }
+            />
+          ) : (
+            <div className="empty-state">
+              <strong>No wallets yet</strong>
+              <p>Add a treasury wallet to start receiving or sending payments.</p>
+            </div>
+          )}
         </section>
+
         <section className="panel">
-          <SectionHeader title={`Counterparties [${counterparties.length}]`} description="Destination ownership records." />
-          <CounterpartiesTable counterparties={counterparties} destinations={destinations} />
+          <SectionHeader
+            title={`Destinations [${destinations.length}]`}
+            description="Counterparty payout endpoints. Not monitored directly; matched via signatures when you pay them."
+          />
+          <div className="action-cluster" style={{ marginBottom: 14 }}>
+            <button className="button button-primary" type="button" onClick={() => setAddDestinationOpen(true)}>+ Add destination</button>
+          </div>
+          {destinations.length ? (
+            <DestinationsTable
+              destinations={destinations}
+              onSelect={(destination) =>
+                setRegistryDrawer({
+                  title: destination.label,
+                  body: (
+                    <InfoGrid
+                      items={[
+                        ['Label', destination.label],
+                        ['Wallet', <AddressLink key="w" value={destination.walletAddress} />],
+                        ['Trust', trustDisplay(destination.trustState)],
+                        ['Scope', destination.isInternal ? 'Internal' : 'External'],
+                        ['Counterparty', destination.counterparty?.displayName ?? 'N/A'],
+                        ['Status', destination.isActive ? 'Active' : 'Inactive'],
+                        ['Notes', destination.notes ?? 'N/A'],
+                      ]}
+                    />
+                  ),
+                })
+              }
+            />
+          ) : (
+            <div className="empty-state">
+              <strong>No destinations yet</strong>
+              <p>Add a counterparty's Solana address as a payout destination.</p>
+            </div>
+          )}
         </section>
       </div>
-      </>
-      )}
+
+      <section className="panel panel-spaced">
+        <SectionHeader
+          title={`Counterparties [${counterparties.length}]`}
+          description="Business entities behind your destinations. Optional — you can pay destinations without assigning a counterparty."
+        />
+        <div className="action-cluster" style={{ marginBottom: 14 }}>
+          <button className="button button-primary" type="button" onClick={() => setAddCounterpartyOpen(true)}>+ Add counterparty</button>
+        </div>
+        {counterparties.length ? (
+          <CounterpartiesTable counterparties={counterparties} destinations={destinations} />
+        ) : (
+          <div className="empty-state">
+            <strong>No counterparties yet</strong>
+            <p>Tag a destination with a counterparty to track who you're paying.</p>
+          </div>
+        )}
+      </section>
     </PageFrame>
   );
 }
@@ -3094,9 +2893,7 @@ function PolicyPage({ session }: { session: AuthenticatedSession }) {
   const orders = ordersQuery.data?.items ?? [];
   const destinations = destinationsQuery.data?.items ?? [];
   const pendingApprovals = orders.filter((order) => order.derivedState === 'pending_approval').length;
-  const trustedDestinationCoverage = destinations.length
-    ? Math.round((destinations.filter((destination) => destination.trustState === 'trusted').length / destinations.length) * 100)
-    : 0;
+  const trustedDestinationCount = destinations.filter((destination) => destination.trustState === 'trusted').length;
   const externalApprovalLoad = orders.filter((order) => order.destination && !order.destination.isInternal && order.derivedState === 'pending_approval').length;
   const thresholdTriggered = orders.filter((order) => {
     const raw = BigInt(order.amountRaw);
@@ -3118,7 +2915,7 @@ function PolicyPage({ session }: { session: AuthenticatedSession }) {
       <div className="metric-strip metric-strip-four">
         <Metric label="Pending approvals" value={String(pendingApprovals)} />
         <Metric label="Threshold-triggered" value={String(thresholdTriggered)} />
-        <Metric label="Trusted destinations" value={`${trustedDestinationCoverage}%`} />
+        <Metric label="Trusted destinations" value={`${trustedDestinationCount}/${destinations.length}`} />
         <Metric label="External approval load" value={String(externalApprovalLoad)} />
       </div>
       <section className="panel">
@@ -3161,48 +2958,61 @@ function PolicyPage({ session }: { session: AuthenticatedSession }) {
       <Modal open={editOpen} title="Edit approval policy" onClose={() => setEditOpen(false)}>
         <form
           key={policy.updatedAt}
-          className="form-stack"
           onSubmit={(event) => {
             event.preventDefault();
             updateMutation.mutate(new FormData(event.currentTarget));
           }}
         >
-          <section className="panel policy-group-panel">
-            <SectionHeader title="Policy identity" description="Name and activation for this workspace policy." />
+          <div className="rd-form-section">
+            <div className="rd-form-section-head">
+              <h3>Policy</h3>
+              <p>Name and toggle this policy on or off for new payment checks.</p>
+            </div>
             <label className="field">
               Policy name
-              <input name="policyName" defaultValue={policy.policyName} />
+              <input name="policyName" defaultValue={policy.policyName} autoComplete="off" />
             </label>
             <label className="field checkbox-field">
-              <input name="isActive" defaultChecked={policy.isActive} type="checkbox" /> Active policy for new payment checks
+              <input name="isActive" defaultChecked={policy.isActive} type="checkbox" />
+              Active policy for new payment checks
             </label>
-          </section>
-          <section className="panel policy-group-panel">
-            <SectionHeader title="Trust gates" description="Destination trust controls before execution." />
+          </div>
+
+          <div className="rd-form-section">
+            <div className="rd-form-section-head">
+              <h3>Rules</h3>
+              <p>What routes a payment through human review.</p>
+            </div>
             <label className="field checkbox-field">
-              <input name="requireTrustedDestination" defaultChecked={policy.ruleJson.requireTrustedDestination} type="checkbox" /> Require trusted destination before execution
-            </label>
-          </section>
-          <section className="panel policy-group-panel">
-            <SectionHeader title="Approval routing" description="Whether internal and external requests must go through approval." />
-            <label className="field checkbox-field">
-              <input name="requireApprovalForExternal" defaultChecked={policy.ruleJson.requireApprovalForExternal} type="checkbox" /> Require approval for external payments
+              <input name="requireTrustedDestination" defaultChecked={policy.ruleJson.requireTrustedDestination} type="checkbox" />
+              Require trusted destination before execution
             </label>
             <label className="field checkbox-field">
-              <input name="requireApprovalForInternal" defaultChecked={policy.ruleJson.requireApprovalForInternal} type="checkbox" /> Require approval for internal payments
+              <input name="requireApprovalForExternal" defaultChecked={policy.ruleJson.requireApprovalForExternal} type="checkbox" />
+              Require approval for external payments
             </label>
-          </section>
-          <section className="panel policy-group-panel">
-            <SectionHeader title="Thresholds" description="Raw amount triggers for mandatory approval checks." />
-            <label className="field">
-              External approval threshold
-              <input name="externalThreshold" defaultValue={formatRawUsdcCompact(policy.ruleJson.externalApprovalThresholdRaw)} />
+            <label className="field checkbox-field">
+              <input name="requireApprovalForInternal" defaultChecked={policy.ruleJson.requireApprovalForInternal} type="checkbox" />
+              Require approval for internal payments
             </label>
-            <label className="field">
-              Internal approval threshold
-              <input name="internalThreshold" defaultValue={formatRawUsdcCompact(policy.ruleJson.internalApprovalThresholdRaw)} />
-            </label>
-          </section>
+          </div>
+
+          <div className="rd-form-section">
+            <div className="rd-form-section-head">
+              <h3>Thresholds</h3>
+              <p>Payments at or above these amounts always require approval.</p>
+            </div>
+            <div className="form-grid">
+              <label className="field">
+                External (USDC)
+                <input name="externalThreshold" defaultValue={formatRawUsdcCompact(policy.ruleJson.externalApprovalThresholdRaw)} inputMode="decimal" autoComplete="off" />
+              </label>
+              <label className="field">
+                Internal (USDC)
+                <input name="internalThreshold" defaultValue={formatRawUsdcCompact(policy.ruleJson.internalApprovalThresholdRaw)} inputMode="decimal" autoComplete="off" />
+              </label>
+            </div>
+          </div>
           <div className="notice">
             Saving applies immediately. Review approval queue impact after changes.
           </div>
@@ -3581,13 +3391,13 @@ function PaymentDetailPage({ session }: { session: AuthenticatedSession }) {
   });
   const addressesQuery = useQuery({
     queryKey: queryKeys(workspaceId).addresses,
-    queryFn: () => api.listAddresses(workspaceId!),
+    queryFn: () => api.listTreasuryWallets(workspaceId!),
     enabled: Boolean(workspaceId),
   });
 
   const prepareMutation = useMutation({
-    mutationFn: (sourceWorkspaceAddressId: string) => api.preparePaymentOrderExecution(workspaceId!, paymentOrderId!, {
-      sourceWorkspaceAddressId,
+    mutationFn: (sourceTreasuryWalletId: string) => api.preparePaymentOrderExecution(workspaceId!, paymentOrderId!, {
+      sourceTreasuryWalletId,
     }),
     onSuccess: async (result) => {
       setPreparedPacket(result.executionPacket);
@@ -3638,13 +3448,13 @@ function PaymentDetailPage({ session }: { session: AuthenticatedSession }) {
 
   const signMutation = useMutation({
     mutationFn: async () => {
-      const sourceWorkspaceAddressId = selectedSourceAddressId
-        || paymentOrderQuery.data?.sourceWorkspaceAddressId
-        || addressesQuery.data?.items?.[0]?.workspaceAddressId
+      const sourceTreasuryWalletId = selectedSourceAddressId
+        || paymentOrderQuery.data?.sourceTreasuryWalletId
+        || addressesQuery.data?.items?.[0]?.treasuryWalletId
         || '';
-      if (!sourceWorkspaceAddressId) throw new Error('Select a source wallet before execution.');
+      if (!sourceTreasuryWalletId) throw new Error('Select a source wallet before execution.');
       const sourceAddressRow = addressesQuery.data?.items?.find(
-        (row) => row.workspaceAddressId === sourceWorkspaceAddressId,
+        (row) => row.treasuryWalletId === sourceTreasuryWalletId,
       );
       if (!sourceAddressRow?.address) {
         throw new Error('Source wallet is still loading or unavailable. Wait a moment and try again.');
@@ -3653,7 +3463,7 @@ function PaymentDetailPage({ session }: { session: AuthenticatedSession }) {
       let packet = preparedPacket ?? getPreparedPacket(paymentOrderQuery.data);
       if (!packet || packet.signerWallet !== sourceAddressRow.address) {
         const prepared = await api.preparePaymentOrderExecution(workspaceId!, paymentOrderId!, {
-          sourceWorkspaceAddressId,
+          sourceTreasuryWalletId,
         });
         packet = prepared.executionPacket;
         setPreparedPacket(packet);
@@ -3728,8 +3538,8 @@ function PaymentDetailPage({ session }: { session: AuthenticatedSession }) {
   const proofReady = order.derivedState === 'settled' || order.derivedState === 'closed';
   const selectedWallet = wallets.find((wallet) => wallet.id === selectedWalletId);
   const sourceAddresses = addressesQuery.data?.items ?? [];
-  const effectiveSourceAddressId = selectedSourceAddressId || order.sourceWorkspaceAddressId || sourceAddresses[0]?.workspaceAddressId || '';
-  const selectedSourceAddress = sourceAddresses.find((address) => address.workspaceAddressId === effectiveSourceAddressId) ?? null;
+  const effectiveSourceAddressId = selectedSourceAddressId || order.sourceTreasuryWalletId || sourceAddresses[0]?.treasuryWalletId || '';
+  const selectedSourceAddress = sourceAddresses.find((address) => address.treasuryWalletId === effectiveSourceAddressId) ?? null;
   const heroTime = latestExecution?.submittedAt ?? order.createdAt;
   const heroTimeLabel = latestExecution?.submittedSignature ? 'Executed' : 'Requested';
   const latestDecision = approvalDecisions.slice().sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0] ?? null;
@@ -3795,7 +3605,7 @@ function PaymentDetailPage({ session }: { session: AuthenticatedSession }) {
         <InfoGrid
           items={[
             ['Amount', `${formatRawUsdcCompact(order.amountRaw)} ${assetSymbol(order.asset)}`],
-            ['From', order.sourceWorkspaceAddress?.address ? <AddressLink key="from" value={order.sourceWorkspaceAddress.address} /> : 'Source not set'],
+            ['From', order.sourceTreasuryWallet?.address ? <AddressLink key="from" value={order.sourceTreasuryWallet.address} /> : 'Source not set'],
             ['To', order.destination?.walletAddress ? <AddressLink key="to" value={order.destination.walletAddress} /> : 'Destination unavailable'],
             ['Signature', latestExecution?.submittedSignature ? shortenAddress(latestExecution.submittedSignature) : 'Not executed'],
             ['Time label', heroTimeLabel],
@@ -3908,7 +3718,7 @@ function PaymentDetailPage({ session }: { session: AuthenticatedSession }) {
             >
               <option value="">Select source wallet</option>
               {sourceAddresses.filter((address) => address.isActive).map((address) => (
-                <option key={address.workspaceAddressId} value={address.workspaceAddressId}>
+                <option key={address.treasuryWalletId} value={address.treasuryWalletId}>
                   {walletLabel(address)}
                 </option>
               ))}
@@ -3918,7 +3728,7 @@ function PaymentDetailPage({ session }: { session: AuthenticatedSession }) {
             <SectionHeader title="Transfer preview" description="Review this payment before preparing and signing." />
             <div className="allocation-summary">
               <span><strong>{formatRawUsdcCompact(order.amountRaw)} {assetSymbol(order.asset)}</strong></span>
-              <span><strong>{order.payee?.name ?? order.destination.label}</strong></span>
+              <span><strong>{order.destination.label}</strong></span>
               <span><strong>{selectedSourceAddress ? walletLabel(selectedSourceAddress) : 'No source wallet set'}</strong></span>
             </div>
           </section>
@@ -4032,7 +3842,7 @@ function PaymentTable({
   return (
     <DataTableShell>
       <div className="data-table-row data-table-head data-table-row-payments-ext data-table-sticky-head">
-        <span>Payee</span>
+        <span>Recipient</span>
         <span>Amount</span>
         <span>Source</span>
         <span>Destination</span>
@@ -4044,13 +3854,13 @@ function PaymentTable({
       {paymentOrders.map((order) => (
         <Link className="data-table-row data-table-link data-table-row-payments-ext" key={order.paymentOrderId} to={`/workspaces/${workspaceId}/payments/${order.paymentOrderId}`}>
           <span>
-            <strong>{order.payee?.name ?? order.destination.label}</strong>
+            <strong>{order.destination.label}</strong>
             <small>{shortenAddress(order.paymentOrderId, 8, 6)}</small>
           </span>
           <span>{formatRawUsdcCompact(order.amountRaw)} {assetSymbol(order.asset)}</span>
           <span>
-            {order.sourceWorkspaceAddress?.displayName
-              ?? (order.sourceWorkspaceAddress?.address ? <AddressLink value={order.sourceWorkspaceAddress.address} /> : 'N/A')}
+            {order.sourceTreasuryWallet?.displayName
+              ?? (order.sourceTreasuryWallet?.address ? <AddressLink value={order.sourceTreasuryWallet.address} /> : 'N/A')}
           </span>
           <span>{order.destination.label}</span>
           <span>{order.externalReference ?? order.invoiceNumber ?? order.memo ?? 'N/A'}</span>
@@ -4122,7 +3932,7 @@ function RunPaymentsTable({
   return (
     <DataTableShell>
       <div className="data-table-row data-table-head data-table-row-run-payments-ext data-table-sticky-head">
-        <span>Payee</span>
+        <span>Recipient</span>
         <span>Amount</span>
         <span>Source</span>
         <span>Destination</span>
@@ -4135,14 +3945,14 @@ function RunPaymentsTable({
         <div className="data-table-row data-table-row-run-payments-ext" key={order.paymentOrderId}>
           <span>
             <Link to={`/workspaces/${workspaceId}/payments/${order.paymentOrderId}`}>
-              <strong>{order.payee?.name ?? order.destination.label}</strong>
+              <strong>{order.destination.label}</strong>
             </Link>
             <small>{shortenAddress(order.paymentOrderId, 8, 6)}</small>
           </span>
           <span>{formatRawUsdcCompact(order.amountRaw)} {assetSymbol(order.asset)}</span>
           <span>
-            {order.sourceWorkspaceAddress?.displayName
-              ?? (order.sourceWorkspaceAddress?.address ? <AddressLink value={order.sourceWorkspaceAddress.address} /> : 'N/A')}
+            {order.sourceTreasuryWallet?.displayName
+              ?? (order.sourceTreasuryWallet?.address ? <AddressLink value={order.sourceTreasuryWallet.address} /> : 'N/A')}
           </span>
           <span>{order.destination.label}</span>
           <span>{order.externalReference ?? order.invoiceNumber ?? order.memo ?? 'N/A'}</span>
@@ -4184,12 +3994,12 @@ function ActionPaymentTable({
   return (
     <DataTableShell>
       <div className={`data-table-row data-table-head ${reasonHeader ? 'data-table-row-actions-reason' : 'data-table-row-actions'}`}>
-        <span>Payee</span><span>Amount</span><span>Destination</span><span>Reference</span>{reasonHeader ? <span>{reasonHeader}</span> : null}<span>Status</span><span>{actionHeader}</span>
+        <span>Recipient</span><span>Amount</span><span>Destination</span><span>Reference</span>{reasonHeader ? <span>{reasonHeader}</span> : null}<span>Status</span><span>{actionHeader}</span>
       </div>
       {paymentOrders.map((order) => (
         <div className={`data-table-row ${reasonHeader ? 'data-table-row-actions-reason' : 'data-table-row-actions'}`} key={order.paymentOrderId}>
           <Link to={`/workspaces/${workspaceId}/payments/${order.paymentOrderId}`}>
-            <strong>{order.payee?.name ?? order.destination.label}</strong>
+            <strong>{order.destination.label}</strong>
             <small>{shortenAddress(order.paymentOrderId, 8, 6)}</small>
           </Link>
           <span>{formatRawUsdcCompact(order.amountRaw)} {assetSymbol(order.asset)}</span>
@@ -4219,13 +4029,13 @@ function PaymentRequestsTable({
   return (
     <DataTableShell>
       <div className="data-table-row data-table-head data-table-row-requests">
-        <span>Payee</span><span>Destination</span><span>Amount</span><span>Reference</span><span>State</span><span>Progress</span><span>Created</span>
+        <span>Recipient</span><span>Destination</span><span>Amount</span><span>Reference</span><span>State</span><span>Progress</span><span>Created</span>
       </div>
       {requests.map((request) => {
         const order = ordersByRequest.get(request.paymentRequestId);
         const content = (
           <>
-            <span><strong>{request.payee?.name ?? request.reason}</strong><small>{shortenAddress(request.paymentRequestId, 8, 6)}</small></span>
+            <span><strong>{request.reason}</strong><small>{shortenAddress(request.paymentRequestId, 8, 6)}</small></span>
             <span>{request.destination.label}</span>
             <span>{formatRawUsdcCompact(request.amountRaw)} {assetSymbol(request.asset)}</span>
             <span>{request.externalReference ?? 'N/A'}</span>
@@ -4375,20 +4185,20 @@ function WalletsTable({
   destinations,
   onSelect,
 }: {
-  addresses: WorkspaceAddress[];
+  addresses: TreasuryWallet[];
   destinations: Destination[];
-  onSelect?: (address: WorkspaceAddress) => void;
+  onSelect?: (address: TreasuryWallet) => void;
 }) {
   if (!addresses.length) return <EmptyState title="No wallets saved" description="Save a wallet to watch, source, or destination-match USDC payments." />;
   return (
     <DataTableShell>
       <div className="data-table-row data-table-head data-table-row-wallets"><span>Name</span><span>Address</span><span>Destination</span><span>Status</span></div>
       {addresses.map((address) => {
-        const destination = destinations.find((item) => item.linkedWorkspaceAddressId === address.workspaceAddressId);
+        const destination = destinations.find((item) => item.walletAddress === address.address);
         return (
           <div
             className={`data-table-row data-table-row-wallets${onSelect ? ' data-table-row-clickable' : ''}`}
-            key={address.workspaceAddressId}
+            key={address.treasuryWalletId}
             onClick={() => onSelect?.(address)}
             onKeyDown={(event) => {
               if (onSelect && (event.key === 'Enter' || event.key === ' ')) {
@@ -4410,42 +4220,13 @@ function WalletsTable({
   );
 }
 
-function PayeesTable({ payees, onSelect }: { payees: Payee[]; onSelect?: (payee: Payee) => void }) {
-  if (!payees.length) return <EmptyState title="No payees yet" description="Payees are lightweight names mapped to default destinations." />;
-  return (
-    <DataTableShell>
-      <div className="data-table-row data-table-head data-table-row-payees"><span>Name</span><span>Default destination</span><span>Reference</span><span>Status</span></div>
-      {payees.map((payee) => (
-        <div
-          className={`data-table-row data-table-row-payees${onSelect ? ' data-table-row-clickable' : ''}`}
-          key={payee.payeeId}
-          onClick={() => onSelect?.(payee)}
-          onKeyDown={(event) => {
-            if (onSelect && (event.key === 'Enter' || event.key === ' ')) {
-              event.preventDefault();
-              onSelect(payee);
-            }
-          }}
-          role={onSelect ? 'button' : undefined}
-          tabIndex={onSelect ? 0 : undefined}
-        >
-          <span><strong>{payee.name}</strong><small>{shortenAddress(payee.payeeId, 8, 6)}</small></span>
-          <span>{payee.defaultDestination?.label ?? 'N/A'}</span>
-          <span>{payee.externalReference ?? 'N/A'}</span>
-          <span>{payee.status}</span>
-        </div>
-      ))}
-    </DataTableShell>
-  );
-}
-
 function CounterpartiesTable({ counterparties, destinations }: { counterparties: Counterparty[]; destinations: Destination[] }) {
   if (!counterparties.length) return <EmptyState title="No counterparties yet" description="Counterparties are optional business owners behind destinations." />;
   return (
     <DataTableShell>
-      <div className="data-table-row data-table-head data-table-row-payees"><span>Name</span><span>Destinations</span><span>Category</span><span>Status</span></div>
+      <div className="data-table-row data-table-head data-table-row-counterparties"><span>Name</span><span>Destinations</span><span>Category</span><span>Status</span></div>
       {counterparties.map((counterparty) => (
-        <div className="data-table-row data-table-row-payees" key={counterparty.counterpartyId}>
+        <div className="data-table-row data-table-row-counterparties" key={counterparty.counterpartyId}>
           <span><strong>{counterparty.displayName}</strong></span>
           <span>{destinations.filter((destination) => destination.counterpartyId === counterparty.counterpartyId).length}</span>
           <span>{counterparty.category}</span>
@@ -4483,7 +4264,7 @@ function ExceptionsTable({
       </div>
       {exceptions.map((exception) => {
         const linked = exception.transferRequestId ? paymentByTransferId.get(exception.transferRequestId) : undefined;
-        const payeeLabel = linked?.payee?.name ?? linked?.destination.label ?? 'N/A';
+        const recipientLabel = linked?.destination.label ?? 'N/A';
         return (
           <div className="data-table-row data-table-row-exceptions-v2" key={exception.exceptionId}>
             <span>
@@ -4491,7 +4272,7 @@ function ExceptionsTable({
             </span>
             <span>
               <Link to={`/workspaces/${workspaceId}/exceptions/${exception.exceptionId}`}>
-                <strong>{payeeLabel}</strong>
+                <strong>{recipientLabel}</strong>
               </Link>
               <small>{humanizeExceptionReason(exception.reasonCode)}</small>
             </span>
@@ -4538,7 +4319,7 @@ function PaymentHero({ order }: { order: PaymentOrder }) {
           {latestSignature ? <AddressLink value={latestSignature} kind="transaction" /> : <span>Not executed</span>}
         </HeroCell>
         <HeroCell label="From">
-          {order.sourceWorkspaceAddress?.address ? <AddressLink value={order.sourceWorkspaceAddress.address} /> : <span>Source not set</span>}
+          {order.sourceTreasuryWallet?.address ? <AddressLink value={order.sourceTreasuryWallet.address} /> : <span>Source not set</span>}
         </HeroCell>
         <HeroCell label="To">
           {order.destination?.walletAddress ? <AddressLink value={order.destination.walletAddress} /> : <span>Destination unavailable</span>}
@@ -4672,7 +4453,7 @@ function RunExecutionPanel({
   return (
     <div className="execution-stack">
       <InfoGrid items={[
-        ['Source', run.sourceWorkspaceAddress ? walletLabel(run.sourceWorkspaceAddress) : 'Not set'],
+        ['Source', run.sourceTreasuryWallet ? walletLabel(run.sourceTreasuryWallet) : 'Not set'],
         ['Ready', `${run.totals.readyCount}/${run.totals.orderCount}`],
         ['Exceptions', String(run.totals.exceptionCount)],
         ['Prepared instructions', packet ? String(packet.instructions.length) : 'Not prepared'],
@@ -5043,7 +4824,7 @@ function isActionableOrder(order: PaymentOrder) {
 }
 
 function summarizePayment(order: PaymentOrder) {
-  const title = order.payee?.name ?? order.counterparty?.displayName ?? order.destination.label;
+  const title = order.counterparty?.displayName ?? order.destination.label;
   const reference = order.externalReference ?? order.invoiceNumber ?? order.memo ?? 'No reference';
   return {
     title,
@@ -5218,7 +4999,7 @@ function executionActionLabel(order: PaymentOrder) {
 }
 
 function executionReasonLine(order: PaymentOrder) {
-  if (!order.sourceWorkspaceAddressId && order.derivedState === 'ready_for_execution') {
+  if (!order.sourceTreasuryWalletId && order.derivedState === 'ready_for_execution') {
     return 'Source wallet missing before signing.';
   }
   if (order.derivedState === 'ready_for_execution') return 'Approved and waiting for signature.';
@@ -5346,7 +5127,7 @@ function formatDateCompact(value: string) {
   }).format(date);
 }
 
-function walletLabel(address: Pick<WorkspaceAddress, 'displayName' | 'address'> | null | undefined) {
+function walletLabel(address: Pick<TreasuryWallet, 'displayName' | 'address'> | null | undefined) {
   if (!address) return null;
   return address.displayName ?? shortenAddress(address.address);
 }

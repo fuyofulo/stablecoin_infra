@@ -6,7 +6,12 @@ import '@fontsource-variable/geist/index.css';
 import '@fontsource/instrument-serif/400.css';
 import '@fontsource/instrument-serif/400-italic.css';
 import { App } from './App';
+import { ToastProvider } from './ui/Toast';
 import './styles.css';
+import './styles/design-tokens.css';
+import './styles/canonical.css';
+import './styles/sidebar.css';
+import './styles/run-detail.css';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -18,11 +23,21 @@ const queryClient = new QueryClient({
   },
 });
 
+const storedTheme = window.localStorage.getItem('axoria.theme');
+const initialTheme = storedTheme === 'dark' ? 'dark' : 'light';
+if (initialTheme === 'dark') {
+  document.documentElement.setAttribute('data-theme', 'dark');
+} else {
+  document.documentElement.removeAttribute('data-theme');
+}
+
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
-        <App />
+        <ToastProvider>
+          <App />
+        </ToastProvider>
       </BrowserRouter>
     </QueryClientProvider>
   </React.StrictMode>,

@@ -1,7 +1,9 @@
 export {
+  computeWalletUsdValue,
   formatRawUsdcCompact,
   formatRelativeTime,
   formatTimestamp,
+  formatUsd,
   orbTransactionUrl,
   shortenAddress,
   solanaAccountUrl,

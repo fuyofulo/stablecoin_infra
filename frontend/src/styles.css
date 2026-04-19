@@ -1003,7 +1003,7 @@ a {
 }
 
 .data-table-row-wallets,
-.data-table-row-payees {
+.data-table-row-recipients {
   grid-template-columns: 1fr 1.2fr 1fr 0.7fr;
 }
 
@@ -2378,4 +2378,37 @@ a {
 .proof-json-val {
   color: var(--text-muted);
   font-weight: 400;
+}
+
+/* Sidebar · Advanced collapsible group */
+.sidebar-advanced {
+  margin-top: 4px;
+}
+.sidebar-advanced > .sidebar-advanced-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  cursor: pointer;
+  padding: 6px 10px;
+  border-radius: 6px;
+  list-style: none;
+  user-select: none;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+.sidebar-advanced > .sidebar-advanced-summary::-webkit-details-marker {
+  display: none;
+}
+.sidebar-advanced > .sidebar-advanced-summary:hover {
+  background: rgba(0, 0, 0, 0.04);
+  color: var(--text);
+}
+.sidebar-advanced-chevron {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: var(--text-muted);
+  transition: transform 150ms ease-out;
+}
+.sidebar-advanced[open] > .sidebar-advanced-summary .sidebar-advanced-chevron {
+  transform: rotate(90deg);
 }

@@ -1,5 +1,6 @@
+import { useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { NavLink } from 'react-router';
+import { Link, NavLink, useNavigate } from 'react-router';
 import type { AuthenticatedSession, OrganizationMembership, Workspace } from './api';
 
 type WorkspaceContext = {
@@ -7,198 +8,191 @@ type WorkspaceContext = {
   workspace: Workspace;
 };
 
-function Icon({ children }: { children: ReactNode }) {
+function SvgIcon({ children, className }: { children: ReactNode; className?: string }) {
   return (
-    <svg className="sidebar-icon" viewBox="0 0 24 24" fill="none" aria-hidden>
+    <svg
+      className={className ?? 'ax-nav-link-icon'}
+      viewBox="0 0 20 20"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
       {children}
     </svg>
   );
 }
 
 const icons = {
-  command: (
-    <Icon>
-      <path
-        d="M4 5a1 1 0 011-1h4a1 1 0 011 1v5a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM14 5a1 1 0 011-1h4a1 1 0 011 1v2a1 1 0 01-1 1h-4a1 1 0 01-1-1V5zM4 15a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1v-4zM14 13a1 1 0 011-1h4a1 1 0 011 1v6a1 1 0 01-1 1h-4a1 1 0 01-1-1v-6z"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinejoin="round"
-      />
-    </Icon>
-  ),
-  requests: (
-    <Icon>
-      <path
-        d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </Icon>
-  ),
-  runs: (
-    <Icon>
-      <path
-        d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </Icon>
+  overview: (
+    <SvgIcon>
+      <rect x="3" y="3" width="6" height="6" rx="1.5" />
+      <rect x="11" y="3" width="6" height="6" rx="1.5" />
+      <rect x="3" y="11" width="6" height="6" rx="1.5" />
+      <rect x="11" y="11" width="6" height="6" rx="1.5" />
+    </SvgIcon>
   ),
   payments: (
-    <Icon>
-      <path
-        d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </Icon>
-  ),
-  approvals: (
-    <Icon>
-      <path
-        d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </Icon>
-  ),
-  execution: (
-    <Icon>
-      <path
-        d="M13 10V3L4 14h7v7l9-11h-7z"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </Icon>
-  ),
-  settlement: (
-    <Icon>
-      <path
-        d="M3 6l3 1m0 0l-3 9a5.002 5.002 0 006.001 0M6 7l3 9M6 7l6-2m6 2l3-1m-3 1l-3 9a5.002 5.002 0 006.001 0M18 7l3 9m-3-9l-6-2m0-2v2m0 16V5m0 16H9m3 0h3"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </Icon>
-  ),
-  exceptions: (
-    <Icon>
-      <path
-        d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </Icon>
+    <SvgIcon>
+      <rect x="2.5" y="5" width="15" height="10" rx="1.5" />
+      <path d="M2.5 8h15" />
+      <path d="M5.5 12.5h2" />
+    </SvgIcon>
   ),
   proofs: (
-    <Icon>
-      <path
-        d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </Icon>
+    <SvgIcon>
+      <path d="M5 2.5h6L15 6.5v10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-13a1 1 0 0 1 1-1Z" />
+      <path d="M11 2.5v4h4" />
+      <path d="M7 11h6M7 14h4" />
+    </SvgIcon>
   ),
   address: (
-    <Icon>
-      <path
-        d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      <path
-        d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </Icon>
+    <SvgIcon>
+      <path d="M10 17.5s-5.5-4.5-5.5-9a5.5 5.5 0 0 1 11 0c0 4.5-5.5 9-5.5 9Z" />
+      <circle cx="10" cy="8.5" r="2.2" />
+    </SvgIcon>
+  ),
+  approvals: (
+    <SvgIcon>
+      <circle cx="10" cy="10" r="7" />
+      <path d="M7 10.5l2 2 4-4.5" />
+    </SvgIcon>
+  ),
+  execution: (
+    <SvgIcon>
+      <path d="M11 3 4 12h5l-1 6 7-9h-5l1-6Z" />
+    </SvgIcon>
+  ),
+  settlement: (
+    <SvgIcon>
+      <path d="M3 5.5h14" />
+      <path d="M5.5 5.5v9a2 2 0 0 0 2 2h5a2 2 0 0 0 2-2v-9" />
+      <path d="M8 9.5h4" />
+    </SvgIcon>
+  ),
+  exceptions: (
+    <SvgIcon>
+      <path d="M10 2.5 18 16H2L10 2.5Z" />
+      <path d="M10 8v3" />
+      <circle cx="10" cy="13.5" r="0.7" fill="currentColor" />
+    </SvgIcon>
   ),
   policy: (
-    <Icon>
-      <path
-        d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </Icon>
+    <SvgIcon>
+      <path d="M10 2.5 17 5v5c0 4-3 6.5-7 7.5-4-1-7-3.5-7-7.5V5l7-2.5Z" />
+      <path d="M7.5 10.5l2 2 3.5-4" />
+    </SvgIcon>
   ),
-} as const;
-
-function SidebarLink({
-  to,
-  end,
-  icon,
-  badgeCount,
-  children,
-}: {
-  to: string;
-  end?: boolean;
-  icon: ReactNode;
-  badgeCount?: number;
-  children: ReactNode;
-}) {
-  return (
-    <NavLink
-      to={to}
-      end={end}
-      className={({ isActive }) => `sidebar-link${isActive ? ' sidebar-link-active' : ''}`}
-    >
-      <span className="sidebar-link-icon-wrap">{icon}</span>
-      <span className="sidebar-link-label">{children}</span>
-      {badgeCount && badgeCount > 0 ? (
-        <span className="sidebar-link-badge" aria-label={`${badgeCount} pending`}>
-          {badgeCount}
-        </span>
-      ) : null}
-    </NavLink>
-  );
-}
-
-function workspaceNavItems(workspaceId: string) {
-  const base = `/workspaces/${workspaceId}`;
-  return {
-    operations: [
-      { to: base, end: true as const, label: 'Command Center', icon: icons.command },
-      { to: `${base}/payments`, end: false as const, label: 'Payments', icon: icons.payments },
-      { to: `${base}/approvals`, end: false as const, label: 'Approvals', icon: icons.approvals },
-      { to: `${base}/execution`, end: false as const, label: 'Execution', icon: icons.execution },
-      { to: `${base}/settlement`, end: false as const, label: 'Settlement', icon: icons.settlement },
-      { to: `${base}/exceptions`, end: false as const, label: 'Exceptions', icon: icons.exceptions },
-      { to: `${base}/proofs`, end: false as const, label: 'Proofs', icon: icons.proofs },
-    ],
-    administration: [
-      { to: `${base}/registry`, end: false as const, label: 'Address book', icon: icons.address },
-      { to: `${base}/policy`, end: false as const, label: 'Policy', icon: icons.policy },
-    ],
-  };
-}
+  wallet: (
+    <SvgIcon>
+      <rect x="2.5" y="5" width="15" height="11" rx="2" />
+      <path d="M2.5 8h15" />
+      <circle cx="14" cy="12.5" r="1" fill="currentColor" />
+    </SvgIcon>
+  ),
+  counterparty: (
+    <SvgIcon>
+      <circle cx="10" cy="7" r="3" />
+      <path d="M4 16.5a6 6 0 0 1 12 0" />
+    </SvgIcon>
+  ),
+  chevron: (
+    <SvgIcon className="ax-ws-button-chev">
+      <path d="M5 7.5 10 12.5 15 7.5" />
+    </SvgIcon>
+  ),
+  check: (
+    <SvgIcon className="ax-ws-menu-item-check">
+      <path d="M4.5 10.5 8 14l7.5-8" />
+    </SvgIcon>
+  ),
+  sun: (
+    <SvgIcon className="ax-theme-option-icon">
+      <circle cx="10" cy="10" r="3.5" />
+      <path d="M10 2v2M10 16v2M2 10h2M16 10h2M4.5 4.5 6 6M14 14l1.5 1.5M4.5 15.5 6 14M14 6l1.5-1.5" />
+    </SvgIcon>
+  ),
+  moon: (
+    <SvgIcon className="ax-theme-option-icon">
+      <path d="M16.5 12A7 7 0 1 1 8 3.5a5.5 5.5 0 0 0 8.5 8.5Z" />
+    </SvgIcon>
+  ),
+  logout: (
+    <SvgIcon className="ax-user-menu-icon" >
+      <path d="M8 4.5H5a1.5 1.5 0 0 0-1.5 1.5v8A1.5 1.5 0 0 0 5 15.5h3" />
+      <path d="M12 6.5 15.5 10 12 13.5" />
+      <path d="M15.5 10H8" />
+    </SvgIcon>
+  ),
+  user: (
+    <SvgIcon className="ax-user-menu-icon">
+      <circle cx="10" cy="7" r="3" />
+      <path d="M4 16.5a6 6 0 0 1 12 0" />
+    </SvgIcon>
+  ),
+  plus: (
+    <SvgIcon className="ax-ws-menu-item-check">
+      <path d="M10 4v12M4 10h12" />
+    </SvgIcon>
+  ),
+};
 
 function initialsFromEmail(email: string) {
   const local = email.split('@')[0] ?? '?';
   const parts = local.split(/[._-]+/).filter(Boolean);
   if (parts.length >= 2) return (parts[0]![0]! + parts[1]![0]!).toUpperCase();
   return local.slice(0, 2).toUpperCase();
+}
+
+function initialsFromName(name: string) {
+  const parts = name.split(/\s+/).filter(Boolean);
+  if (parts.length >= 2) return (parts[0]![0]! + parts[1]![0]!).toUpperCase();
+  return name.slice(0, 2).toUpperCase();
+}
+
+function useOutsideClick<T extends HTMLElement>(enabled: boolean, onClose: () => void) {
+  const ref = useRef<T | null>(null);
+  useEffect(() => {
+    if (!enabled) return;
+    function onDoc(event: MouseEvent) {
+      if (!ref.current) return;
+      if (event.target instanceof Node && ref.current.contains(event.target)) return;
+      onClose();
+    }
+    function onKey(event: KeyboardEvent) {
+      if (event.key === 'Escape') onClose();
+    }
+    document.addEventListener('mousedown', onDoc);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDoc);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [enabled, onClose]);
+  return ref;
+}
+
+function useTheme(): { theme: 'light' | 'dark'; setTheme: (next: 'light' | 'dark') => void } {
+  const [theme, setLocalTheme] = useState<'light' | 'dark'>(() =>
+    document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light',
+  );
+  function setTheme(next: 'light' | 'dark') {
+    if (next === theme) return;
+    setLocalTheme(next);
+    if (next === 'dark') {
+      document.documentElement.setAttribute('data-theme', 'dark');
+    } else {
+      document.documentElement.removeAttribute('data-theme');
+    }
+    try {
+      window.localStorage.setItem('axoria.theme', next);
+    } catch {
+      // storage may be unavailable; that's fine
+    }
+  }
+  return { theme, setTheme };
 }
 
 export function AppSidebar({
@@ -220,129 +214,274 @@ export function AppSidebar({
   onWorkspaceSwitch: (workspaceId: string) => void;
   onLogout: () => void;
 }) {
-  const activeContext = workspaceContexts.find((ctx) => ctx.workspace.workspaceId === activeWorkspaceId)
-    ?? workspaceContexts[0];
+  const navigate = useNavigate();
+  const activeContext =
+    workspaceContexts.find((ctx) => ctx.workspace.workspaceId === activeWorkspaceId) ?? workspaceContexts[0];
   const activeWorkspace = activeContext?.workspace;
+  const activeOrg = activeContext?.organization;
+
+  const [wsMenuOpen, setWsMenuOpen] = useState(false);
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const wsRef = useOutsideClick<HTMLDivElement>(wsMenuOpen, () => setWsMenuOpen(false));
+  const userRef = useOutsideClick<HTMLDivElement>(userMenuOpen, () => setUserMenuOpen(false));
+  const { theme, setTheme } = useTheme();
+
+  const base = activeWorkspace ? `/workspaces/${activeWorkspace.workspaceId}` : null;
 
   return (
-    <aside className="sidebar" aria-label="Application">
-      <div className="sidebar-brand">
-        <span className="brand-mark" aria-hidden />
-        <div className="sidebar-brand-text">
-          <strong>Stablecoin Ops</strong>
-          <span>Payment control</span>
+    <aside className="ax-sidebar" aria-label="Application">
+      <div className="ax-sidebar-brand">
+        <span className="ax-sidebar-brand-mark" aria-hidden>
+          A
+        </span>
+        <div className="ax-sidebar-brand-text">
+          <strong>Axoria</strong>
         </div>
       </div>
 
-      <nav className="sidebar-scroll" aria-label="Workspace navigation">
-        {workspaceContexts.length ? (
-          <div className="sidebar-switcher">
-            <p className="sidebar-section-label">Workspace switcher</p>
-            <div className="sidebar-switcher-select-wrap">
-              <select
-                className="sidebar-switcher-select"
-                value={activeWorkspace?.workspaceId ?? ''}
-                onChange={(event) => {
-                  const nextWorkspaceId = event.target.value;
-                  if (!nextWorkspaceId) return;
-                  onWorkspaceSwitch(nextWorkspaceId);
+      {workspaceContexts.length ? (
+        <div className="ax-ws-switcher" ref={wsRef}>
+          <button
+            type="button"
+            className="ax-ws-button"
+            aria-haspopup="menu"
+            aria-expanded={wsMenuOpen}
+            onClick={() => setWsMenuOpen((v) => !v)}
+          >
+            <span className="ax-ws-button-avatar" aria-hidden>
+              {initialsFromName(activeWorkspace?.workspaceName ?? '?')}
+            </span>
+            <span className="ax-ws-button-text">
+              <span className="ax-ws-button-org">{activeOrg?.organizationName ?? ''}</span>
+              <span className="ax-ws-button-name">{activeWorkspace?.workspaceName ?? 'Select workspace'}</span>
+            </span>
+            {icons.chevron}
+          </button>
+
+          {wsMenuOpen ? (
+            <div className="ax-ws-menu" role="menu">
+              {workspaceContexts
+                .reduce<{ org: OrganizationMembership; items: WorkspaceContext[] }[]>((groups, ctx) => {
+                  const existing = groups.find((g) => g.org.organizationId === ctx.organization.organizationId);
+                  if (existing) {
+                    existing.items.push(ctx);
+                  } else {
+                    groups.push({ org: ctx.organization, items: [ctx] });
+                  }
+                  return groups;
+                }, [])
+                .map((group) => (
+                  <div key={group.org.organizationId}>
+                    <div className="ax-ws-menu-group">
+                      <div className="ax-ws-menu-group-label">{group.org.organizationName}</div>
+                    </div>
+                    {group.items.map(({ workspace }) => {
+                      const isActive = workspace.workspaceId === activeWorkspaceId;
+                      return (
+                        <button
+                          key={workspace.workspaceId}
+                          type="button"
+                          role="menuitem"
+                          className={`ax-ws-menu-item${isActive ? ' ax-ws-menu-item-active' : ''}`}
+                          onClick={() => {
+                            setWsMenuOpen(false);
+                            if (!isActive) onWorkspaceSwitch(workspace.workspaceId);
+                          }}
+                        >
+                          <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            {workspace.workspaceName}
+                          </span>
+                          {isActive ? icons.check : null}
+                        </button>
+                      );
+                    })}
+                  </div>
+                ))}
+              <div className="ax-ws-menu-sep" />
+              <button
+                type="button"
+                className="ax-ws-menu-item ax-ws-menu-new"
+                role="menuitem"
+                onClick={() => {
+                  setWsMenuOpen(false);
+                  navigate('/setup');
                 }}
               >
-                {workspaceContexts.map(({ organization, workspace }) => (
-                  <option key={workspace.workspaceId} value={workspace.workspaceId}>
-                    {organization.organizationName} / {workspace.workspaceName}
-                  </option>
-                ))}
-              </select>
-              <span className="sidebar-switcher-chevron" aria-hidden>⌄</span>
+                {icons.plus}
+                <span>New organization or workspace</span>
+              </button>
             </div>
-            <NavLink className="sidebar-switcher-create-link" to="/setup">
-              + New org/workspace
-            </NavLink>
-          </div>
-        ) : null}
-        {activeContext ? (() => {
-          const { organization, workspace } = activeContext;
-          const nav = workspaceNavItems(workspace.workspaceId);
-          return (
-            <div className="sidebar-workspace" key={workspace.workspaceId}>
-              <div className="sidebar-workspace-header">
-                <p className="sidebar-section-label">Workspace</p>
-                <div className="sidebar-workspace-title">
-                  <span className="sidebar-workspace-name">{workspace.workspaceName}</span>
-                  <span className="sidebar-workspace-org">{organization.organizationName}</span>
-                </div>
-              </div>
+          ) : null}
+        </div>
+      ) : (
+        <div className="ax-ws-switcher">
+          <Link to="/setup" className="ax-ws-button" style={{ gap: 10 }}>
+            <span className="ax-ws-button-avatar" aria-hidden>
+              +
+            </span>
+            <span className="ax-ws-button-text">
+              <span className="ax-ws-button-name">Create workspace</span>
+              <span className="ax-ws-button-org">Get started</span>
+            </span>
+          </Link>
+        </div>
+      )}
 
-              <div className="sidebar-section">
-                <p className="sidebar-section-label">Operations</p>
-                <div className="sidebar-link-list" role="list">
-                  {nav.operations.map((item) => (
-                    <SidebarLink
-                      key={item.to + String(item.end)}
-                      to={item.to}
-                      end={item.end}
-                      icon={item.icon}
-                      badgeCount={
-                        workspace.workspaceId === activeWorkspaceId
-                          ? item.label === 'Payments'
-                            ? paymentsIncompleteCount
-                            : item.label === 'Approvals'
-                              ? approvalPendingCount
-                              : item.label === 'Execution'
-                                ? executionQueueCount
-                                : undefined
-                          : undefined
-                      }
-                    >
-                      {item.label}
-                    </SidebarLink>
-                  ))}
-                </div>
-              </div>
-
-              <div className="sidebar-section">
-                <p className="sidebar-section-label">Administration</p>
-                <div className="sidebar-link-list" role="list">
-                  {nav.administration.map((item) => (
-                    <SidebarLink key={item.to} to={item.to} icon={item.icon}>
-                      {item.label}
-                    </SidebarLink>
-                  ))}
-                </div>
-              </div>
+      <nav className="ax-nav" aria-label="Workspace navigation">
+        {base ? (
+          <>
+            <div className="ax-nav-group">
+              <div className="ax-nav-group-label">Operations</div>
+              <NavLinkItem to={base} end icon={icons.overview} label="Overview" />
+              <NavLinkItem
+                to={`${base}/payments`}
+                icon={icons.payments}
+                label="Payments"
+                badge={paymentsIncompleteCount}
+              />
+              <NavLinkItem to={`${base}/policy`} icon={icons.policy} label="Policy" />
+              <NavLinkItem to={`${base}/proofs`} icon={icons.proofs} label="Proofs" />
             </div>
-          );
-        })() : null}
 
-        {!workspaceContexts.length ? (
-          <div className="sidebar-empty-workspace">
-            <p className="sidebar-section-label">Workspace</p>
-            <NavLink className="sidebar-cta-link" to="/setup">
-              Create workspace
-            </NavLink>
-          </div>
+            <div className="ax-nav-group">
+              <div className="ax-nav-group-label">Registry</div>
+              <NavLinkItem to={`${base}/wallets`} icon={icons.wallet} label="Wallets" />
+              <NavLinkItem to={`${base}/counterparties`} icon={icons.counterparty} label="Counterparties" />
+            </div>
+
+            <details className="ax-nav-advanced">
+              <summary>
+                <span className="ax-nav-advanced-chev" aria-hidden>
+                  ▸
+                </span>
+                <span>Advanced</span>
+              </summary>
+              <div className="ax-nav-advanced-body">
+                <NavLinkItem
+                  to={`${base}/approvals`}
+                  icon={icons.approvals}
+                  label="Approvals"
+                  badge={approvalPendingCount}
+                />
+                <NavLinkItem
+                  to={`${base}/execution`}
+                  icon={icons.execution}
+                  label="Execution"
+                  badge={executionQueueCount}
+                />
+                <NavLinkItem to={`${base}/settlement`} icon={icons.settlement} label="Settlement" />
+                <NavLinkItem to={`${base}/exceptions`} icon={icons.exceptions} label="Exceptions" />
+              </div>
+            </details>
+          </>
         ) : null}
       </nav>
 
-      <div className="sidebar-footer">
-        <div className="sidebar-user">
-          <span className="sidebar-user-avatar" aria-hidden>
-            {initialsFromEmail(session.user.email)}
-          </span>
-          <div className="sidebar-user-meta">
-            <span className="sidebar-user-email" title={session.user.email}>
-              {session.user.email}
+      <div className="ax-footer">
+        <div className="ax-theme-toggle" role="radiogroup" aria-label="Theme">
+          <button
+            type="button"
+            role="radio"
+            aria-checked={theme === 'light'}
+            aria-pressed={theme === 'light'}
+            className="ax-theme-option"
+            onClick={() => setTheme('light')}
+          >
+            {icons.sun}
+            <span>Light</span>
+          </button>
+          <button
+            type="button"
+            role="radio"
+            aria-checked={theme === 'dark'}
+            aria-pressed={theme === 'dark'}
+            className="ax-theme-option"
+            onClick={() => setTheme('dark')}
+          >
+            {icons.moon}
+            <span>Dark</span>
+          </button>
+        </div>
+
+        <div className="ax-user-menu" ref={userRef}>
+          <button
+            type="button"
+            className="ax-user-button"
+            aria-haspopup="menu"
+            aria-expanded={userMenuOpen}
+            onClick={() => setUserMenuOpen((v) => !v)}
+          >
+            <span className="ax-user-avatar" aria-hidden>
+              {initialsFromEmail(session.user.email)}
             </span>
-            <NavLink className="sidebar-profile-link" to="/profile">
-              Profile
-            </NavLink>
-            <button className="sidebar-sign-out" onClick={() => void onLogout()} type="button">
-              Sign out
-            </button>
-          </div>
+            <span className="ax-user-text">
+              <div className="ax-user-email" title={session.user.email}>
+                {session.user.email}
+              </div>
+              <div className="ax-user-sub">{session.user.displayName || 'Signed in'}</div>
+            </span>
+          </button>
+          {userMenuOpen ? (
+            <div className="ax-user-menu-dropdown" role="menu">
+              <button
+                type="button"
+                role="menuitem"
+                className="ax-user-menu-item"
+                onClick={() => {
+                  setUserMenuOpen(false);
+                  navigate('/profile');
+                }}
+              >
+                {icons.user}
+                <span>Profile</span>
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                className="ax-user-menu-item"
+                data-tone="danger"
+                onClick={() => {
+                  setUserMenuOpen(false);
+                  onLogout();
+                }}
+              >
+                {icons.logout}
+                <span>Sign out</span>
+              </button>
+            </div>
+          ) : null}
         </div>
       </div>
     </aside>
+  );
+}
+
+function NavLinkItem({
+  to,
+  end,
+  icon,
+  label,
+  badge,
+}: {
+  to: string;
+  end?: boolean;
+  icon: ReactNode;
+  label: string;
+  badge?: number;
+}) {
+  return (
+    <NavLink
+      to={to}
+      end={end}
+      className={({ isActive }) => `ax-nav-link${isActive ? ' ax-nav-link-active' : ''}`}
+    >
+      <span className="ax-nav-link-icon">{icon}</span>
+      <span className="ax-nav-link-label">{label}</span>
+      {badge && badge > 0 ? (
+        <span className="ax-nav-link-badge" aria-label={`${badge} pending`}>
+          {badge}
+        </span>
+      ) : null}
+    </NavLink>
   );
 }

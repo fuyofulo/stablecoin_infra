@@ -47,7 +47,7 @@ export function nextPaymentAction(order: PaymentOrder): string {
     case 'pending_approval':
       return 'Approve or reject';
     case 'approved':
-      return order.sourceWorkspaceAddressId ? 'Prepare transaction' : 'Choose source wallet';
+      return order.sourceTreasuryWalletId ? 'Prepare transaction' : 'Choose source wallet';
     case 'ready_for_execution':
       return 'Sign and submit';
     case 'execution_recorded':
@@ -80,7 +80,7 @@ export function paymentExecutionBucket(order: PaymentOrder): ExecutionBucket | n
   if (s === 'execution_recorded') return 'executed';
   if (s === 'ready_for_execution') return 'ready_to_sign';
   if (s === 'approved') {
-    return order.sourceWorkspaceAddressId ? 'ready_to_prepare' : 'needs_source';
+    return order.sourceTreasuryWalletId ? 'ready_to_prepare' : 'needs_source';
   }
   return null;
 }

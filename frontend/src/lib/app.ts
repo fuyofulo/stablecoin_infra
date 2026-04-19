@@ -8,6 +8,33 @@ export function formatRawUsdc(amountRaw: string) {
   return `${negative ? '-' : ''}${whole}.${fraction}`;
 }
 
+// USD display. Rounds to cents and uses grouped thousands. Return without a
+// currency symbol so callers compose (e.g. `$${formatUsd(v)}`).
+export function formatUsd(value: number): string {
+  if (!Number.isFinite(value)) return '0.00';
+  return value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+// Total USD value of one wallet: USDC (6 decimals) + SOL (9 decimals) × price.
+// If the SOL price is null we only count USDC — callers may separately show
+// "SOL price unavailable" context.
+export function computeWalletUsdValue(args: {
+  usdcRaw: string | null;
+  solLamports: string;
+  solUsdPrice: number | null;
+}): number {
+  const usdc = args.usdcRaw === null ? 0 : Number(BigInt(args.usdcRaw)) / 1_000_000;
+  let solLamportsNum = 0;
+  try {
+    solLamportsNum = Number(BigInt(args.solLamports));
+  } catch {
+    solLamportsNum = 0;
+  }
+  const sol = solLamportsNum / 1_000_000_000;
+  const solUsd = args.solUsdPrice === null ? 0 : sol * args.solUsdPrice;
+  return usdc + solUsd;
+}
+
 export function formatRawUsdcCompact(amountRaw: string) {
   const normalized = formatRawUsdc(amountRaw);
   if (!normalized.includes('.')) {
