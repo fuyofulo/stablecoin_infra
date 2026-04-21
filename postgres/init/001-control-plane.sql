@@ -60,26 +60,6 @@ CREATE TABLE IF NOT EXISTS workspaces
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE TABLE IF NOT EXISTS api_keys
-(
-  api_key_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  workspace_id UUID NOT NULL REFERENCES workspaces(workspace_id) ON DELETE CASCADE,
-  organization_id UUID NOT NULL REFERENCES organizations(organization_id) ON DELETE CASCADE,
-  created_by_user_id UUID REFERENCES users(user_id) ON DELETE SET NULL,
-  key_prefix TEXT NOT NULL,
-  key_hash TEXT NOT NULL UNIQUE,
-  label TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'active',
-  role TEXT NOT NULL DEFAULT 'agent_operator',
-  scopes JSONB NOT NULL DEFAULT '[]'::jsonb,
-  last_used_at TIMESTAMPTZ,
-  expires_at TIMESTAMPTZ,
-  revoked_at TIMESTAMPTZ,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  UNIQUE (workspace_id, label)
-);
-
 CREATE TABLE IF NOT EXISTS idempotency_records
 (
   idempotency_record_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -200,39 +180,6 @@ CREATE TABLE IF NOT EXISTS exception_states
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE (workspace_id, exception_id)
-);
-
-CREATE TABLE IF NOT EXISTS export_jobs
-(
-  export_job_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  workspace_id UUID NOT NULL REFERENCES workspaces(workspace_id) ON DELETE CASCADE,
-  requested_by_user_id UUID REFERENCES users(user_id) ON DELETE SET NULL,
-  export_kind TEXT NOT NULL,
-  format TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'completed',
-  row_count INTEGER NOT NULL DEFAULT 0,
-  filter_json JSONB NOT NULL DEFAULT '{}'::jsonb,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  completed_at TIMESTAMPTZ
-);
-
-CREATE TABLE IF NOT EXISTS address_labels
-(
-  address_label_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  chain TEXT NOT NULL,
-  address TEXT NOT NULL,
-  entity_name TEXT NOT NULL,
-  entity_type TEXT NOT NULL,
-  label_kind TEXT NOT NULL,
-  role_tags JSONB NOT NULL DEFAULT '[]'::jsonb,
-  source TEXT NOT NULL DEFAULT 'manual',
-  source_ref TEXT,
-  confidence TEXT NOT NULL DEFAULT 'seeded',
-  is_active BOOLEAN NOT NULL DEFAULT TRUE,
-  notes TEXT,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  UNIQUE (chain, address)
 );
 
 ALTER TABLE exception_states
@@ -624,10 +571,6 @@ CREATE INDEX IF NOT EXISTS idx_memberships_organization_id ON organization_membe
 CREATE INDEX IF NOT EXISTS idx_memberships_user_id ON organization_memberships(user_id);
 CREATE INDEX IF NOT EXISTS idx_auth_sessions_user_id ON auth_sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_auth_sessions_organization_id ON auth_sessions(organization_id);
-CREATE INDEX IF NOT EXISTS idx_api_keys_workspace_status_created_at
-  ON api_keys(workspace_id, status, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_api_keys_organization_created_at
-  ON api_keys(organization_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_idempotency_records_actor_created_at
   ON idempotency_records(actor_type, actor_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_idempotency_records_expires_at
@@ -736,11 +679,6 @@ CREATE TRIGGER trg_workspaces_updated_at
 BEFORE UPDATE ON workspaces
 FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
-DROP TRIGGER IF EXISTS trg_api_keys_updated_at ON api_keys;
-CREATE TRIGGER trg_api_keys_updated_at
-BEFORE UPDATE ON api_keys
-FOR EACH ROW EXECUTE FUNCTION set_updated_at();
-
 DROP TRIGGER IF EXISTS trg_idempotency_records_updated_at ON idempotency_records;
 CREATE TRIGGER trg_idempotency_records_updated_at
 BEFORE UPDATE ON idempotency_records
@@ -795,48 +733,3 @@ DROP TRIGGER IF EXISTS trg_exception_states_updated_at ON exception_states;
 CREATE TRIGGER trg_exception_states_updated_at
 BEFORE UPDATE ON exception_states
 FOR EACH ROW EXECUTE FUNCTION set_updated_at();
-
-DROP TRIGGER IF EXISTS trg_address_labels_updated_at ON address_labels;
-CREATE TRIGGER trg_address_labels_updated_at
-BEFORE UPDATE ON address_labels
-FOR EACH ROW EXECUTE FUNCTION set_updated_at();
-
-INSERT INTO address_labels
-(
-  chain,
-  address,
-  entity_name,
-  entity_type,
-  label_kind,
-  role_tags,
-  source,
-  source_ref,
-  confidence,
-  is_active,
-  notes
-)
-VALUES
-(
-  'solana',
-  '69yhtoJR4JYPPABZcSNkzuqbaFbwHsCkja1sP1Q2aVT5',
-  'Jupiter Aggregator Authority 11',
-  'aggregator',
-  'fee_collector',
-  '["fee_recipient","aggregator"]'::jsonb,
-  'orb_seed',
-  'https://orbmarkets.io',
-  'seeded',
-  TRUE,
-  'Seeded from explorer labeling for recurring Jupiter fee recipient behavior.'
-)
-ON CONFLICT (chain, address) DO UPDATE
-SET
-  entity_name = EXCLUDED.entity_name,
-  entity_type = EXCLUDED.entity_type,
-  label_kind = EXCLUDED.label_kind,
-  role_tags = EXCLUDED.role_tags,
-  source = EXCLUDED.source,
-  source_ref = EXCLUDED.source_ref,
-  confidence = EXCLUDED.confidence,
-  is_active = EXCLUDED.is_active,
-  notes = EXCLUDED.notes;

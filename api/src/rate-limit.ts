@@ -26,24 +26,6 @@ export function publicRateLimitMiddleware() {
   };
 }
 
-export function apiKeyRateLimitMiddleware() {
-  return (req: Request, res: Response, next: NextFunction) => {
-    if (!config.rateLimitEnabled || req.auth?.authType !== 'api_key') {
-      next();
-      return;
-    }
-
-    applyRateLimit({
-      req,
-      res,
-      next,
-      bucketKey: `api_key:${req.auth.apiKeyId}`,
-      limit: config.apiKeyRateLimitMax,
-      windowMs: config.apiKeyRateLimitWindowMs,
-    });
-  };
-}
-
 export function resetRateLimitBuckets() {
   buckets.clear();
 }

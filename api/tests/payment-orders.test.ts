@@ -18,7 +18,7 @@ TRUNCATE TABLE
   transfer_request_events,
   exception_notes,
   exception_states,
-  export_jobs,
+  payment_runs,
   payment_order_events,
   payment_orders,
   payment_requests,
@@ -799,17 +799,12 @@ test('payment orders derive settled and exception states from existing reconcili
   assert.equal(partial.reconciliationDetail.requestDisplayState, 'exception');
   assert.equal(partial.reconciliationDetail.exceptions[0].reasonCode, 'partial_settlement');
 
-  const audit = await fetch(
-    `${baseUrl}/workspaces/${setup.workspace.workspaceId}/payment-orders/${partialOrder.paymentOrderId}/audit-export?format=csv`,
-    {
-      headers: authHeaders(setup.sessionToken),
-    },
+  const partialProof = await get(
+    `/workspaces/${setup.workspace.workspaceId}/payment-orders/${partialOrder.paymentOrderId}/proof`,
+    setup.sessionToken,
   );
-  assert.equal(audit.status, 200);
-  const csv = await audit.text();
-  assert.match(csv, /payment_order_id/);
-  assert.match(csv, /MATCH-PARTIAL/);
-  assert.match(csv, /partial_settlement/);
+  assert.equal(partialProof.status, 'exception');
+  assert.equal(partialProof.settlement.reconciliationOutcome, 'partial_settlement');
 });
 
 async function createSubmittedPaymentOrder(
@@ -1151,7 +1146,6 @@ async function executeWithDeadlockRetry<T>(fn: () => Promise<T>, attempts = 5): 
 
 async function clearClickHouseTables() {
   const tables = [
-    'raw_observations',
     'observed_transactions',
     'observed_transfers',
     'observed_payments',

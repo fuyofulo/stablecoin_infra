@@ -1,6 +1,6 @@
 # 03 Backend Control Plane
 
-The backend is the product source of truth. The frontend is a client. Agents should also be clients.
+The backend is the product source of truth. The frontend is a client.
 
 The backend lives in `api/`.
 
@@ -29,15 +29,14 @@ Defines the API contract used to generate OpenAPI.
 
 1. Request ID middleware.
 2. CORS.
-3. Public route metrics.
+3. Public rate limit.
 4. JSON body parser.
-5. Public rate limit.
-6. Matching-index invalidation middleware.
-7. Public routes.
-8. Authentication middleware.
-9. Idempotency middleware.
-10. Protected routes.
-11. Error handler.
+5. Matching-index invalidation middleware.
+6. Public routes.
+7. Authentication middleware.
+8. Idempotency middleware.
+9. Protected routes.
+10. Error handler.
 
 This ordering matters.
 
@@ -54,7 +53,7 @@ Responses include `x-request-id`.
 
 Errors include `requestId` in JSON.
 
-This is important for debugging agents and frontend failures.
+This is important for debugging frontend failures and API clients.
 
 ## CORS
 
@@ -67,9 +66,7 @@ This was necessary because Vite sometimes uses different local ports.
 
 ## Authentication
 
-Authentication supports two modes:
-
-### User Session
+Authentication currently supports user sessions.
 
 The frontend logs in by email. The API creates or resumes a user and returns a bearer token.
 
@@ -82,56 +79,6 @@ Session auth context includes:
 - email
 - display name
 - actor type `user`
-
-### API Key
-
-API keys are workspace-scoped and intended for scripts/agents.
-
-An API key token looks like:
-
-```text
-axoria_live_<token_id>.<secret>
-```
-
-Only the hash is stored in Postgres. The raw token is returned once on creation.
-
-API key auth context includes:
-
-- `authType: api_key`
-- API key id
-- label
-- prefix
-- workspace id
-- organization id
-- role
-- scopes
-- actor type `api_key`
-
-## API Key Scoping
-
-API keys are restricted to:
-
-- `/auth/session`
-- `/auth/logout`
-- `/workspaces/:workspaceId/*` where `workspaceId` equals the key's workspace.
-
-API keys cannot access arbitrary organizations or other workspaces.
-
-Scope mapping is implemented in `auth.ts`.
-
-Common scopes:
-
-- `workspace:read`
-- `workspace:write`
-- `payments:write`
-- `approvals:write`
-- `execution:write`
-- `reconciliation:read`
-- `exceptions:write`
-- `proofs:read`
-- `api_keys:write`
-
-Default agent scopes are defined in `api/src/api-keys.ts`.
 
 ## Idempotency
 
@@ -200,17 +147,14 @@ Internal worker endpoints are protected by service token logic where applicable,
 
 Protected routes include:
 
-- API keys.
 - Organization management.
 - Workspace operations.
 - Treasury wallets (`/workspaces/:id/treasury-wallets`, `/balances`).
 - Counterparties and Destinations.
-- Address labels (chain-wide, not workspace-scoped, but auth'd).
 - Payment requests.
 - Payment runs.
 - Payment orders.
 - Approval policy and inbox.
-- Transfer requests.
 - Events/reconciliation/exceptions.
 - Agent task endpoints.
 
@@ -361,4 +305,3 @@ The API should be a complete product surface independent of the frontend.
 If a feature only works because the frontend knows hidden sequencing logic, it is not API-first enough.
 
 For every important frontend workflow, an agent or CLI should be able to do the same thing through documented API calls.
-

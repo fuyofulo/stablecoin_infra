@@ -3,10 +3,6 @@ import crypto from 'node:crypto';
 import { ZodError } from 'zod';
 import { mapKnownError, normalizeErrorCode } from './api-errors.js';
 import { requireAuth } from './auth.js';
-import { notifyAgentTasksChanged } from './agent-task-events.js';
-import { addressLabelsRouter } from './routes/address-labels.js';
-import { agentRouter } from './routes/agent.js';
-import { apiKeysRouter } from './routes/api-keys.js';
 import { capabilitiesRouter } from './routes/capabilities.js';
 import { config } from './config.js';
 import { approvalsRouter } from './routes/approvals.js';
@@ -17,16 +13,14 @@ import { healthRouter } from './routes/health.js';
 import { idempotencyMiddleware } from './idempotency.js';
 import { internalRouter } from './routes/internal.js';
 import { notifyMatchingIndexChanged, shouldInvalidateMatchingIndex } from './matching-index-events.js';
-import { recordRouteMetric } from './ops-metrics.js';
 import { openApiRouter } from './routes/openapi.js';
 import { organizationsRouter } from './routes/organizations.js';
 import { opsRouter } from './routes/ops.js';
 import { paymentOrdersRouter } from './routes/payment-orders.js';
 import { paymentRequestsRouter } from './routes/payment-requests.js';
 import { paymentRunsRouter } from './routes/payment-runs.js';
-import { apiKeyRateLimitMiddleware, publicRateLimitMiddleware } from './rate-limit.js';
+import { publicRateLimitMiddleware } from './rate-limit.js';
 import { treasuryWalletsRouter } from './routes/treasury-wallets.js';
-import { transferRequestsRouter } from './routes/transfer-requests.js';
 
 export function createApp() {
   const app = express();
@@ -66,18 +60,9 @@ export function createApp() {
       res.on('finish', () => {
         if (res.statusCode >= 200 && res.statusCode < 400) {
           notifyMatchingIndexChanged(`${req.method} ${req.path}`);
-          notifyAgentTasksChanged(`${req.method} ${req.path}`, extractWorkspaceIdFromPath(req.path));
         }
       });
     }
-
-    res.on('finish', () => {
-      recordRouteMetric({
-        method: req.method,
-        route: req.path,
-        statusCode: res.statusCode,
-      });
-    });
 
     next();
   });
@@ -88,11 +73,7 @@ export function createApp() {
   app.use(authRouter);
   app.use(internalRouter);
   app.use(requireAuth());
-  app.use(apiKeyRateLimitMiddleware());
   app.use(idempotencyMiddleware());
-  app.use(addressLabelsRouter);
-  app.use(agentRouter);
-  app.use(apiKeysRouter);
   app.use(organizationsRouter);
   app.use(opsRouter);
   app.use(treasuryWalletsRouter);
@@ -101,7 +82,6 @@ export function createApp() {
   app.use(paymentRequestsRouter);
   app.use(paymentRunsRouter);
   app.use(paymentOrdersRouter);
-  app.use(transferRequestsRouter);
   app.use(eventsRouter);
 
   app.use((error: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
@@ -155,10 +135,6 @@ export function createApp() {
 
 function isLocalDevOrigin(origin: string) {
   return /^https?:\/\/(localhost|127\.0\.0\.1):\d+$/.test(origin);
-}
-
-function extractWorkspaceIdFromPath(path: string) {
-  return path.match(/^\/workspaces\/([^/]+)/)?.[1] ?? null;
 }
 
 declare global {

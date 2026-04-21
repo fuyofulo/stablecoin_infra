@@ -1,210 +1,130 @@
-# 10 API First And Agent Surface
+# 10 API First Surface
 
-Axoria should be usable by humans through the frontend and by agents through the API.
+Axoria should be usable without the frontend, but the current lean build does **not** include workspace API keys or an autonomous agent runtime.
 
-This does not mean the product currently has autonomous agents doing useful work. It means the backend is being shaped so agents can operate it safely.
+The present goal is simpler:
 
-## What "API First" Means Here
-
-API first means:
-
-- every important workflow can be performed without the frontend
-- endpoints are documented
-- auth works for non-human clients
-- responses are structured and predictable
-- mutation requests can be retried safely
-- tasks and available actions can be discovered
-- proof output can be consumed by machines
+```text
+Every important human workflow should have a clean HTTP path, documented in OpenAPI, with idempotent mutations where retries are likely.
+```
 
 ## Current API-First Building Blocks
 
 ### OpenAPI
 
-The API exposes an OpenAPI spec generated from `api-contract.ts`.
+The API exposes:
 
-This gives agents and external clients a discoverable contract.
+```text
+GET /openapi.json
+```
 
-### API Keys
+The spec is generated from `api/src/api-contract.ts`, so route additions and removals should be reflected there first.
 
-Workspace-scoped API keys allow non-frontend clients to authenticate.
-
-Default agent scopes include:
-
-- workspace read/write
-- payments write
-- approvals write
-- execution write
-- reconciliation read
-- exceptions write
-- proofs read
-
-### Idempotency Keys
-
-Agents can safely retry mutations with `Idempotency-Key`.
-
-This is important because agents often run long workflows where network failures happen.
-
-### Agent Tasks
+### Capabilities
 
 The API exposes:
 
 ```text
-GET /workspaces/:workspaceId/agent/tasks
-GET /workspaces/:workspaceId/agent/tasks/events
+GET /capabilities
 ```
 
-The task list combines:
+This is a compact product map for clients. It describes the main workflows:
 
-- approval reviews
-- payment orders ready for execution
-- payment orders awaiting settlement
-- reconciliation reviews
-- open exceptions
+- single payment
+- CSV/payment-run import
+- exception operations
 
-Each task includes:
+### User Sessions
 
-- task id
-- kind
-- priority
-- title
-- status
-- resource href
-- recommended action
-- available actions
-- context
-
-This is the beginning of an agent-native operating surface.
-
-## Example Agent Workflow
-
-A payment operations agent could:
-
-1. Authenticate with workspace API key.
-2. Fetch tasks.
-3. Find pending approval tasks.
-4. Inspect the linked transfer request/payment order.
-5. Apply policy/business rules outside Axoria.
-6. POST approval decision if allowed.
-7. Fetch ready-for-execution tasks.
-8. Prepare execution packet.
-9. Hand packet to a signer or multisig integration.
-10. Attach submitted signature.
-11. Wait for agent task or reconciliation event.
-12. Review exceptions if any.
-13. Fetch proof packet after settlement.
-
-## Example API Sequence
-
-### Import a batch
+Auth is currently session-token based:
 
 ```text
-POST /workspaces/:workspaceId/payment-runs/import-csv
-Authorization: Bearer <api key>
-Idempotency-Key: import-run-2026-04-18-001
+POST /auth/login
+Authorization: Bearer <session-token>
 ```
 
-### List tasks
+Machine authentication was intentionally removed during cleanup until a real agent/customer workflow justifies it.
+
+### Idempotency Keys
+
+Mutation clients can safely retry with:
 
 ```text
-GET /workspaces/:workspaceId/agent/tasks
-Authorization: Bearer <api key>
+Idempotency-Key: stable-client-generated-key
 ```
 
-### Prepare execution
+Use this on:
+
+- payment request creation
+- CSV import
+- payment order creation
+- execution preparation
+- signature attachment
+- exception actions
+
+## Current API Workflow Examples
+
+### Single Payment
 
 ```text
+POST /workspaces/:workspaceId/payment-requests
+POST /workspaces/:workspaceId/payment-requests/:paymentRequestId/promote
+POST /workspaces/:workspaceId/payment-orders/:paymentOrderId/submit
 POST /workspaces/:workspaceId/payment-orders/:paymentOrderId/prepare-execution
-Authorization: Bearer <api key>
-Idempotency-Key: prepare-payment-<id>
-```
-
-### Attach signature
-
-```text
 POST /workspaces/:workspaceId/payment-orders/:paymentOrderId/attach-signature
-Authorization: Bearer <api key>
-Idempotency-Key: attach-signature-<signature>
+GET  /workspaces/:workspaceId/payment-orders/:paymentOrderId/proof?format=markdown
 ```
 
-### Fetch proof
+### Batch Payment Run
 
 ```text
-GET /workspaces/:workspaceId/payment-orders/:paymentOrderId/proof
-Authorization: Bearer <api key>
+POST /workspaces/:workspaceId/payment-runs/import-csv/preview
+POST /workspaces/:workspaceId/payment-runs/import-csv
+POST /workspaces/:workspaceId/payment-runs/:paymentRunId/prepare-execution
+POST /workspaces/:workspaceId/payment-runs/:paymentRunId/attach-signature
+POST /workspaces/:workspaceId/payment-runs/:paymentRunId/close
+GET  /workspaces/:workspaceId/payment-runs/:paymentRunId/proof?format=markdown
 ```
 
-## What Agents Should Not Do Yet
-
-Agents should not:
-
-- hold private keys
-- silently sign transactions
-- bypass approval policy
-- mark exceptions resolved without evidence
-- mutate destinations/trust state without explicit authorization
-- rely on frontend-only state
-
-## Best-Case Agent Scenario
-
-The best near-term agent is not "AI moves money by itself".
-
-The best near-term agent is:
+### Reconciliation Review
 
 ```text
-An operations copilot that watches Axoria tasks, prepares safe next actions, explains exceptions, drafts approvals, fetches proof packets, and hands execution to human/multisig signers.
+GET  /workspaces/:workspaceId/reconciliation
+GET  /workspaces/:workspaceId/reconciliation-queue/:transferRequestId
+GET  /workspaces/:workspaceId/reconciliation-queue/:transferRequestId/explain
+POST /workspaces/:workspaceId/reconciliation-queue/:transferRequestId/refresh
 ```
 
-More advanced later:
+### Exception Handling
 
-- agent imports CSV from trusted source
-- agent validates destinations (including trust state and counterparty tags)
-- agent flags duplicate/suspicious payouts
-- agent prepares batch execution packet
-- human/multisig signs
-- agent monitors settlement
-- agent closes proofs and sends audit packets
+```text
+GET   /workspaces/:workspaceId/exceptions
+GET   /workspaces/:workspaceId/exceptions/:exceptionId
+PATCH /workspaces/:workspaceId/exceptions/:exceptionId
+POST  /workspaces/:workspaceId/exceptions/:exceptionId/notes
+POST  /workspaces/:workspaceId/exceptions/:exceptionId/actions
+```
 
-## Gaps Before Agents Are Truly Strong
+## What Was Removed
 
-Needed improvements:
+The following surfaces were removed because they were adding complexity before real usage:
 
-- More complete OpenAPI descriptions and examples.
-- Stable resource schemas with versioning.
-- Better typed error codes.
-- Webhooks or event subscriptions beyond in-process SSE.
-- Durable task state.
-- Explicit permissions per action.
-- More structured proof packets.
-- Safer approval policies.
-- Stronger audit log coverage.
-- Agent-specific integration tests.
+- workspace API keys
+- agent task queue
+- agent task SSE stream
+- API-key scope enforcement
 
-## Security Notes
+This does not mean Axoria can never support agents. It means agent support should return only after we validate a concrete workflow and threat model.
 
-API keys are powerful.
+## What Agents Would Need Later
 
-Production hardening should include:
+If agent support becomes real, add it deliberately:
 
-- expiration defaults
-- rotation UX
-- audit logs for API-key actions
-- per-scope enforcement tests
-- rate limits per key
-- IP allowlisting if needed
-- secret scanning
-- admin approval for high-privilege keys
+- machine auth with scoped credentials
+- durable task queue or explicit worklist endpoints
+- route-level permission model
+- integration tests with an actual agent client
+- event subscription that works across multiple API replicas
+- audit events for every machine action
 
-## Design Rule For Agent Features
-
-Do not build "agent magic" into the frontend.
-
-Agent support belongs in:
-
-- API contracts
-- task discovery
-- idempotent workflows
-- explicit actions
-- structured errors
-- auditable decisions
-- proof outputs
-
+Until then, keep the backend API-first for humans and scripts, not agent-shaped in theory.

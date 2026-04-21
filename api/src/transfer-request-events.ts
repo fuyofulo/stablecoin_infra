@@ -6,9 +6,9 @@ export async function createTransferRequestEvent(
     transferRequestId: string;
     workspaceId: string;
     eventType: string;
-    actorType: 'user' | 'system' | 'worker' | 'api_key';
+    actorType: 'user' | 'system' | 'worker';
     actorId?: string | null;
-    eventSource: 'user' | 'system' | 'worker' | 'api_key';
+    eventSource: 'user' | 'system' | 'worker';
     beforeState?: string | null;
     afterState?: string | null;
     linkedSignature?: string | null;

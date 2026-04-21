@@ -679,20 +679,6 @@ export type ReconciliationDetail = ReconciliationRow & {
   availableTransitions: string[];
 };
 
-export type ExportJob = {
-  exportJobId: string;
-  workspaceId: string;
-  requestedByUserId: string | null;
-  exportKind: string;
-  format: 'csv' | 'json';
-  status: string;
-  rowCount: number;
-  filterJson: Record<string, unknown>;
-  createdAt: string;
-  completedAt: string | null;
-  requestedByUser: User | null;
-};
-
 export type OpsHealth = {
   postgres: string;
   workerStatus: 'healthy' | 'degraded' | 'stale' | 'offline';

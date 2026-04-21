@@ -3457,9 +3457,6 @@ function PaymentDetailPage({ session }: { session: AuthenticatedSession }) {
           <button className="button button-secondary" onClick={() => proofMutation.mutate()} type="button">
             Export proof
           </button>
-          <button className="button button-secondary" onClick={() => void api.downloadPaymentOrderAuditExport(workspaceId, paymentOrderId)} type="button">
-            Audit CSV
-          </button>
           <button
             className="button button-secondary"
             disabled={deletePaymentMutation.isPending}

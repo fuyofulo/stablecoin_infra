@@ -182,7 +182,6 @@ The architecture should avoid storing all USDC activity.
 Needed:
 
 - ensure only relevant materialized rows are retained
-- define raw observation retention
 - benchmark filtering throughput
 
 ## Frontend Risks
@@ -218,9 +217,9 @@ Frontend can guide users, but backend must enforce.
 
 ## Observability Risks
 
-### Grafana Is Present But Needs Operational Ownership
+### Observability Needs Product Ownership
 
-Dashboards exist, but production metrics need ownership.
+Production metrics need ownership.
 
 Needed:
 
@@ -232,7 +231,7 @@ Needed:
 
 ### Log Noise
 
-Repeated label resolver logs and matching refresh logs can hide real errors.
+Repeated matching refresh logs or unknown-address logs can hide real errors.
 
 Needed:
 
@@ -240,21 +239,21 @@ Needed:
 - log levels
 - suppression/cooldowns
 
-## Agent Risks
+## API Client Risks
 
-### Agent Surface Is Early
+### API Client Surface Is Early
 
-Agent tasks exist, but no real agent has been validated end-to-end.
+The API is usable by scripts, but machine-client auth and a validated agent workflow were intentionally removed from the lean build.
 
-Needed:
+Needed before bringing agents back:
 
-- agent integration tests
-- example agent scripts
-- task execution receipts
+- concrete agent workflow
+- machine-auth threat model
+- integration tests with a real client
 - safer action permissions
 - better OpenAPI examples
 
-### Agents Need Better Error Codes
+### API Clients Need Better Error Codes
 
 Agents need stable machine-readable errors, not only human messages.
 
@@ -271,9 +270,9 @@ Recommended cleanup order:
 1. Stabilize API contract and typed errors.
 2. Split payment order/run service modules.
 3. Add tests for signature-first matching, partial-to-settled transition, and proof output.
-4. Add negative cache for unresolved address labels.
+4. Keep unknown-address handling local and quiet.
 5. Harden execution packet/signature workflow.
-6. Add agent end-to-end workflow tests.
+6. Validate a real machine-client workflow before reintroducing agent auth/tasks.
 7. Split frontend pages/components.
 8. Redesign UX once backend semantics are stable.
 
@@ -286,7 +285,7 @@ Do not delete these just because they look indirect:
 - `PaymentOrderEvent` and `TransferRequestEvent`: audit/proof timeline.
 - `ExceptionState`: overlays operator workflow onto ClickHouse exceptions.
 - matching-index SSE: avoids polling.
-- API keys/idempotency: important for agent/API-first direction.
+- `IdempotencyRecord`: important for safe API retries.
 
 ## What Can Probably Be Simplified Later
 
@@ -296,4 +295,3 @@ Do not delete these just because they look indirect:
 - direct transfer-request creation flows if payment orders fully replace them
 - excessive proof JSON verbosity
 - route-heavy logic once service modules are split
-

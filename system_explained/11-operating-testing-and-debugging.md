@@ -24,19 +24,6 @@ make infra-up
 
 Use this when running API/frontend manually.
 
-## Start Grafana
-
-```bash
-make grafana-up
-```
-
-Grafana:
-
-```text
-http://127.0.0.1:3001
-admin / admin
-```
-
 ## Run Tests
 
 ```bash
@@ -160,15 +147,9 @@ If it refreshes constantly:
 
 The worker should not need polling to stay fresh.
 
-## Debug Repeated Orb Label Logs
+## Debug Repeated Unknown Address Noise
 
-Repeated logs like:
-
-```text
-[address-label-registry] Orb returned no usable labels for 1 unresolved address(es)
-```
-
-mean the label resolver is repeatedly trying to resolve an address that Orb cannot label.
+The old Orb label resolver was removed. If unknown addresses are noisy again, the correct fix is not to reintroduce remote label lookups in the hot path.
 
 Correct behavior should be:
 
@@ -241,4 +222,3 @@ Only use when intentionally discarding local state.
 - Do not change API route paths without updating `api-contract.ts`.
 - Do not make frontend the only place where business rules exist.
 - Do not store all observed world data just because the stream has it.
-

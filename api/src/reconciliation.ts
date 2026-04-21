@@ -1,5 +1,4 @@
 import {
-  AddressLabel,
   ApprovalDecision,
   ApprovalPolicy,
   Counterparty,
@@ -19,7 +18,6 @@ import {
 } from './approval-policy.js';
 import { escapeClickHouseString, normalizeClickHouseDateTime, queryClickHouse } from './clickhouse.js';
 import { config } from './config.js';
-import { getOrResolveAddressLabels } from './address-label-registry.js';
 import { serializeExecutionRecord } from './execution-records.js';
 import { prisma } from './prisma.js';
 import {
@@ -389,8 +387,6 @@ export async function listReconciliationQueue(workspaceId: string, options: Queu
     observedExecutionSignatures,
   });
 
-  await hydrateAddressLabelsForQueueItems(items);
-
   return options.displayState
     ? items
         .filter((item) => item.requestDisplayState === options.displayState)
@@ -457,8 +453,6 @@ export async function listApprovalInbox(args: {
     exceptions,
     observedExecutionSignatures,
   });
-
-  await hydrateAddressLabelsForQueueItems(items);
 
   return {
     approvalPolicy: serializeApprovalPolicy(approvalPolicy),
@@ -549,8 +543,6 @@ export async function getReconciliationDetail(workspaceId: string, transferReque
   });
   const queueItem = queueItems[0];
 
-  await hydrateAddressLabelsForQueueItems([queueItem]);
-
   const exceptionIds = queueItem.exceptions.map((item) => item.exceptionId);
   const exceptionNotes = exceptionIds.length
     ? await prisma.exceptionNote.findMany({
@@ -598,15 +590,8 @@ export async function getReconciliationDetail(workspaceId: string, transferReque
   const expectedDestinationWallet =
     requestWithTimeline.destination?.walletAddress
     ?? null;
-  const addressLabels = await getOrResolveAddressLabels(
-    'solana',
-    relatedObservedPayments
-      .map((payment) => payment.destinationWallet)
-      .filter((value): value is string => Boolean(value))
-      .filter((value) => value !== expectedDestinationWallet),
-  );
   const annotatedObservedPayments = relatedObservedPayments.map((payment) =>
-    annotateObservedPayment(payment, expectedDestinationWallet, addressLabels),
+    annotateObservedPayment(payment, expectedDestinationWallet),
   );
   const detailedMatchExplanation = buildDetailedMatchExplanation({
     requestAmountRaw: requestWithTimeline.amountRaw.toString(),
@@ -1112,16 +1097,11 @@ function annotateObservedPayment(
     ? NonNullable<T>
     : never,
   expectedDestinationWallet: string | null,
-  addressLabels: Map<string, AddressLabel>,
 ) {
-  const knownRecipient = payment.destinationWallet
-    ? addressLabels.get(payment.destinationWallet) ?? null
-    : null;
-
   const recipientRole: RelatedPaymentRole =
     payment.destinationWallet && expectedDestinationWallet && payment.destinationWallet === expectedDestinationWallet
       ? 'expected_destination'
-      : deriveRecipientRole(knownRecipient);
+      : 'other_destination';
 
   return {
     ...payment,
@@ -1129,27 +1109,12 @@ function annotateObservedPayment(
     destinationLabel:
       recipientRole === 'expected_destination'
         ? 'Expected destination'
-        : knownRecipient?.entityName ?? null,
-    labelKind: knownRecipient?.labelKind ?? null,
-    entityType: knownRecipient?.entityType ?? null,
-    roleTags: normalizeRoleTags(knownRecipient?.roleTags),
-    labelConfidence: knownRecipient?.confidence ?? null,
+        : null,
+    labelKind: null,
+    entityType: null,
+    roleTags: [],
+    labelConfidence: null,
   };
-}
-
-function deriveRecipientRole(label: AddressLabel | null): RelatedPaymentRole {
-  if (!label) {
-    return 'other_destination';
-  }
-
-  if (
-    label.labelKind === 'fee_collector'
-    || normalizeRoleTags(label.roleTags).includes('fee_recipient')
-  ) {
-    return 'known_fee_recipient';
-  }
-
-  return 'other_destination';
 }
 
 function buildDetailedMatchExplanation(args: {
@@ -2025,45 +1990,6 @@ async function queryObservedPaymentsBySignatures(signatures: string[]) {
   );
 
   return response.map((row) => serializeObservedPayment(row));
-}
-
-async function hydrateAddressLabelsForQueueItems(
-  items: Array<ReturnType<typeof buildQueueItems>[number]>,
-) {
-  const signaturesToHydrate = uniqueValues(
-    items
-      .filter((item) =>
-        item.linkedSignature
-        && (item.requestDisplayState === 'partial' || item.requestDisplayState === 'exception'),
-      )
-      .map((item) => item.linkedSignature)
-      .filter((value): value is string => Boolean(value)),
-  );
-
-  if (!signaturesToHydrate.length) {
-    return;
-  }
-
-  const relatedPayments = await queryObservedPaymentsBySignatures(signaturesToHydrate);
-  const expectedDestinationWallets = new Set(
-    items
-      .map((item) => item.destination?.walletAddress ?? null)
-      .filter((value): value is string => Boolean(value)),
-  );
-  const destinationWallets = uniqueValues(
-    relatedPayments
-      .map((payment) => payment.destinationWallet)
-      .filter((value): value is string => Boolean(value)),
-  );
-
-  if (!destinationWallets.length) {
-    return;
-  }
-
-  await getOrResolveAddressLabels(
-    'solana',
-    destinationWallets.filter((wallet) => !expectedDestinationWallets.has(wallet)),
-  );
 }
 
 function safeJsonParse(value: string | null) {

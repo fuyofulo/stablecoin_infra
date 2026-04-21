@@ -1,26 +1,5 @@
 USE usdc_ops;
 
--- Raw layer:
--- Immutable ingestion records exactly as seen from Yellowstone.
-
-CREATE TABLE IF NOT EXISTS raw_observations
-(
-    observation_id UUID,
-    ingest_time DateTime64(3, 'UTC') DEFAULT now64(3),
-    slot UInt64,
-    signature String DEFAULT '',
-    update_type LowCardinality(String),
-    pubkey String,
-    owner_program Nullable(String),
-    write_version UInt64,
-    raw_payload_json String,
-    raw_payload_bytes Nullable(String),
-    parser_version UInt32
-)
-ENGINE = MergeTree
-PARTITION BY toYYYYMM(ingest_time)
-ORDER BY (slot, signature, pubkey, write_version, observation_id);
-
 CREATE TABLE IF NOT EXISTS observed_transactions
 (
     signature String,

@@ -42,30 +42,7 @@ services:
       retries: 12
       start_period: 20s
 
-  grafana:
-    image: grafana/grafana:12.3.0
-    container_name: axoria-grafana
-    restart: unless-stopped
-    ports:
-      - "3001:3000"
-    environment:
-      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
-      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
-      GF_USERS_DEFAULT_THEME: light
-      GF_INSTALL_PLUGINS: grafana-clickhouse-datasource
-      GF_PLUGINS_PREINSTALL: grafana-clickhouse-datasource
-    volumes:
-      - grafana_data:/var/lib/grafana
-      - ./grafana/provisioning:/etc/grafana/provisioning
-      - ./grafana/dashboards:/var/lib/grafana/dashboards
-    depends_on:
-      postgres:
-        condition: service_healthy
-      clickhouse:
-        condition: service_healthy
-
 volumes:
   postgres_data:
   clickhouse_data:
   clickhouse_logs:
-  grafana_data:

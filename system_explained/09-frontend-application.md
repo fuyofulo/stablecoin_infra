@@ -1,6 +1,6 @@
 # 09 Frontend Application
 
-The frontend lives in `frontend/` and is a Vite + React + TypeScript app with React Router and TanStack Query. It talks to the API only — no direct ClickHouse or Postgres access. The backend enforces every business rule; the frontend is one client among several (human UI, API keys, agents).
+The frontend lives in `frontend/` and is a Vite + React + TypeScript app with React Router and TanStack Query. It talks to the API only — no direct ClickHouse or Postgres access. The backend enforces every business rule; the frontend is one client over the same HTTP API that scripts can also call with user sessions.
 
 ## High-level shape
 

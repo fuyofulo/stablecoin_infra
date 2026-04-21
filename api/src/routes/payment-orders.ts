@@ -1,4 +1,4 @@
-import { Router, type Response } from 'express';
+import { Router } from 'express';
 import { z } from 'zod';
 import {
   attachPaymentOrderSignature,
@@ -11,7 +11,7 @@ import {
   updatePaymentOrder,
   submitPaymentOrder,
 } from '../payment-orders.js';
-import { buildPaymentOrderAuditRows, buildPaymentOrderProofPacket } from '../payment-order-proof.js';
+import { buildPaymentOrderProofPacket } from '../payment-order-proof.js';
 import { renderPaymentOrderProofMarkdown } from '../payment-proof-markdown.js';
 import { isPaymentOrderState } from '../payment-order-state.js';
 import { isSolanaSignatureLike } from '../solana.js';
@@ -88,10 +88,6 @@ const attachSignatureSchema = z.object({
 
 const proofQuerySchema = z.object({
   format: z.enum(['json', 'markdown']).default('json'),
-});
-
-const auditExportQuerySchema = z.object({
-  format: z.enum(['csv', 'json']).default('csv'),
 });
 
 paymentOrdersRouter.get('/workspaces/:workspaceId/payment-orders', asyncRoute(async (req, res) => {
@@ -291,44 +287,3 @@ paymentOrdersRouter.get(
     }
   },
 );
-
-paymentOrdersRouter.get(
-  '/workspaces/:workspaceId/payment-orders/:paymentOrderId/audit-export',
-  async (req, res, next) => {
-    try {
-      const { workspaceId, paymentOrderId } = paymentOrderParamsSchema.parse(req.params);
-      const query = auditExportQuerySchema.parse(req.query);
-      await assertWorkspaceAccess(workspaceId, req.auth!);
-      const rows = await buildPaymentOrderAuditRows(workspaceId, paymentOrderId);
-
-      if (query.format === 'json') {
-        sendList(res, rows);
-        return;
-      }
-
-      respondWithCsv(res, `payment-order-${paymentOrderId}.csv`, rows);
-    } catch (error) {
-      next(error);
-    }
-  },
-);
-
-function respondWithCsv(res: Response, fileName: string, rows: Array<Record<string, string>>) {
-  const headers = rows[0] ? Object.keys(rows[0]) : ['section', 'key', 'value'];
-  const csv = [
-    headers.join(','),
-    ...rows.map((row) => headers.map((header) => escapeCsv(row[header] ?? '')).join(',')),
-  ].join('\n');
-
-  res.setHeader('content-type', 'text/csv; charset=utf-8');
-  res.setHeader('content-disposition', `attachment; filename="${fileName}"`);
-  res.send(csv);
-}
-
-function escapeCsv(value: string) {
-  if (!/[",\n]/.test(value)) {
-    return value;
-  }
-
-  return `"${value.replaceAll('"', '""')}"`;
-}

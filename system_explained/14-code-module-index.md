@@ -7,6 +7,10 @@ Files that no longer exist but may still appear in old search results:
 - `api/src/payees.ts` — **deleted**.
 - `api/src/routes/addresses.ts` → replaced by `api/src/routes/treasury-wallets.ts`.
 - `api/src/routes/payees.ts` — **deleted**.
+- `api/src/api-keys.ts`, `api/src/routes/api-keys.ts` — **deleted** during lean cleanup.
+- `api/src/agent-tasks.ts`, `api/src/agent-task-events.ts`, `api/src/routes/agent.ts` — **deleted** during lean cleanup.
+- `api/src/address-label-registry.ts`, `api/src/routes/address-labels.ts` — **deleted**. Destination/counterparty labels are workspace-owned now.
+- `api/src/routes/transfer-requests.ts` — **deleted**. Transfer requests remain an internal reconciliation model; public workflows use payment requests/orders/runs.
 
 ## Backend Core (`api/src/`)
 
@@ -27,9 +31,8 @@ Files that no longer exist but may still appear in old search results:
 ### Auth and access
 
 - `auth.ts` — login, session creation, session lookup, `requireAuth` middleware.
-- `api-keys.ts` — API key creation, hashing, scope evaluation, `axoria_live_<id>.<secret>` format.
 - `idempotency.ts` — idempotency-key handling backed by `IdempotencyRecord`.
-- `actor.ts` — uniform actor representation (user or api_key) for audit logs.
+- `actor.ts` — uniform user actor representation for audit logs.
 - `axoria-client.ts` — internal HTTP client used by the API to talk to the worker and back.
 
 ### Treasury wallets, destinations, counterparties
@@ -38,14 +41,13 @@ Files that no longer exist but may still appear in old search results:
 - `destinations.ts` — CRUD for `Destination` + `Counterparty`. Destinations store `walletAddress` directly; this module enforces the `(workspaceId, walletAddress)` uniqueness and the trust-state transitions.
 - `pricing.ts` — SOL/USD price with a 60-second in-memory TTL. Uses Binance `SOLUSDT`, with stale fallback if the HTTP call fails. Consumed by `/treasury-wallets/balances`.
 - `solana.ts` — Solana helpers: RPC client, ATA derivation, balance fetch.
-- `address-label-registry.ts` — generic `AddressLabel` reads/writes (chain-wide, not workspace-scoped).
 
 ### Business intent and workflow
 
 - `payment-requests.ts` — request service: create, import CSV, preview, materialize-to-order.
 - `payment-runs.ts` — batch service: CSV import with idempotent fingerprinting, prepare execution, attach signature, cancel/close.
 - `payment-run-state.ts` — derived state for a `PaymentRun` based on its child orders.
-- `payment-orders.ts` — order service: submit, cancel, prepare, attach signature, proof, audit export.
+- `payment-orders.ts` — order service: submit, cancel, prepare, attach signature, proof.
 - `payment-order-state.ts` — state machine for a single `PaymentOrder`.
 - `approval-policy.ts` — policy evaluation. Reads `ruleJson` and decides whether a request is auto-cleared, routed, or needs escalation.
 - `execution-records.ts` — `ExecutionRecord` creation and updates. Used when preparing packets and attaching signatures.
@@ -63,13 +65,7 @@ Files that no longer exist but may still appear in old search results:
 - `observed-transfers.ts` — helpers for reading observed transfers from ClickHouse.
 - `clickhouse.ts` — ClickHouse client factory and query helpers.
 - `matching-index-events.ts` — SSE fan-out for matching-index invalidations.
-- `ops-metrics.ts` — worker + API metrics surfaced at `/internal/ops-metrics`.
 - `matching-context.ts` (if present) — per-workspace matcher context bundling.
-
-### Agent surface
-
-- `agent-tasks.ts` — task queue model, create/list/complete.
-- `agent-task-events.ts` — SSE stream of agent task events.
 
 ### Routes (`api/src/routes/`)
 
@@ -79,11 +75,9 @@ One file per route group; each wires its own router that `app.ts` mounts. Curren
 - `auth.ts`, `organizations.ts`
 - `treasury-wallets.ts` *(replaces old `addresses.ts`)*
 - `destinations.ts`
-- `address-labels.ts`
 - `payment-requests.ts`, `payment-runs.ts`, `payment-orders.ts`
-- `transfer-requests.ts`
 - `approvals.ts`, `events.ts`
-- `ops.ts`, `api-keys.ts`, `agent.ts`
+- `ops.ts`
 - `internal.ts`
 
 There is **no `payees.ts`** route module, and **no `addresses.ts`** route module.
@@ -155,11 +149,10 @@ The worker only treats `TreasuryWallet.address` entries as "ours." Destination w
 
 ## Infrastructure
 
-- `Makefile` — `make infra-up`, `make dev`, `make grafana-up`, `make test`, `make reset-data`, etc.
-- `docker-compose.yml` — Postgres + ClickHouse + Grafana dev stack.
+- `Makefile` — `make infra-up`, `make dev`, `make test`, `make reset-data`, etc.
+- `docker-compose.yml` — Postgres + ClickHouse dev stack.
 - `postgres/init/001-control-plane.sql` — initial Postgres seed / support objects.
 - `clickhouse/init/` — observed-data tables, matcher events, settlement matches, exceptions.
-- `grafana/` — provisioned datasources and dashboards.
 
 ## Repo-root docs and briefs
 

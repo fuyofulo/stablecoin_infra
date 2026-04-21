@@ -4,7 +4,7 @@ use crate::control_plane::{
 };
 use crate::storage::{
     ClickHouseWriter, ExceptionRow, MatcherEventRow, ObservedPaymentRow, ObservedTransactionRow,
-    ObservedTransferRow, RawObservationRow, RequestBookSnapshotRow, SettlementMatchRow,
+    ObservedTransferRow, RequestBookSnapshotRow, SettlementMatchRow,
 };
 use crate::yellowstone::formatting::{
     coption_pubkey_to_string, format_amount, parse_amount_raw, token_account_state_label,
@@ -17,8 +17,6 @@ use crate::yellowstone::transaction_context::{TransactionContext, build_transact
 use crate::yellowstone::transfer_reconstruction::{
     ObservedTransfer, reconstruct_observed_transfers,
 };
-use base64::Engine;
-use base64::engine::general_purpose::STANDARD as BASE64;
 use chrono::{DateTime, Utc};
 use futures::{SinkExt, StreamExt};
 use serde_json::json;
@@ -46,8 +44,6 @@ const USDC_MINT: &str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 const MATCH_WINDOW_BEFORE_REQUEST_SECONDS: i64 = 120;
 const MATCH_WINDOW_AFTER_REQUEST_SECONDS: i64 = 24 * 60 * 60;
 const MAX_RECENT_SIGNATURES: usize = 50_000;
-const RAW_OBSERVATION_BUFFER_MAX_ROWS: usize = 512;
-const RAW_OBSERVATION_FLUSH_INTERVAL: Duration = Duration::from_millis(1_000);
 const MATERIALIZED_OBSERVATIONS_FLUSH_INTERVAL: Duration = Duration::from_millis(250);
 const OBSERVED_TRANSACTIONS_BUFFER_MAX_ROWS: usize = 512;
 const OBSERVED_TRANSFERS_BUFFER_MAX_ROWS: usize = 2_048;
@@ -64,20 +60,6 @@ struct WorkerState {
 struct RecentSignatureCache {
     order: VecDeque<String>,
     seen: HashSet<String>,
-}
-
-struct PendingRawObservations {
-    rows: Vec<RawObservationRow>,
-    last_flush: Instant,
-}
-
-impl Default for PendingRawObservations {
-    fn default() -> Self {
-        Self {
-            rows: Vec::new(),
-            last_flush: Instant::now(),
-        }
-    }
 }
 
 struct PendingMaterializedObservations {
@@ -126,7 +108,6 @@ pub struct YellowstoneWorker {
     writer: ClickHouseWriter,
     registry_cache: Arc<Mutex<WorkspaceRegistryCache>>,
     recent_signatures: tokio::sync::Mutex<RecentSignatureCache>,
-    pending_raw_observations: tokio::sync::Mutex<PendingRawObservations>,
     pending_materialized_observations: tokio::sync::Mutex<PendingMaterializedObservations>,
     latest_seen_slot: AtomicU64,
     debug_account_logs: bool,
@@ -150,7 +131,6 @@ impl YellowstoneWorker {
             writer,
             registry_cache: Arc::new(Mutex::new(registry_cache)),
             recent_signatures: tokio::sync::Mutex::new(RecentSignatureCache::default()),
-            pending_raw_observations: tokio::sync::Mutex::new(PendingRawObservations::default()),
             pending_materialized_observations: tokio::sync::Mutex::new(
                 PendingMaterializedObservations::default(),
             ),
@@ -169,25 +149,6 @@ impl YellowstoneWorker {
 
         if let Err(error) = self.refresh_registry_if_stale().await {
             eprintln!("Failed to load workspace registry on startup: {}", error);
-            let _ = self
-                .registry_cache
-                .lock()
-                .await
-                .client()
-                .report_worker_stage(
-                    "startup_registry_refresh",
-                    "error",
-                    Some(&error.to_string()),
-                )
-                .await;
-        } else {
-            let _ = self
-                .registry_cache
-                .lock()
-                .await
-                .client()
-                .report_worker_stage("startup_registry_refresh", "ok", None)
-                .await;
         }
         tokio::spawn(run_matching_index_event_listener(
             self.registry_cache.clone(),
@@ -253,33 +214,8 @@ impl YellowstoneWorker {
             }
 
             let should_reconnect = loop {
-                if let Err(error) = self.flush_pending_raw_observations(false).await {
-                    eprintln!("Failed to flush buffered raw observations: {}", error);
-                    let _ = self
-                        .registry_cache
-                        .lock()
-                        .await
-                        .client()
-                        .report_worker_stage(
-                            "flush_raw_observations",
-                            "error",
-                            Some(&error.to_string()),
-                        )
-                        .await;
-                }
                 if let Err(error) = self.flush_pending_materialized_observations(false).await {
                     eprintln!("Failed to flush buffered observed settlements: {}", error);
-                    let _ = self
-                        .registry_cache
-                        .lock()
-                        .await
-                        .client()
-                        .report_worker_stage(
-                            "flush_materialized_observations",
-                            "error",
-                            Some(&error.to_string()),
-                        )
-                        .await;
                 }
                 match stream.next().await {
                     Some(Ok(update)) => {
@@ -299,17 +235,6 @@ impl YellowstoneWorker {
                                 "Yellowstone stream error: {}. Reconnecting in {:?}...",
                                 error, reconnect_backoff
                             );
-                            let _ = self
-                                .registry_cache
-                                .lock()
-                                .await
-                                .client()
-                                .report_worker_stage(
-                                    "stream_receive",
-                                    "error",
-                                    Some(&error.to_string()),
-                                )
-                                .await;
                         }
                         break true;
                     }
@@ -323,39 +248,11 @@ impl YellowstoneWorker {
                 }
             };
 
-            if let Err(error) = self.flush_pending_raw_observations(true).await {
-                eprintln!(
-                    "Failed to flush buffered raw observations before reconnect: {}",
-                    error
-                );
-                let _ = self
-                    .registry_cache
-                    .lock()
-                    .await
-                    .client()
-                    .report_worker_stage(
-                        "flush_raw_observations",
-                        "error",
-                        Some(&error.to_string()),
-                    )
-                    .await;
-            }
             if let Err(error) = self.flush_pending_materialized_observations(true).await {
                 eprintln!(
                     "Failed to flush buffered observed settlements before reconnect: {}",
                     error
                 );
-                let _ = self
-                    .registry_cache
-                    .lock()
-                    .await
-                    .client()
-                    .report_worker_stage(
-                        "flush_materialized_observations",
-                        "error",
-                        Some(&error.to_string()),
-                    )
-                    .await;
             }
 
             if should_reconnect {
@@ -371,11 +268,6 @@ impl YellowstoneWorker {
         cache.refresh_now().await
     }
 
-    async fn enqueue_raw_observation(&self, row: RawObservationRow) {
-        let mut pending = self.pending_raw_observations.lock().await;
-        pending.rows.push(row);
-    }
-
     async fn enqueue_materialized_observations(
         &self,
         transaction: ObservedTransactionRow,
@@ -386,27 +278,6 @@ impl YellowstoneWorker {
         pending.transactions.push(transaction);
         pending.transfers.extend(transfers);
         pending.payments.extend(payments);
-    }
-
-    async fn flush_pending_raw_observations(
-        &self,
-        force: bool,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let rows = {
-            let mut pending = self.pending_raw_observations.lock().await;
-            let should_flush = force
-                || pending.rows.len() >= RAW_OBSERVATION_BUFFER_MAX_ROWS
-                || pending.last_flush.elapsed() >= RAW_OBSERVATION_FLUSH_INTERVAL;
-
-            if !should_flush || pending.rows.is_empty() {
-                return Ok(());
-            }
-
-            pending.last_flush = Instant::now();
-            std::mem::take(&mut pending.rows)
-        };
-
-        self.writer.insert_raw_observations(&rows).await
     }
 
     async fn flush_pending_materialized_observations(
@@ -463,42 +334,7 @@ impl YellowstoneWorker {
                 self.observe_slot(account_update.slot);
                 if let Some(account) = account_update.account {
                     let pubkey = bs58::encode(&account.pubkey).into_string();
-                    let signature = account
-                        .txn_signature
-                        .as_ref()
-                        .map(|signature| bs58::encode(signature).into_string())
-                        .unwrap_or_else(|| "none".to_string());
                     let owner_program = bs58::encode(&account.owner).into_string();
-
-                    let raw_row = RawObservationRow {
-                        observation_id: Uuid::new_v4().to_string(),
-                        ingest_time: Utc::now(),
-                        slot: account_update.slot,
-                        signature: signature.clone(),
-                        update_type: "account".to_string(),
-                        pubkey: pubkey.clone(),
-                        owner_program: Some(owner_program.clone()),
-                        write_version: account.write_version,
-                        raw_payload_json: json!({
-                            "filters": update.filters,
-                            "slot": account_update.slot,
-                            "pubkey": pubkey,
-                            "signature": signature,
-                            "owner_program": owner_program,
-                            "data_len": account.data.len(),
-                            "write_version": account.write_version,
-                        })
-                        .to_string(),
-                        raw_payload_bytes: Some(BASE64.encode(&account.data)),
-                        parser_version: 1,
-                    };
-
-                    if self
-                        .should_store_account_observation(&pubkey, &signature, &account.data)
-                        .await
-                    {
-                        self.enqueue_raw_observation(raw_row).await;
-                    }
 
                     if self.debug_account_logs {
                         match filters.as_str() {
@@ -660,12 +496,6 @@ impl YellowstoneWorker {
         }
 
         if cfg!(test) {
-            if let Err(error) = self.flush_pending_raw_observations(true).await {
-                eprintln!(
-                    "Failed to flush buffered raw observations in tests: {}",
-                    error
-                );
-            }
             if let Err(error) = self.flush_pending_materialized_observations(true).await {
                 eprintln!(
                     "Failed to flush buffered observed settlements in tests: {}",
@@ -681,13 +511,6 @@ impl YellowstoneWorker {
         worker_received_at: DateTime<Utc>,
         worker_state: &mut WorkerState,
     ) {
-        if let Err(error) = self.flush_pending_raw_observations(true).await {
-            eprintln!(
-                "Failed to flush buffered raw observations before processing {}: {}",
-                context.signature, error
-            );
-        }
-
         {
             let recent_signatures = self.recent_signatures.lock().await;
             if recent_signatures.contains(&context.signature) {
@@ -1202,27 +1025,6 @@ impl YellowstoneWorker {
         true
     }
 
-    async fn should_store_account_observation(
-        &self,
-        token_account_address: &str,
-        signature: &str,
-        account_data: &[u8],
-    ) -> bool {
-        let registry = {
-            let registry_guard = self.registry_cache.lock().await;
-            registry_guard.registry().clone()
-        };
-
-        if registry.is_submitted_signature(signature)
-            || registry.is_watched_address(token_account_address)
-        {
-            return true;
-        }
-
-        SplTokenAccount::unpack(account_data)
-            .map(|token_account| registry.is_watched_address(&token_account.owner.to_string()))
-            .unwrap_or(false)
-    }
 }
 
 impl YellowstoneWorker {
@@ -1620,15 +1422,6 @@ mod tests {
             )
             .await;
 
-        assert_eq!(
-            harness
-                .query_count(&format!(
-                    "SELECT count() AS count FROM usdc_ops.raw_observations WHERE signature = '{}'",
-                    signature
-                ))
-                .await,
-            1
-        );
         assert_eq!(
             harness
                 .query_count(&format!(
@@ -2145,7 +1938,6 @@ mod tests {
                 "observed_payments",
                 "observed_transfers",
                 "observed_transactions",
-                "raw_observations",
             ] {
                 self.execute(&format!("TRUNCATE TABLE usdc_ops.{}", table))
                     .await;

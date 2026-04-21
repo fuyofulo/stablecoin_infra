@@ -443,9 +443,6 @@ export const api = {
       },
     );
   },
-  downloadPaymentOrderAuditExport(workspaceId: string, paymentOrderId: string) {
-    return download(`/workspaces/${workspaceId}/payment-orders/${paymentOrderId}/audit-export?format=csv`);
-  },
   getPaymentOrderProof(workspaceId: string, paymentOrderId: string) {
     return request<PaymentProofPacket>(`/workspaces/${workspaceId}/payment-orders/${paymentOrderId}/proof`);
   },

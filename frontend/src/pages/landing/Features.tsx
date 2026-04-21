@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactElement } from 'react';
 import { IconDownload } from './Icons';
 
 function PolicyVisual() {
@@ -118,7 +118,7 @@ type Feature = {
   id: string;
   title: string;
   desc: string;
-  Visual: () => JSX.Element;
+  Visual: () => ReactElement;
 };
 
 const FEATURES: Feature[] = [

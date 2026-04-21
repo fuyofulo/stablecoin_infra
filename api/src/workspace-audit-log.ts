@@ -5,8 +5,7 @@ export type WorkspaceAuditEntityType =
   | 'transfer_request'
   | 'approval'
   | 'execution'
-  | 'exception'
-  | 'export';
+  | 'exception';
 
 type AuditItem = {
   auditId: string;
@@ -36,7 +35,6 @@ export async function listWorkspaceAuditLog(args: {
     approvalDecisions,
     executionRecords,
     exceptionNotes,
-    exportJobs,
   ] = await Promise.all([
     !args.entityType || args.entityType === 'payment_order'
       ? prisma.paymentOrderEvent.findMany({
@@ -89,22 +87,6 @@ export async function listWorkspaceAuditLog(args: {
           where: { workspaceId: args.workspaceId },
           include: {
             authorUser: {
-              select: {
-                userId: true,
-                email: true,
-                displayName: true,
-              },
-            },
-          },
-          orderBy: { createdAt: 'desc' },
-          take: limit,
-        })
-      : [],
-    !args.entityType || args.entityType === 'export'
-      ? prisma.exportJob.findMany({
-          where: { workspaceId: args.workspaceId },
-          include: {
-            requestedByUser: {
               select: {
                 userId: true,
                 email: true,
@@ -213,27 +195,6 @@ export async function listWorkspaceAuditLog(args: {
         body: note.body,
       },
       createdAt: note.createdAt,
-    })),
-    ...exportJobs.map((job) => ({
-      auditId: `export_job:${job.exportJobId}`,
-      workspaceId: job.workspaceId,
-      entityType: 'export' as const,
-      entityId: job.exportJobId,
-      eventType: `export_${job.exportKind}`,
-      actorType: job.requestedByUserId ? 'user' : 'system',
-      actorId: job.requestedByUserId,
-      actorUser: job.requestedByUser,
-      beforeState: null,
-      afterState: job.status,
-      linkedSignature: null,
-      payloadJson: {
-        exportKind: job.exportKind,
-        format: job.format,
-        rowCount: job.rowCount,
-        filterJson: job.filterJson,
-        completedAt: job.completedAt,
-      },
-      createdAt: job.createdAt,
     })),
   ];
 

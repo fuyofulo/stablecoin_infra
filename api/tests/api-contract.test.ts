@@ -7,7 +7,7 @@ import { buildOpenApiSpec } from '../src/openapi.js';
 test('API contract has stable unique endpoint IDs and covers the backend surface', () => {
   const ids = API_ENDPOINTS.map((endpoint) => endpoint.id);
   assert.equal(new Set(ids).size, ids.length);
-  assert.ok(API_ENDPOINTS.length >= 80);
+  assert.ok(API_ENDPOINTS.length >= 50);
   assert.ok(API_ENDPOINTS.some((endpoint) => endpoint.id === 'payment_order_proof' && endpoint.query?.format));
   assert.ok(API_ENDPOINTS.some((endpoint) => endpoint.id === 'preview_payment_run_csv' && endpoint.scope === 'workspace:read'));
   assert.ok(API_ENDPOINTS.some((endpoint) => endpoint.id === 'internal_matching_index_events' && endpoint.auth === 'service_token'));

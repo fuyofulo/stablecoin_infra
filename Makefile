@@ -3,13 +3,10 @@ SHELL := /bin/zsh
 POSTGRES_URL ?= postgresql://usdc_ops:usdc_ops@127.0.0.1:54329/usdc_ops?schema=public
 PSQL_QUIET := PGOPTIONS='-c client_min_messages=warning' psql -v ON_ERROR_STOP=1 -q
 
-.PHONY: infra-up infra-down grafana-up dev test test-api test-worker test-frontend sync-postgres-schema sync-clickhouse-schema reset-data latest-slot latency-report
+.PHONY: infra-up infra-down dev test test-api test-worker test-frontend sync-postgres-schema sync-clickhouse-schema reset-data latest-slot latency-report
 
 infra-up:
 	set -euo pipefail && docker compose up -d postgres clickhouse && $(MAKE) sync-postgres-schema && $(MAKE) sync-clickhouse-schema
-
-grafana-up:
-	set -euo pipefail && docker compose up -d postgres clickhouse grafana && $(MAKE) sync-postgres-schema && $(MAKE) sync-clickhouse-schema && echo "Grafana: http://127.0.0.1:3001 (admin/admin unless overridden)"
 
 sync-postgres-schema:
 	set -euo pipefail && \
@@ -28,16 +25,14 @@ reset-data:
 	set -euo pipefail && \
 	docker compose up -d postgres clickhouse && \
 	docker compose exec -T postgres sh -lc "$(PSQL_QUIET) -U usdc_ops -d usdc_ops -c \"TRUNCATE TABLE auth_sessions, organization_memberships, transfer_requests, treasury_wallets, workspaces, organizations, users RESTART IDENTITY CASCADE;\"" >/dev/null && \
-	docker compose exec -T clickhouse sh -lc "clickhouse-client --multiquery -q \"TRUNCATE TABLE IF EXISTS usdc_ops.exceptions; TRUNCATE TABLE IF EXISTS usdc_ops.settlement_matches; TRUNCATE TABLE IF EXISTS usdc_ops.request_book_snapshots; TRUNCATE TABLE IF EXISTS usdc_ops.matcher_events; TRUNCATE TABLE IF EXISTS usdc_ops.observed_payments; TRUNCATE TABLE IF EXISTS usdc_ops.observed_transfers; TRUNCATE TABLE IF EXISTS usdc_ops.observed_transactions; TRUNCATE TABLE IF EXISTS usdc_ops.raw_observations;\"" >/dev/null && \
+	docker compose exec -T clickhouse sh -lc "clickhouse-client --multiquery -q \"TRUNCATE TABLE IF EXISTS usdc_ops.exceptions; TRUNCATE TABLE IF EXISTS usdc_ops.settlement_matches; TRUNCATE TABLE IF EXISTS usdc_ops.request_book_snapshots; TRUNCATE TABLE IF EXISTS usdc_ops.matcher_events; TRUNCATE TABLE IF EXISTS usdc_ops.observed_payments; TRUNCATE TABLE IF EXISTS usdc_ops.observed_transfers; TRUNCATE TABLE IF EXISTS usdc_ops.observed_transactions;\"" >/dev/null && \
 	echo "Application data cleared from Postgres and ClickHouse."
 
 latest-slot:
 	set -euo pipefail && \
 	docker compose up -d clickhouse >/dev/null && \
 	echo "Latest observed tx slot:" && \
-	docker compose exec -T clickhouse clickhouse-client --query "SELECT coalesce(max(slot), 0) FROM usdc_ops.observed_transactions" && \
-	echo "Latest raw ingest slot:" && \
-	docker compose exec -T clickhouse clickhouse-client --query "SELECT coalesce(max(slot), 0) FROM usdc_ops.raw_observations"
+	docker compose exec -T clickhouse clickhouse-client --query "SELECT coalesce(max(slot), 0) FROM usdc_ops.observed_transactions"
 
 latency-report:
 	set -euo pipefail && \

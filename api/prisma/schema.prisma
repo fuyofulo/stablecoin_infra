@@ -13,7 +13,6 @@ model Organization {
   status           String                   @default("active")
   createdAt        DateTime                 @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt        DateTime                 @updatedAt @map("updated_at") @db.Timestamptz(6)
-  apiKeys          ApiKey[]
   memberships      OrganizationMembership[]
   sessions         AuthSession[]
   workspaces       Workspace[]
@@ -37,9 +36,7 @@ model User {
   exceptionStatesUpdated    ExceptionState[]
   exceptionStatesAssigned   ExceptionState[]         @relation("ExceptionStateAssignee")
   approvalDecisions         ApprovalDecision[]
-  apiKeysCreated            ApiKey[]                 @relation("ApiKeyCreatedByUser")
   executionRecords          ExecutionRecord[]        @relation("ExecutionRecordExecutorUser")
-  exportJobs                ExportJob[]
   paymentOrdersCreated      PaymentOrder[]           @relation("PaymentOrderCreatedByUser")
   paymentRequestsCreated    PaymentRequest[]         @relation("PaymentRequestRequestedByUser")
   paymentRunsCreated        PaymentRun[]             @relation("PaymentRunCreatedByUser")
@@ -94,40 +91,12 @@ model Workspace {
   transferRequestNotes  TransferRequestNote[]
   exceptionNotes        ExceptionNote[]
   exceptionStates       ExceptionState[]
-  exportJobs            ExportJob[]
   paymentRuns           PaymentRun[]
   paymentOrders         PaymentOrder[]
   paymentOrderEvents    PaymentOrderEvent[]
   paymentRequests       PaymentRequest[]
-  apiKeys               ApiKey[]
 
   @@map("workspaces")
-}
-
-model ApiKey {
-  apiKeyId        String       @id @default(dbgenerated("gen_random_uuid()")) @map("api_key_id") @db.Uuid
-  workspaceId     String       @map("workspace_id") @db.Uuid
-  organizationId  String       @map("organization_id") @db.Uuid
-  createdByUserId String?      @map("created_by_user_id") @db.Uuid
-  keyPrefix       String       @map("key_prefix")
-  keyHash         String       @unique @map("key_hash")
-  label           String
-  status          String       @default("active")
-  role            String       @default("agent_operator")
-  scopes          Json         @default("[]")
-  lastUsedAt      DateTime?    @map("last_used_at") @db.Timestamptz(6)
-  expiresAt       DateTime?    @map("expires_at") @db.Timestamptz(6)
-  revokedAt       DateTime?    @map("revoked_at") @db.Timestamptz(6)
-  createdAt       DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt       DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
-  workspace       Workspace    @relation(fields: [workspaceId], references: [workspaceId], onDelete: Cascade)
-  organization    Organization @relation(fields: [organizationId], references: [organizationId], onDelete: Cascade)
-  createdByUser   User?        @relation("ApiKeyCreatedByUser", fields: [createdByUserId], references: [userId], onDelete: SetNull)
-
-  @@unique([workspaceId, label])
-  @@index([workspaceId, status, createdAt(sort: Desc)])
-  @@index([organizationId, createdAt(sort: Desc)])
-  @@map("api_keys")
 }
 
 model IdempotencyRecord {
@@ -506,43 +475,4 @@ model ExceptionState {
   @@unique([workspaceId, exceptionId])
   @@index([workspaceId, status, updatedAt(sort: Desc)])
   @@map("exception_states")
-}
-
-model ExportJob {
-  exportJobId       String    @id @default(dbgenerated("gen_random_uuid()")) @map("export_job_id") @db.Uuid
-  workspaceId       String    @map("workspace_id") @db.Uuid
-  requestedByUserId String?   @map("requested_by_user_id") @db.Uuid
-  exportKind        String    @map("export_kind")
-  format            String
-  status            String    @default("completed")
-  rowCount          Int       @default(0) @map("row_count")
-  filterJson        Json      @default("{}") @map("filter_json")
-  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
-  completedAt       DateTime? @map("completed_at") @db.Timestamptz(6)
-  workspace         Workspace @relation(fields: [workspaceId], references: [workspaceId], onDelete: Cascade)
-  requestedByUser   User?     @relation(fields: [requestedByUserId], references: [userId], onDelete: SetNull)
-
-  @@index([workspaceId, createdAt(sort: Desc)])
-  @@map("export_jobs")
-}
-
-model AddressLabel {
-  addressLabelId String   @id @default(dbgenerated("gen_random_uuid()")) @map("address_label_id") @db.Uuid
-  chain          String
-  address        String
-  entityName     String   @map("entity_name")
-  entityType     String   @map("entity_type")
-  labelKind      String   @map("label_kind")
-  roleTags       Json     @default("[]") @map("role_tags")
-  source         String   @default("manual")
-  sourceRef      String?  @map("source_ref")
-  confidence     String   @default("seeded")
-  isActive       Boolean  @default(true) @map("is_active")
-  notes          String?
-  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
-
-  @@unique([chain, address])
-  @@index([chain, address])
-  @@map("address_labels")
 }

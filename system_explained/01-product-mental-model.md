@@ -59,7 +59,7 @@ Control-plane responsibilities:
 - Execution packet preparation.
 - Execution evidence attachment.
 - Audit timeline.
-- API keys and agent scopes.
+- OpenAPI/capabilities discovery for API clients.
 
 The control plane is implemented in the TypeScript API and stored mostly in Postgres.
 
@@ -141,8 +141,8 @@ For full customer-facing positioning, copy, and the narrative the landing page i
 - Matches observed settlement against expected payments (exact / split / partial / overfill).
 - Creates and updates exceptions.
 - Exports deterministic proof packets.
-- Exposes API keys and an agent task queue.
-- Provides Grafana-facing operational metrics.
+- Exposes a session-authenticated API surface with OpenAPI and idempotent mutations.
+- Provides focused operational health and reconciliation endpoints.
 - Ships an institutional-grade frontend with dual light/dark themes, batch-expandable tables, and a unified `--ax-*` token system.
 
 ## What The System Does Not Fully Do Yet
@@ -152,7 +152,7 @@ For full customer-facing positioning, copy, and the narrative the landing page i
 - It is not a custody system. It does not manage private keys.
 - It does not yet deeply integrate with Squads or another multisig proposal system.
 - It does not yet have mature production auth, roles, org administration, billing, or deployment posture.
-- It does not yet have a full agent runtime that performs useful work autonomously — it exposes an API surface that agents can use.
+- It does not yet have machine auth or a validated agent runtime.
 - It does not yet have public landing / marketing assets shipped (the brief lives in `landing-page-content.md`).
 
 ## Why The Current Product Can Feel Abstract

@@ -4,12 +4,11 @@ export const capabilitiesRouter = Router();
 
 capabilitiesRouter.get('/capabilities', (_req, res) => {
   res.json({
-    product: 'stablecoin-ops-control-plane',
+    product: 'axoria',
     version: 1,
     generatedAt: new Date().toISOString(),
     auth: {
       user: 'Authorization: Bearer <sessionToken>',
-      agent: 'Authorization: Bearer <axoria_live_api_key>',
       internalWorker: 'x-service-token: <CONTROL_PLANE_SERVICE_TOKEN>',
     },
     apiSurface: {
@@ -17,12 +16,6 @@ capabilitiesRouter.get('/capabilities', (_req, res) => {
       openApi: 'GET /openapi.json returns the machine-readable OpenAPI 3.1 contract.',
       idempotency: 'Send Idempotency-Key on mutating requests that may be retried.',
       requestTracing: 'Every response includes x-request-id. Clients may provide x-request-id for trace correlation.',
-      streaming: 'GET /workspaces/:workspaceId/agent/tasks/events emits Server-Sent Events when task-producing resources change.',
-      typedClient: 'api/src/axoria-client.ts provides an endpoint-id based TypeScript client for agents and non-browser clients.',
-      rateLimits: {
-        publicRoutes: '429 with retry-after when public route limits are exceeded.',
-        apiKeys: '429 with retry-after when workspace API-key limits are exceeded.',
-      },
       errors: {
         shape: {
           error: 'string',
@@ -34,23 +27,20 @@ capabilitiesRouter.get('/capabilities', (_req, res) => {
     },
     workflows: [
       {
-        id: 'agent_reconciliation_loop',
-        summary: 'Discover actionable work, inspect linked resources, take scoped actions, then produce proof packets.',
+        id: 'single_payment',
+        summary: 'Create one payment request, promote or create a payment order, submit it, prepare execution, attach signature, reconcile, then export proof.',
         steps: [
-          'GET /capabilities',
-          'GET /openapi.json',
-          'GET /auth/session',
-          'GET /workspaces/:workspaceId/agent/tasks',
-          'GET /workspaces/:workspaceId/agent/tasks/events',
-          'GET task.resource.href',
-          'GET /workspaces/:workspaceId/reconciliation-queue/:transferRequestId/explain',
-          'Call one task.availableActions[] route with the suggested body',
+          'POST /workspaces/:workspaceId/payment-requests',
+          'POST /workspaces/:workspaceId/payment-requests/:paymentRequestId/promote',
+          'POST /workspaces/:workspaceId/payment-orders/:paymentOrderId/submit',
+          'POST /workspaces/:workspaceId/payment-orders/:paymentOrderId/prepare-execution',
+          'POST /workspaces/:workspaceId/payment-orders/:paymentOrderId/attach-signature',
           'GET /workspaces/:workspaceId/payment-orders/:paymentOrderId/proof?format=markdown',
         ],
       },
       {
         id: 'csv_to_payment_run',
-        summary: 'Import CSV rows, create payment requests and orders, prepare one batch USDC transaction, attach signature, then reconcile.',
+        summary: 'Preview CSV rows, import a payment run, prepare one batch USDC transaction, attach signature, reconcile, then export proof.',
         steps: [
           'POST /workspaces/:workspaceId/payment-runs/import-csv/preview',
           'POST /workspaces/:workspaceId/payment-runs/import-csv',
@@ -58,17 +48,6 @@ capabilitiesRouter.get('/capabilities', (_req, res) => {
           'POST /workspaces/:workspaceId/payment-runs/:paymentRunId/attach-signature',
           'POST /workspaces/:workspaceId/payment-runs/:paymentRunId/close',
           'GET /workspaces/:workspaceId/payment-runs/:paymentRunId/proof?format=markdown',
-        ],
-      },
-      {
-        id: 'single_payment_order',
-        summary: 'Create one payment order, submit through policy, prepare a signer-ready USDC transfer packet, attach execution evidence, then export proof.',
-        steps: [
-          'POST /workspaces/:workspaceId/payment-orders',
-          'POST /workspaces/:workspaceId/payment-orders/:paymentOrderId/submit',
-          'POST /workspaces/:workspaceId/payment-orders/:paymentOrderId/prepare-execution',
-          'POST /workspaces/:workspaceId/payment-orders/:paymentOrderId/attach-signature',
-          'GET /workspaces/:workspaceId/payment-orders/:paymentOrderId/proof',
         ],
       },
       {
@@ -92,9 +71,6 @@ capabilitiesRouter.get('/capabilities', (_req, res) => {
           'GET /openapi.json',
           'GET /organizations',
           'POST /organizations',
-          'GET /workspaces/:workspaceId/api-keys',
-          'POST /workspaces/:workspaceId/api-keys',
-          'POST /workspaces/:workspaceId/api-keys/:apiKeyId/revoke',
           'GET /workspaces/:workspaceId/treasury-wallets',
           'GET /workspaces/:workspaceId/destinations',
         ],
@@ -128,8 +104,6 @@ capabilitiesRouter.get('/capabilities', (_req, res) => {
       {
         group: 'verification_and_proof',
         routes: [
-          'GET /workspaces/:workspaceId/agent/tasks',
-          'GET /workspaces/:workspaceId/agent/tasks/events',
           'GET /workspaces/:workspaceId/reconciliation',
           'GET /workspaces/:workspaceId/reconciliation-queue/:transferRequestId',
           'GET /workspaces/:workspaceId/reconciliation-queue/:transferRequestId/explain',
@@ -139,7 +113,6 @@ capabilitiesRouter.get('/capabilities', (_req, res) => {
           'GET /workspaces/:workspaceId/payment-runs/:paymentRunId/proof',
           'GET /workspaces/:workspaceId/audit-log',
           'GET /workspaces/:workspaceId/ops-health',
-          'GET /workspaces/:workspaceId/exports',
         ],
       },
       {
@@ -152,175 +125,8 @@ capabilitiesRouter.get('/capabilities', (_req, res) => {
         ],
       },
     ],
-    agentActionContracts: [
-      {
-        id: 'list_agent_tasks',
-        method: 'GET',
-        path: '/workspaces/:workspaceId/agent/tasks',
-        requiredScope: 'reconciliation:read',
-        purpose: 'Return the next approval, execution, reconciliation, exception, and proof tasks an agent can safely inspect or act on.',
-        responseShape: {
-          servedAt: 'ISO timestamp',
-          items: 'Actionable task[] with resource.href and availableActions[]',
-        },
-      },
-      {
-        id: 'stream_agent_tasks',
-        method: 'GET',
-        path: '/workspaces/:workspaceId/agent/tasks/events',
-        requiredScope: 'reconciliation:read',
-        purpose: 'Open an SSE stream for task changes instead of polling. Re-fetch /agent/tasks when an agent_tasks_changed event arrives.',
-        responseShape: {
-          event: 'agent_tasks_snapshot | agent_tasks_changed',
-          data: '{ version, workspaceId, reason, changedAt }',
-        },
-      },
-      {
-        id: 'explain_reconciliation',
-        method: 'GET',
-        path: '/workspaces/:workspaceId/reconciliation-queue/:transferRequestId/explain',
-        requiredScope: 'reconciliation:read',
-        purpose: 'Return one normalized reconciliation outcome with evidence, confidence, edge cases, and recommended action.',
-        responseShape: {
-          outcome: 'pending | ready_for_execution | submitted_onchain | observed_pending_match | matched_exact | matched_split | partial_settlement | exception | broadcast_failed | closed',
-          recommendedAction: 'next safe action for human or agent',
-          evidence: 'linked signatures, transfer IDs, payment IDs, and observed legs',
-        },
-      },
-      {
-        id: 'create_payment_order',
-        method: 'POST',
-        path: '/workspaces/:workspaceId/payment-orders',
-        requiredScope: 'payments:write',
-        idempotentWithHeader: 'Idempotency-Key',
-        bodyShape: {
-          destinationId: 'uuid',
-          sourceTreasuryWalletId: 'uuid optional',
-          amountRaw: 'USDC base units as string',
-          externalReference: 'string optional',
-          memo: 'string optional',
-          submitNow: 'boolean optional',
-        },
-      },
-      {
-        id: 'import_payment_run_csv',
-        method: 'POST',
-        path: '/workspaces/:workspaceId/payment-runs/import-csv',
-        requiredScope: 'payments:write',
-        idempotentWithHeader: 'Idempotency-Key',
-        bodyShape: {
-          runName: 'string',
-          csv: 'header row: counterparty,destination,amount,reference,due_date',
-          sourceTreasuryWalletId: 'uuid optional',
-          submitOrderNow: 'boolean optional',
-          importKey: 'string optional; stable client key for idempotent CSV imports',
-        },
-      },
-      {
-        id: 'preview_payment_run_csv',
-        method: 'POST',
-        path: '/workspaces/:workspaceId/payment-runs/import-csv/preview',
-        requiredScope: 'workspace:read',
-        bodyShape: {
-          csv: 'header row: counterparty,destination,amount,reference,due_date',
-        },
-        purpose: 'Validate CSV rows, detect duplicate rows/references, and show destinations that would be created without committing anything.',
-      },
-      {
-        id: 'preview_payment_requests_csv',
-        method: 'POST',
-        path: '/workspaces/:workspaceId/payment-requests/import-csv/preview',
-        requiredScope: 'workspace:read',
-        bodyShape: {
-          csv: 'header row: counterparty,destination,amount,reference,due_date',
-        },
-        purpose: 'Validate CSV payment request rows without committing destinations, requests, or orders.',
-      },
-      {
-        id: 'cancel_payment_run',
-        method: 'POST',
-        path: '/workspaces/:workspaceId/payment-runs/:paymentRunId/cancel',
-        requiredScope: 'payments:write',
-        idempotentWithHeader: 'Idempotency-Key',
-        purpose: 'Cancel a payment run before execution evidence exists and mark its rows cancelled.',
-      },
-      {
-        id: 'close_payment_run',
-        method: 'POST',
-        path: '/workspaces/:workspaceId/payment-runs/:paymentRunId/close',
-        requiredScope: 'payments:write',
-        idempotentWithHeader: 'Idempotency-Key',
-        purpose: 'Close a fully settled payment run and close linked transfer requests.',
-      },
-      {
-        id: 'prepare_payment_execution',
-        method: 'POST',
-        path: '/workspaces/:workspaceId/payment-orders/:paymentOrderId/prepare-execution',
-        requiredScope: 'execution:write',
-        idempotentWithHeader: 'Idempotency-Key',
-        purpose: 'Create or reuse an execution record and return signer-ready SPL USDC transfer instructions. The API never signs.',
-      },
-      {
-        id: 'attach_execution_signature',
-        method: 'POST',
-        path: '/workspaces/:workspaceId/payment-orders/:paymentOrderId/attach-signature',
-        requiredScope: 'execution:write',
-        idempotentWithHeader: 'Idempotency-Key',
-        bodyShape: {
-          submittedSignature: 'Solana base58 signature optional',
-          externalReference: 'external proposal/reference optional',
-          submittedAt: 'ISO timestamp optional',
-          metadataJson: 'object optional',
-        },
-      },
-      {
-        id: 'resolve_exception',
-        method: 'POST',
-        path: '/workspaces/:workspaceId/exceptions/:exceptionId/actions',
-        requiredScope: 'exceptions:write',
-        idempotentWithHeader: 'Idempotency-Key',
-        bodyShape: {
-          action: 'reviewed | expected | dismissed | reopen',
-          note: 'string optional',
-        },
-      },
-      {
-        id: 'export_payment_proof',
-        method: 'GET',
-        path: '/workspaces/:workspaceId/payment-orders/:paymentOrderId/proof',
-        requiredScope: 'proofs:read',
-        purpose: 'Return digest-stamped payment proof with readiness checks, source artifacts, reconciliation explanation, and audit trail. Use format=markdown for a human-readable packet.',
-        queryShape: {
-          format: 'json | markdown; default json',
-        },
-      },
-      {
-        id: 'export_payment_run_proof',
-        method: 'GET',
-        path: '/workspaces/:workspaceId/payment-runs/:paymentRunId/proof?detail=summary&format=json',
-        requiredScope: 'proofs:read',
-        purpose: 'Return digest-stamped batch proof with aggregate readiness and per-order proof IDs/digests. Use detail=compact for embedded order manifests, detail=full only when embedded source artifacts are required, and format=markdown for a human-readable packet.',
-        queryShape: {
-          detail: 'summary | compact | full; default summary',
-          format: 'json | markdown; default json',
-        },
-      },
-      {
-        id: 'list_workspace_audit_log',
-        method: 'GET',
-        path: '/workspaces/:workspaceId/audit-log',
-        requiredScope: 'proofs:read',
-        purpose: 'Return one chronological audit feed across payment orders, transfer requests, approvals, execution records, exception notes, and exports.',
-        responseShape: {
-          items: 'audit event[] sorted newest first',
-          entityType: 'payment_order | transfer_request | approval | execution | exception | export',
-        },
-      },
-    ],
     safetyNotes: [
       'The API never accepts or stores private keys.',
-      'Workspace API keys are hashed at rest, returned only once, and scoped to one workspace.',
-      'Agent keys can operate payment/reconciliation workflows but cannot create or revoke API keys.',
       'Prepared execution packets require an external signer or wallet adapter to add a recent blockhash, sign, and submit.',
       'Submitted signatures are validated for Solana base58 signature shape before being stored as execution evidence.',
       'Internal worker routes require CONTROL_PLANE_SERVICE_TOKEN in production.',

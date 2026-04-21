@@ -5,11 +5,6 @@ export const config = {
   solanaRpcUrl: process.env.SOLANA_RPC_URL ?? 'https://api.mainnet-beta.solana.com',
   clickhouseUrl: process.env.CLICKHOUSE_URL ?? 'http://127.0.0.1:8123',
   clickhouseDatabase: process.env.CLICKHOUSE_DATABASE ?? 'usdc_ops',
-  orbTagsResolveUrl: process.env.ORB_TAGS_RESOLVE_URL ?? 'https://orbmarkets.io/api/tags/resolve',
-  orbTagsResolveEnabled:
-    (process.env.ORB_TAGS_RESOLVE_ENABLED ??
-      (process.env.NODE_ENV === 'test' ? 'false' : 'true')) === 'true',
-  orbTagsResolveTimeoutMs: Number(process.env.ORB_TAGS_RESOLVE_TIMEOUT_MS ?? 2000),
   corsOrigin: process.env.CORS_ORIGIN ?? '*',
   controlPlaneServiceToken: process.env.CONTROL_PLANE_SERVICE_TOKEN ?? '',
   rateLimitEnabled:
@@ -17,6 +12,4 @@ export const config = {
       (process.env.NODE_ENV === 'test' ? 'false' : 'true')) === 'true',
   publicRateLimitWindowMs: Number(process.env.PUBLIC_RATE_LIMIT_WINDOW_MS ?? 60_000),
   publicRateLimitMax: Number(process.env.PUBLIC_RATE_LIMIT_MAX ?? 120),
-  apiKeyRateLimitWindowMs: Number(process.env.API_KEY_RATE_LIMIT_WINDOW_MS ?? 60_000),
-  apiKeyRateLimitMax: Number(process.env.API_KEY_RATE_LIMIT_MAX ?? 600),
 };

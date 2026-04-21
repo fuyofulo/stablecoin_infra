@@ -265,7 +265,7 @@ The worker reports stage events to the API internal ops endpoint.
 These are used by:
 
 - ops health endpoint
-- Grafana dashboard
+- ops health endpoint
 - debugging ingestion bottlenecks
 
 Stages can include:
@@ -293,11 +293,10 @@ Check:
 - Was the amount/token account correct?
 - Did the transaction use USDC mint expected by the system?
 
-### Why are there repeated label logs?
+### Why are there repeated unknown-address logs?
 
-The address label resolver may be repeatedly trying Orb for unresolved addresses. This should be cached/suppressed.
+Unknown-address handling should stay local to the workspace registry and reconciliation classifier. The removed Orb label resolver should not be reintroduced in the hot path unless there is a concrete product need and a negative cache.
 
 ### Why is `from_slot` erroring?
 
 Some Yellowstone providers do not support from-slot replay. The worker must run in live-stream mode or use provider-specific replay/backfill strategy.
-

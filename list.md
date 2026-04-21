@@ -1,18 +1,15 @@
 # Axoria Implementation Checklist
 
-## API-First And Agents
+## API-First Surface
 
-- [x] Granular API key scopes enforced per route, not just stored.
+- [x] Removed premature API-key and agent-task surfaces from lean MVP.
 - [x] Idempotency keys for all mutating endpoints.
-- [x] Agent audit identity cleanup so events/notes/approvals clearly show user, api_key, system, or worker.
+- [x] Audit identity cleanup so events/notes/approvals clearly show user, system, or worker.
 - [x] OpenAPI spec for the full backend.
-- [ ] MCP server wrapper for agent tools.
-- [x] Rate limiting and abuse protection for public/API-key routes.
+- [ ] Machine auth only after a real external-client workflow is validated.
+- [x] Rate limiting and abuse protection for public routes.
 - [x] Request correlation IDs and structured error codes.
-- [x] Webhooks or SSE for agent task updates instead of repeated polling.
-- [ ] Agent-safe dry-run mode for payment creation, approval decisions, execution prep, and exception actions.
-- [ ] Stronger permission model: owner/admin/operator/viewer/agent roles.
-- [ ] Workspace-level API key management UI in frontend.
+- [ ] Stronger permission model: owner/admin/operator/viewer roles.
 - [ ] Production auth upgrade: real user auth, passwordless/OAuth, organization invites, session hardening.
 - [ ] Secrets/config hardening for production deployment.
 
@@ -26,8 +23,8 @@
 - [x] Reconciliation re-run/recompute endpoint for a request, payment order, or workspace.
 - [x] Matching explainability endpoint that shows why a transfer matched or did not match.
 - [ ] Historical backfill controls for watched wallets.
-- [ ] Data retention policy for raw observations, observed transfers, matches, exceptions, and audit exports.
-- [x] Reconciliation metrics exposed for Grafana: match latency, unmatched count, partials, exceptions, stale approvals, stale executions.
+- [ ] Data retention policy for observed transfers, matches, exceptions, and proof/audit artifacts.
+- [x] Removed Grafana-specific metrics and dashboards from lean MVP.
 
 ## Payment Runs And Input Layer
 
@@ -63,17 +60,16 @@
 
 - [x] Proof and audit improvements.
 - [x] Human-readable payment proof packet.
-- [x] JSON proof packet for agents.
-- [x] CSV/PDF export polish.
+- [x] JSON proof packet for API clients.
+- [x] Removed generic CSV export/history surface in favor of proof packets.
 - [x] Cryptographic proof bundle or signed audit manifest.
 - [x] Full timeline export across payment request, order, execution, settlement, exception, and proof.
 - [x] Workspace-level audit log endpoint.
-- [ ] Export history cleanup and retention.
+- [x] Export history cleanup.
 
 ## Frontend Product Flow
 
 - [ ] Frontend product flow revamp.
-- [ ] Workspace API key management page.
 - [x] Payment request detail page.
 - [x] Payment run detail page.
 - [x] Payment order detail page cleanup.
@@ -82,17 +78,13 @@
 - [x] Execution queue page.
 - [x] Reconciliation queue page.
 - [x] Proof packet viewer.
-- [ ] Agent tasks/admin page.
 - [x] Better onboarding: org, workspace, wallets, destinations, policy, first payment run.
 - [ ] Institutional-grade UI pass after backend flows stabilize.
 
 ## Observability And Operations
 
-- [x] Grafana dashboard refinement.
-- [x] API latency metrics.
-- [x] Worker stream health metrics.
-- [x] Matching engine metrics.
-- [x] Error-rate metrics by route and worker stage.
+- [x] Removed Grafana dashboard and overbuilt metrics from lean MVP.
+- [ ] Minimal production health/alerting plan after user feedback.
 - [ ] Dead-letter/error table for failed processing.
 - [ ] Alerting rules for worker disconnect, stale stream, high exception rate, API failures.
 - [x] Structured logs with request IDs.
@@ -101,11 +93,11 @@
 
 ## Backend Architecture Cleanup
 
-- [ ] Split route handlers from service logic consistently. Remaining direct-DB route modules: auth, organizations, approvals, legacy transfer requests, ops/internal.
+- [ ] Split route handlers from service logic consistently. Remaining direct-DB route modules: auth, organizations, approvals, ops/internal.
 - [x] Normalize actor handling across all services.
 - [x] Normalize state transitions into explicit service modules.
 - [x] Add domain-level tests separate from route tests.
-- [x] Add contract tests for agent/API clients.
+- [x] Add contract tests for API clients.
 - [x] Add OpenAPI-generated client or typed SDK.
 - [x] Remove remaining frontend-shaped response assumptions.
 - [x] Standardize pagination, filters, sorting, and error responses.
@@ -114,15 +106,10 @@
 ## Security Hardening
 
 - [ ] CSRF/session hardening for human auth.
-- [ ] API key rotation.
-- [ ] API key expiration enforcement UI.
-- [x] API key last-used visibility.
 - [x] Audit all sensitive mutations.
-- [x] Prevent API keys from managing API keys.
-- [x] Scope-sensitive route enforcement.
 - [ ] Input validation review across all endpoints.
 - [ ] Dependency/security audit.
-- [ ] Threat model for agents, execution, and proof exports.
+- [ ] Threat model for execution and proof exports.
 
 ## Product Expansion Candidates
 

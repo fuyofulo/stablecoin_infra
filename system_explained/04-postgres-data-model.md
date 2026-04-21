@@ -17,13 +17,13 @@ Older docs and old code references may mention `Payee` or `WorkspaceAddress` —
 
 Fields: `organizationId`, `organizationName`, `status`, timestamps.
 
-An organization owns workspaces, counterparties, memberships, auth sessions, and API keys.
+An organization owns workspaces, counterparties, memberships, and auth sessions.
 
 ### `User`
 
 Fields: `userId`, `email` (unique), `displayName`, `status`, timestamps.
 
-Users join organizations via `OrganizationMembership` (role + status). They own approval decisions, notes, exception state updates, payment records, API keys created, and export jobs.
+Users join organizations via `OrganizationMembership` (role + status). They own approval decisions, notes, exception state updates, and payment records.
 
 ### `OrganizationMembership`
 
@@ -32,10 +32,6 @@ Joins `User ↔ Organization` with a `role` and `status`. Unique per `(organizat
 ### `AuthSession`
 
 Session tokens for user logins. Fields: `authSessionId`, `sessionToken` (unique), optional `organizationId`, `userId`, `expiresAt`, `lastSeenAt`. Cascade on org/user deletion.
-
-### `ApiKey`
-
-Machine credentials scoped to a workspace. Fields: `apiKeyId`, `workspaceId`, `organizationId`, `createdByUserId?`, `keyPrefix`, `keyHash` (unique), `label`, `status`, `role` (default `agent_operator`), `scopes` (JSON array), `lastUsedAt?`, `expiresAt?`, `revokedAt?`. Unique `(workspaceId, label)`.
 
 ### `IdempotencyRecord`
 
@@ -246,4 +242,4 @@ Rules that shape Postgres usage across the codebase:
 - No `WorkspaceAddress` table. It's `TreasuryWallet` now.
 - No `audit_log` generic table. Use the per-entity `*Event` tables instead.
 - No `Transaction`-the-row table for on-chain txs. ClickHouse owns observed transactions; Postgres references them by signature.
-- No separate password store — auth is token-based against `AuthSession` plus API keys.
+- No separate password store — auth is token-based against `AuthSession`.

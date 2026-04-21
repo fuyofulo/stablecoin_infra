@@ -14,7 +14,7 @@ export function buildOpenApiSpec() {
     info: {
       title: 'Axoria API',
       version: '0.1.0',
-      description: 'API-first stablecoin payment control, reconciliation, execution handoff, and proof surface for humans and agents.',
+      description: 'API-first stablecoin payment control, reconciliation, execution handoff, and proof surface.',
     },
     servers: [
       {
@@ -24,7 +24,6 @@ export function buildOpenApiSpec() {
     ],
     security: [
       { bearerAuth: [] },
-      { apiKeyAuth: [] },
     ],
     tags: uniqueTags().map((name) => ({ name })),
     paths,
@@ -34,11 +33,6 @@ export function buildOpenApiSpec() {
           type: 'http',
           scheme: 'bearer',
           description: 'User session bearer token returned by /auth/login.',
-        },
-        apiKeyAuth: {
-          type: 'http',
-          scheme: 'bearer',
-          description: 'Workspace API key. Required scopes are listed per operation.',
         },
         serviceToken: {
           type: 'apiKey',
@@ -77,7 +71,7 @@ function buildOperation(endpoint: ApiEndpoint) {
     tags: endpoint.tags,
     summary: endpoint.summary,
     description: [
-      endpoint.scope ? `Required API-key scope: \`${endpoint.scope}\`.` : null,
+      endpoint.scope ? `Required capability: \`${endpoint.scope}\`.` : null,
       endpoint.auth === 'service_token' ? 'Internal worker endpoint protected by service token.' : null,
       endpoint.auth === 'public' ? 'Public endpoint.' : null,
     ].filter(Boolean).join('\n\n') || undefined,
@@ -118,7 +112,7 @@ function securityFor(endpoint: ApiEndpoint) {
   if (endpoint.auth === 'service_token') {
     return [{ serviceToken: [] }];
   }
-  return [{ bearerAuth: [] }, { apiKeyAuth: [] }];
+  return [{ bearerAuth: [] }];
 }
 
 function pathParameters(path: string) {

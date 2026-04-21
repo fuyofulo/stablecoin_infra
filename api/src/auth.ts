@@ -1,6 +1,5 @@
 import type { NextFunction, Request, Response } from 'express';
 import crypto from 'node:crypto';
-import { authenticateApiKey } from './api-keys.js';
 import { prisma } from './prisma.js';
 
 export type UserSessionAuthContext = {
@@ -13,23 +12,7 @@ export type UserSessionAuthContext = {
   actorId: string;
 };
 
-export type ApiKeyAuthContext = {
-  authType: 'api_key';
-  apiKeyId: string;
-  apiKeyLabel: string;
-  apiKeyPrefix: string;
-  workspaceId: string;
-  organizationId: string;
-  role: string;
-  scopes: string[];
-  userId: string;
-  userEmail: string;
-  userDisplayName: string;
-  actorType: 'api_key';
-  actorId: string;
-};
-
-export type AuthContext = UserSessionAuthContext | ApiKeyAuthContext;
+export type AuthContext = UserSessionAuthContext;
 
 declare global {
   namespace Express {
@@ -72,27 +55,7 @@ export async function authenticateRequest(authorizationHeader?: string | null) {
     } satisfies AuthContext;
   }
 
-  const apiKey = await authenticateApiKey(token);
-
-  if (!apiKey) {
-    return null;
-  }
-
-  return {
-    authType: 'api_key',
-    apiKeyId: apiKey.apiKeyId,
-    apiKeyLabel: apiKey.label,
-    apiKeyPrefix: apiKey.keyPrefix,
-    workspaceId: apiKey.workspaceId,
-    organizationId: apiKey.organizationId,
-    role: apiKey.role,
-    scopes: Array.isArray(apiKey.scopes) ? apiKey.scopes.filter((scope): scope is string => typeof scope === 'string') : [],
-    userId: apiKey.createdByUserId ?? apiKey.apiKeyId,
-    userEmail: apiKey.createdByUser?.email ?? `${apiKey.keyPrefix}@api-key.axoria.local`,
-    userDisplayName: apiKey.label,
-    actorType: 'api_key',
-    actorId: apiKey.apiKeyId,
-  } satisfies AuthContext;
+  return null;
 }
 
 export async function createSession(userId: string, organizationId?: string) {
@@ -126,30 +89,6 @@ export function requireAuth() {
 
       req.auth = auth;
 
-      if (auth.authType === 'api_key' && !isApiKeyPathAllowed(req.path, auth.workspaceId)) {
-        res.status(403).json({
-          error: 'Forbidden',
-          code: 'forbidden',
-          message: 'API key is scoped to one workspace and cannot access this route',
-          requestId: req.requestId,
-        });
-        return;
-      }
-
-      const requiredScope = auth.authType === 'api_key'
-        ? getRequiredApiKeyScope(req.method, req.path, auth.workspaceId)
-        : null;
-      if (requiredScope && auth.authType === 'api_key' && !auth.scopes.includes(requiredScope)) {
-        res.status(403).json({
-          error: 'Forbidden',
-          code: 'forbidden',
-          message: `API key requires scope "${requiredScope}" for this route`,
-          requiredScope,
-          requestId: req.requestId,
-        });
-        return;
-      }
-
       next();
     } catch (error) {
       next(error);
@@ -169,58 +108,4 @@ function extractBearerToken(header?: string | null) {
   }
 
   return token;
-}
-
-function isApiKeyPathAllowed(path: string, workspaceId: string) {
-  return path === '/auth/session'
-    || path === '/auth/logout'
-    || path.startsWith(`/workspaces/${workspaceId}/`);
-}
-
-function getRequiredApiKeyScope(method: string, path: string, workspaceId: string) {
-  if (path === '/auth/session' || path === '/auth/logout') {
-    return null;
-  }
-
-  if (!path.startsWith(`/workspaces/${workspaceId}/`)) {
-    return null;
-  }
-
-  if (path.includes('/api-keys')) {
-    return 'api_keys:write';
-  }
-
-  if (path.includes('/agent/tasks')) {
-    return 'reconciliation:read';
-  }
-
-  if (path.includes('/proof') || path.includes('/audit-export') || path.includes('/audit-log') || path.includes('/exports')) {
-    return 'proofs:read';
-  }
-
-  if (path.includes('/import-csv/preview')) {
-    return 'workspace:read';
-  }
-
-  if (path.includes('/reconciliation') || path.includes('/transfers') || path.includes('/ops-health')) {
-    return 'reconciliation:read';
-  }
-
-  if (path.includes('/exceptions')) {
-    return method === 'GET' ? 'reconciliation:read' : 'exceptions:write';
-  }
-
-  if (path.includes('/approval')) {
-    return method === 'GET' ? 'workspace:read' : 'approvals:write';
-  }
-
-  if (path.includes('/prepare-execution') || path.includes('/attach-signature') || path.includes('/create-execution') || path.includes('/executions')) {
-    return method === 'GET' ? 'workspace:read' : 'execution:write';
-  }
-
-  if (path.includes('/payment-requests') || path.includes('/payment-orders') || path.includes('/payment-runs') || path.includes('/transfer-requests')) {
-    return method === 'GET' ? 'workspace:read' : 'payments:write';
-  }
-
-  return method === 'GET' ? 'workspace:read' : 'workspace:write';
 }

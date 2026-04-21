@@ -11,11 +11,10 @@ This repository contains one product split across several runtime processes.
 ├── yellowstone/         Rust Solana Yellowstone ingestion and matching worker
 ├── postgres/            Postgres initialization scripts
 ├── clickhouse/          ClickHouse initialization scripts
-├── grafana/             Grafana provisioning and dashboards
 ├── outputs/             Research/application/proof artifacts
 ├── problems/            Problem writeups and logs
 ├── Makefile             Local development and test commands
-├── docker-compose.yml   Local Postgres, ClickHouse, Grafana
+├── docker-compose.yml   Local Postgres and ClickHouse
 └── list.md              Product implementation checklist
 ```
 
@@ -38,9 +37,6 @@ Vite app, usually at http://localhost:5174 or whatever Vite chooses.
 
 Yellowstone worker
 Rust process that connects to a Solana Yellowstone endpoint and writes ClickHouse.
-
-Grafana
-Optional local dashboards at http://127.0.0.1:3001.
 ```
 
 ## Important Commands
@@ -60,20 +56,6 @@ make dev
 ```
 
 Starts infrastructure, API, frontend, and the Yellowstone worker if `YELLOWSTONE_ENDPOINT` is set.
-
-### Start Grafana
-
-```bash
-make grafana-up
-```
-
-Starts Postgres, ClickHouse, and Grafana. Grafana is available at:
-
-```text
-http://127.0.0.1:3001
-username: admin
-password: admin
-```
 
 ### Run Tests
 
@@ -129,17 +111,6 @@ user: default
 password: empty
 ```
 
-### Grafana
-
-```text
-container: axoria_grafana
-port: 3001
-username: admin
-password: admin
-```
-
-Grafana has provisioned Postgres and ClickHouse datasources.
-
 ## Data Ownership
 
 Postgres and ClickHouse have different roles.
@@ -161,12 +132,10 @@ Postgres owns the control-plane truth:
 - Execution records.
 - Operator notes.
 - Exception metadata.
-- API keys.
 - Idempotency records.
 
 ClickHouse owns high-volume observed and derived data:
 
-- Raw Yellowstone observations.
 - Observed transactions.
 - Observed USDC transfers.
 - Reconstructed observed payments.
@@ -181,7 +150,7 @@ This split is important. Do not move high-volume chain event data into Postgres 
 The main runtime path is:
 
 ```text
-Frontend or agent
+Frontend or API client
   -> API
   -> Postgres control-plane records
   -> matching-index invalidation event
@@ -190,7 +159,7 @@ Frontend or agent
   -> worker reconstructs and filters relevant USDC movement
   -> worker writes ClickHouse matches/exceptions
   -> API reads Postgres + ClickHouse
-  -> frontend/agent sees updated reconciliation/proof state
+  -> frontend/API client sees updated reconciliation/proof state
 ```
 
 ## Why There Is No Redis/Kafka Yet
@@ -199,7 +168,7 @@ The current architecture uses:
 
 - Postgres for durable control state.
 - ClickHouse for event/reconciliation storage.
-- In-process Server-Sent Events for matching-index refresh and agent-task refresh.
+- In-process Server-Sent Events for matching-index refresh.
 - Yellowstone as the external event stream.
 
 This is intentionally simpler than adding Redis or Kafka. A queue/stream would become useful if:
@@ -220,4 +189,3 @@ Important rule for future refactors:
 ```text
 Do not refactor state transitions, matching invalidation, or proof generation without tests around the current behavior.
 ```
-

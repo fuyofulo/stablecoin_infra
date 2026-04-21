@@ -2,7 +2,7 @@
 
 This file lists the HTTP routes the Axoria API currently exposes, grouped by responsibility. Routes are defined in `api/src/routes/*.ts` and mounted in `api/src/app.ts`. The machine-readable contract lives in `api/src/api-contract.ts` and is served at `/openapi.json`.
 
-All workspace-scoped routes require authentication — either a user session (`Authorization: Bearer <session-token>`) or an API key (`Authorization: Bearer axoria_live_<id>.<secret>`).
+All workspace-scoped routes require a user session: `Authorization: Bearer <session-token>`.
 
 ## Public Routes (No Auth)
 
@@ -45,14 +45,6 @@ Destinations are what you pay; counterparties are an optional org-scoped entity 
 
 There are **no `/payees` routes**. Payees were removed — use a destination + optional counterparty.
 
-## Address Labels
-
-Generic chain-wide label registry (not workspace-scoped).
-
-- `GET   /address-labels` — list.
-- `POST  /address-labels` — create.
-- `PATCH /address-labels/:addressLabelId` — update.
-
 ## Payment Requests
 
 Input-layer objects. These are what a human or agent creates before a payment order exists.
@@ -63,7 +55,7 @@ Input-layer objects. These are what a human or agent creates before a payment or
 - `POST /workspaces/:workspaceId/payment-requests/import-csv/preview` — parse and validate a CSV without writing anything.
 - `GET  /workspaces/:workspaceId/payment-requests/:paymentRequestId` — detail.
 - `POST /workspaces/:workspaceId/payment-requests/:paymentRequestId/cancel` — mark a request cancelled.
-- `POST /workspaces/:workspaceId/payment-requests/:paymentRequestId/create-order` — materialize the request into a `PaymentOrder`.
+- `POST /workspaces/:workspaceId/payment-requests/:paymentRequestId/promote` — materialize the request into a `PaymentOrder`.
 
 ## Payment Runs
 
@@ -94,7 +86,6 @@ The control-plane object for a single intended payment.
 - `POST  /workspaces/:workspaceId/payment-orders/:paymentOrderId/attach-signature` — attach the submitted signature after signing.
 - `POST  /workspaces/:workspaceId/payment-orders/:paymentOrderId/create-execution` — create an `ExecutionRecord` ahead of signing.
 - `GET   /workspaces/:workspaceId/payment-orders/:paymentOrderId/proof` — deterministic proof packet for one payment.
-- `GET   /workspaces/:workspaceId/payment-orders/:paymentOrderId/audit-export` — CSV audit export.
 
 ## Approvals
 
@@ -103,14 +94,7 @@ The control-plane object for a single intended payment.
 - `GET   /workspaces/:workspaceId/approval-inbox` — pending approvals (used by the Approvals page).
 - `POST  /workspaces/:workspaceId/transfer-requests/:transferRequestId/approval-decisions` — record an `approve` / `reject` / `escalate` decision.
 
-## Transfer Requests (Lower-Level)
-
-Used mostly by the matcher and the internal API. Humans typically work through `payment-orders`.
-
-- `GET   /workspaces/:workspaceId/transfer-requests` — list.
-- `GET   /workspaces/:workspaceId/transfer-requests/:transferRequestId` — detail.
-- `POST  /workspaces/:workspaceId/transfer-requests` — create directly (used by test / admin flows).
-- `POST  /workspaces/:workspaceId/transfer-requests/:transferRequestId/submit|cancel|prepare-execution|attach-signature` — state-mutation endpoints that mirror `payment-orders` at the transfer-request layer.
+Transfer requests are still the internal reconciliation row behind a payment order, but there is no public transfer-request CRUD route. The only public transfer-request route left is the approval-decision route because approval decisions target the underlying request id.
 
 ## Observed Data And Reconciliation
 
@@ -126,27 +110,11 @@ Used mostly by the matcher and the internal API. Humans typically work through `
 - `POST /workspaces/:workspaceId/exceptions/:exceptionId/actions` — applies an action (`reviewed` | `expected` | `dismissed` | `reopen`).
 - `POST /workspaces/:workspaceId/exceptions/:exceptionId/notes` — add an operator note.
 
-## Ops, Members, Exports
+## Ops, Members, Proofs
 
 - `GET /workspaces/:workspaceId/members` — workspace members.
-- `GET /workspaces/:workspaceId/export-jobs` — recent export jobs.
 - `GET /workspaces/:workspaceId/audit-log` — workspace-wide audit view across event tables.
-- `GET /workspaces/:workspaceId/exports/reconciliation` — CSV export of reconciliation state.
-- `GET /workspaces/:workspaceId/exports/exceptions` — CSV export of exceptions.
-- `GET /workspaces/:workspaceId/exports/audit/:transferRequestId` — per-request audit CSV.
-- `GET /workspaces/:workspaceId/ops-health` — combined Postgres + ClickHouse health signal used by Grafana and ops dashboards.
-
-## API Keys
-
-- `GET  /workspaces/:workspaceId/api-keys` — list keys (never returns the secret).
-- `POST /workspaces/:workspaceId/api-keys` — create. Returns the plaintext `axoria_live_<id>.<secret>` **once**.
-- `POST /workspaces/:workspaceId/api-keys/:apiKeyId/revoke` — revoke.
-- `DELETE /workspaces/:workspaceId/api-keys/:apiKeyId` — hard-delete (revokes first).
-
-## Agent Surface
-
-- `GET /workspaces/:workspaceId/agent/tasks` — agent task queue for the workspace.
-- `GET /workspaces/:workspaceId/agent/tasks/events` — SSE stream of task events.
+- `GET /workspaces/:workspaceId/ops-health` — combined Postgres + ClickHouse health signal used by ops surfaces.
 
 ## Internal (Worker ↔ API)
 
@@ -156,8 +124,6 @@ Used by the Yellowstone worker via a service token, not exposed to end users.
 - `GET  /internal/workspaces/:workspaceId/matching-context` — matcher context for one workspace.
 - `GET  /internal/matching-index` — global matching index (treasury wallets, destinations, open transfer requests, watched signatures).
 - `GET  /internal/matching-index/events` — SSE stream of matching-index invalidations so the worker can refresh without polling.
-- `POST /internal/worker-stage-events` — worker reports stage metrics back to the API.
-- `GET  /internal/ops-metrics` — ops-facing metrics the worker and API publish.
 
 ## Route Change Checklist
 

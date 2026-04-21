@@ -1,17 +1,11 @@
-import { Router, type Response } from 'express';
-import type { Prisma } from '@prisma/client';
+import { Router } from 'express';
 import { z } from 'zod';
 import { queryClickHouse } from '../clickhouse.js';
 import { config } from '../config.js';
-import {
-  getReconciliationDetail,
-  listReconciliationQueue,
-  listWorkspaceExceptions,
-} from '../reconciliation.js';
+import { listWorkspaceExceptions } from '../reconciliation.js';
 import { prisma } from '../prisma.js';
 import { assertWorkspaceAccess } from '../workspace-access.js';
 import { listWorkspaceAuditLog } from '../workspace-audit-log.js';
-import { listRouteMetrics, listWorkerStageMetrics } from '../ops-metrics.js';
 
 export const opsRouter = Router();
 
@@ -19,27 +13,9 @@ const workspaceParamsSchema = z.object({
   workspaceId: z.string().uuid(),
 });
 
-const auditParamsSchema = workspaceParamsSchema.extend({
-  transferRequestId: z.string().uuid(),
-});
-
-const exportQuerySchema = z.object({
-  format: z.enum(['csv', 'json']).default('csv'),
-  displayState: z.enum(['pending', 'matched', 'partial', 'exception']).optional(),
-  requestStatus: z.string().optional(),
-  status: z.enum(['open', 'reviewed', 'expected', 'dismissed', 'reopened']).optional(),
-  severity: z.string().optional(),
-  assigneeUserId: z.string().uuid().optional(),
-  reasonCode: z.string().optional(),
-});
-
-const historyQuerySchema = z.object({
-  limit: z.coerce.number().int().min(1).max(100).default(25),
-});
-
 const auditLogQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(250).default(100),
-  entityType: z.enum(['payment_order', 'transfer_request', 'approval', 'execution', 'exception', 'export']).optional(),
+  entityType: z.enum(['payment_order', 'transfer_request', 'approval', 'execution', 'exception']).optional(),
 });
 
 type TxHealthRow = {
@@ -99,47 +75,6 @@ opsRouter.get('/workspaces/:workspaceId/members', async (req, res, next) => {
   }
 });
 
-opsRouter.get('/workspaces/:workspaceId/export-jobs', async (req, res, next) => {
-  try {
-    const { workspaceId } = workspaceParamsSchema.parse(req.params);
-    const { limit } = historyQuerySchema.parse(req.query);
-    await assertWorkspaceAccess(workspaceId, req.auth!);
-
-    const items = await prisma.exportJob.findMany({
-      where: { workspaceId },
-      include: {
-        requestedByUser: {
-          select: {
-            userId: true,
-            email: true,
-            displayName: true,
-          },
-        },
-      },
-      orderBy: { createdAt: 'desc' },
-      take: limit,
-    });
-
-    res.json({
-      items: items.map((item) => ({
-        exportJobId: item.exportJobId,
-        workspaceId: item.workspaceId,
-        requestedByUserId: item.requestedByUserId,
-        exportKind: item.exportKind,
-        format: item.format,
-        status: item.status,
-        rowCount: item.rowCount,
-        filterJson: item.filterJson,
-        createdAt: item.createdAt,
-        completedAt: item.completedAt,
-        requestedByUser: item.requestedByUser,
-      })),
-    });
-  } catch (error) {
-    next(error);
-  }
-});
-
 opsRouter.get('/workspaces/:workspaceId/audit-log', async (req, res, next) => {
   try {
     const { workspaceId } = workspaceParamsSchema.parse(req.params);
@@ -151,151 +86,6 @@ opsRouter.get('/workspaces/:workspaceId/audit-log', async (req, res, next) => {
       limit: query.limit,
       entityType: query.entityType,
     }));
-  } catch (error) {
-    next(error);
-  }
-});
-
-opsRouter.get('/workspaces/:workspaceId/exports/reconciliation', async (req, res, next) => {
-  try {
-    const { workspaceId } = workspaceParamsSchema.parse(req.params);
-    const query = exportQuerySchema.parse(req.query);
-    await assertWorkspaceAccess(workspaceId, req.auth!);
-
-    const items = await listReconciliationQueue(workspaceId, {
-      limit: 5000,
-      displayState: query.displayState,
-      requestStatus: query.requestStatus,
-    });
-
-    const rows = items.map((item) => ({
-      transfer_request_id: item.transferRequestId,
-      source_wallet: item.sourceTreasuryWallet?.displayName ?? item.sourceTreasuryWallet?.address ?? '',
-      destination: item.destination?.label ?? item.destination?.walletAddress ?? '',
-      counterparty: item.destination?.counterparty?.displayName ?? '',
-      amount_raw: item.amountRaw,
-      amount_usdc: formatRawUsdc(item.amountRaw),
-      request_status: item.status,
-      approval_state: item.approvalState,
-      execution_state: item.executionState,
-      settlement_state: item.requestDisplayState,
-      linked_signature: item.linkedSignature ?? '',
-      match_status: item.match?.matchStatus ?? '',
-      exception_reason_codes: item.exceptions.map((exception) => exception.reasonCode).join('|'),
-      requested_at: item.requestedAt,
-    }));
-
-    await recordExportJob({
-      workspaceId,
-      requestedByUserId: req.auth!.userId,
-      exportKind: 'reconciliation',
-      format: query.format,
-      rowCount: rows.length,
-      filterJson: {
-        displayState: query.displayState ?? null,
-        requestStatus: query.requestStatus ?? null,
-      },
-    });
-
-    respondWithExport(res, {
-      format: query.format,
-      fileName: 'reconciliation-export',
-      items: rows,
-    });
-  } catch (error) {
-    next(error);
-  }
-});
-
-opsRouter.get('/workspaces/:workspaceId/exports/exceptions', async (req, res, next) => {
-  try {
-    const { workspaceId } = workspaceParamsSchema.parse(req.params);
-    const query = exportQuerySchema.parse(req.query);
-    await assertWorkspaceAccess(workspaceId, req.auth!);
-
-    const items = await listWorkspaceExceptions({
-      workspaceId,
-      limit: 5000,
-      status: query.status,
-      severity: query.severity,
-      assigneeUserId: query.assigneeUserId,
-      reasonCode: query.reasonCode,
-    });
-
-    const rows = items.map((item) => ({
-      exception_id: item.exceptionId,
-      transfer_request_id: item.transferRequestId ?? '',
-      reason_code: item.reasonCode,
-      severity: item.severity,
-      status: item.status,
-      resolution_code: item.resolutionCode ?? '',
-      assignee_email: item.assignedToUser?.email ?? '',
-      assignee_name: item.assignedToUser?.displayName ?? '',
-      signature: item.signature ?? '',
-      observed_transfer_id: item.observedTransferId ?? '',
-      explanation: item.explanation,
-      observed_event_time: item.observedEventTime ?? '',
-      updated_at: item.updatedAt,
-    }));
-
-    await recordExportJob({
-      workspaceId,
-      requestedByUserId: req.auth!.userId,
-      exportKind: 'exceptions',
-      format: query.format,
-      rowCount: rows.length,
-      filterJson: {
-        status: query.status ?? null,
-        severity: query.severity ?? null,
-        assigneeUserId: query.assigneeUserId ?? null,
-        reasonCode: query.reasonCode ?? null,
-      },
-    });
-
-    respondWithExport(res, {
-      format: query.format,
-      fileName: 'exceptions-export',
-      items: rows,
-    });
-  } catch (error) {
-    next(error);
-  }
-});
-
-opsRouter.get('/workspaces/:workspaceId/exports/audit/:transferRequestId', async (req, res, next) => {
-  try {
-    const { workspaceId, transferRequestId } = auditParamsSchema.parse(req.params);
-    const query = exportQuerySchema.parse(req.query);
-    await assertWorkspaceAccess(workspaceId, req.auth!);
-
-    const detail = await getReconciliationDetail(workspaceId, transferRequestId);
-    const rows = detail.timeline.map((item) => ({
-      created_at: item.createdAt,
-      timeline_type: item.timelineType,
-      title: getTimelineExportTitle(item),
-      body: getTimelineExportBody(item),
-      linked_signature:
-        'linkedSignature' in item && item.linkedSignature
-          ? item.linkedSignature
-          : '',
-    }));
-
-    await recordExportJob({
-      workspaceId,
-      requestedByUserId: req.auth!.userId,
-      exportKind: 'audit',
-      format: query.format,
-      rowCount: rows.length,
-      filterJson: {
-        transferRequestId,
-      },
-    });
-
-    respondWithExport(res, {
-      format: query.format,
-      fileName: `audit-${transferRequestId}`,
-      items: rows,
-    });
   } catch (error) {
     next(error);
   }
@@ -385,8 +175,6 @@ opsRouter.get('/workspaces/:workspaceId/ops-health', async (req, res, next) => {
       observedTransactionCount: Number(tx?.observed_count ?? 0),
       matchCount: Number(match?.match_count ?? 0),
       openExceptionCount: exceptionRows.filter((item) => item.status !== 'dismissed').length,
-      routeErrors: listRouteMetrics().filter((metric) => metric.statusClass.startsWith('5')),
-      workerStageErrors: listWorkerStageMetrics().filter((metric) => metric.status === 'error'),
       latencies: {
         yellowstoneToWorkerMs: {
           p50: numberOrNull(tx?.p50_yellowstone_to_worker_ms),
@@ -407,67 +195,6 @@ opsRouter.get('/workspaces/:workspaceId/ops-health', async (req, res, next) => {
   }
 });
 
-function respondWithExport(
-  res: Response,
-  args: {
-    format: 'csv' | 'json';
-    fileName: string;
-    items: Record<string, unknown>[];
-  },
-) {
-  if (args.format === 'json') {
-    res.json({ items: args.items });
-    return;
-  }
-
-  res.setHeader('content-type', 'text/csv; charset=utf-8');
-  res.setHeader('content-disposition', `attachment; filename="${args.fileName}.csv"`);
-  res.send(toCsv(args.items));
-}
-
-async function recordExportJob(args: {
-  workspaceId: string;
-  requestedByUserId: string;
-  exportKind: string;
-  format: 'csv' | 'json';
-  rowCount: number;
-  filterJson: Record<string, unknown>;
-}) {
-  await prisma.exportJob.create({
-    data: {
-      workspaceId: args.workspaceId,
-      requestedByUserId: args.requestedByUserId,
-      exportKind: args.exportKind,
-      format: args.format,
-      rowCount: args.rowCount,
-      filterJson: args.filterJson as Prisma.InputJsonValue,
-      completedAt: new Date(),
-    },
-  });
-}
-
-function toCsv(items: Record<string, unknown>[]) {
-  if (!items.length) {
-    return '';
-  }
-
-  const columns = [...new Set(items.flatMap((item) => Object.keys(item)))];
-  const lines = [
-    columns.join(','),
-    ...items.map((item) => columns.map((column) => escapeCsv(item[column])).join(',')),
-  ];
-
-  return lines.join('\n');
-}
-
-function escapeCsv(value: unknown) {
-  const stringValue = value === null || value === undefined ? '' : String(value);
-  if (/[",\n]/.test(stringValue)) {
-    return `"${stringValue.replaceAll('"', '""')}"`;
-  }
-  return stringValue;
-}
-
 function normalizeClickHouseDateTime(value: string | null) {
   return value ? `${value.replace(' ', 'T')}Z` : null;
 }
@@ -487,55 +214,4 @@ function deriveWorkerStatus(workerFreshnessMs: number | null) {
     return 'degraded';
   }
   return 'stale';
-}
-
-function formatRawUsdc(amountRaw: string) {
-  const negative = amountRaw.startsWith('-');
-  const digits = negative ? amountRaw.slice(1) : amountRaw;
-  const padded = digits.padStart(7, '0');
-  const whole = padded.slice(0, -6) || '0';
-  const fraction = padded.slice(-6);
-  return `${negative ? '-' : ''}${whole}.${fraction}`;
-}
-
-function getTimelineExportTitle(
-  item: Awaited<ReturnType<typeof getReconciliationDetail>>['timeline'][number],
-) {
-  switch (item.timelineType) {
-    case 'request_event':
-      return item.eventType;
-    case 'request_note':
-      return 'request_note';
-    case 'approval_decision':
-      return item.action;
-    case 'execution_record':
-      return item.state;
-    case 'observed_execution':
-      return 'observed_execution';
-    case 'match_result':
-      return item.matchStatus;
-    case 'exception':
-      return item.reasonCode;
-  }
-}
-
-function getTimelineExportBody(
-  item: Awaited<ReturnType<typeof getReconciliationDetail>>['timeline'][number],
-) {
-  switch (item.timelineType) {
-    case 'request_event':
-      return item.beforeState && item.afterState ? `${item.beforeState} -> ${item.afterState}` : item.eventSource;
-    case 'request_note':
-      return item.body;
-    case 'approval_decision':
-      return item.comment ?? item.action;
-    case 'execution_record':
-      return item.submittedSignature ?? item.executionSource;
-    case 'observed_execution':
-      return `${item.signature} // ${item.status}`;
-    case 'match_result':
-      return item.explanation;
-    case 'exception':
-      return item.explanation;
-  }
 }

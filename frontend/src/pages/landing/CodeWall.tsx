@@ -110,6 +110,9 @@ export function CodeWall() {
     const baseCanvas = document.createElement('canvas');
     const baseCtx = baseCanvas.getContext('2d');
     if (!baseCtx) return;
+    const drawingCanvas = canvas;
+    const drawingCtx = ctx;
+    const staticCtx = baseCtx;
 
     let dpr = 1;
     let cssW = 0;
@@ -127,21 +130,21 @@ export function CodeWall() {
       cssW = window.innerWidth;
       cssH = window.innerHeight;
 
-      canvas.width = cssW * dpr;
-      canvas.height = cssH * dpr;
-      canvas.style.width = `${cssW}px`;
-      canvas.style.height = `${cssH}px`;
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      ctx.font = FONT;
-      ctx.textBaseline = 'top';
+      drawingCanvas.width = cssW * dpr;
+      drawingCanvas.height = cssH * dpr;
+      drawingCanvas.style.width = `${cssW}px`;
+      drawingCanvas.style.height = `${cssH}px`;
+      drawingCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      drawingCtx.font = FONT;
+      drawingCtx.textBaseline = 'top';
 
       baseCanvas.width = cssW * dpr;
       baseCanvas.height = cssH * dpr;
-      baseCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      baseCtx.font = FONT;
-      baseCtx.textBaseline = 'top';
+      staticCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      staticCtx.font = FONT;
+      staticCtx.textBaseline = 'top';
 
-      charW = baseCtx.measureText('0').width + LETTER_SPACING_PX;
+      charW = staticCtx.measureText('0').width + LETTER_SPACING_PX;
 
       const totalW = COLS * charW;
       const totalH = ROWS * CHAR_H;
@@ -149,8 +152,8 @@ export function CodeWall() {
       offsetY = (cssH - totalH) / 2;
 
       const isDark = currentTheme() === 'dark';
-      baseCtx.clearRect(0, 0, cssW, cssH);
-      baseCtx.fillStyle = isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.08)';
+      staticCtx.clearRect(0, 0, cssW, cssH);
+      staticCtx.fillStyle = isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.08)';
 
       for (let y = 0; y < ROWS; y += 1) {
         const row = state.grid[y];
@@ -159,7 +162,7 @@ export function CodeWall() {
         for (let x = 0; x < COLS; x += 1) {
           const px = offsetX + x * charW;
           if (px < -charW || px > cssW + charW) continue;
-          baseCtx.fillText(row[x], px, py);
+          staticCtx.fillText(row[x], px, py);
         }
       }
     }
@@ -171,30 +174,30 @@ export function CodeWall() {
       }
       const t = (performance.now() - startTime) / 1000;
 
-      ctx.shadowBlur = 0;
-      ctx.clearRect(0, 0, cssW, cssH);
-      ctx.drawImage(baseCanvas, 0, 0, cssW, cssH);
+      drawingCtx.shadowBlur = 0;
+      drawingCtx.clearRect(0, 0, cssW, cssH);
+      drawingCtx.drawImage(baseCanvas, 0, 0, cssW, cssH);
 
-      const accentRgb = readAccentRgb(canvas, '74, 93, 46');
+      const accentRgb = readAccentRgb(drawingCanvas, '74, 93, 46');
 
-      ctx.font = FONT;
-      ctx.textBaseline = 'top';
+      drawingCtx.font = FONT;
+      drawingCtx.textBaseline = 'top';
 
       if (reducedMotion) {
-        ctx.fillStyle = `rgba(${accentRgb},0.22)`;
+        drawingCtx.fillStyle = `rgba(${accentRgb},0.22)`;
         for (const g of state.glows) {
-          ctx.fillText(state.grid[g.row][g.col], offsetX + g.col * charW, offsetY + g.row * CHAR_H);
+          drawingCtx.fillText(state.grid[g.row][g.col], offsetX + g.col * charW, offsetY + g.row * CHAR_H);
         }
       } else {
-        ctx.shadowColor = `rgb(${accentRgb})`;
-        ctx.shadowBlur = 4;
+        drawingCtx.shadowColor = `rgb(${accentRgb})`;
+        drawingCtx.shadowBlur = 4;
         for (const g of state.glows) {
           const alpha = computeAlpha(t, g);
           if (alpha < 0.02) continue;
-          ctx.fillStyle = `rgba(${accentRgb},${alpha.toFixed(3)})`;
-          ctx.fillText(state.grid[g.row][g.col], offsetX + g.col * charW, offsetY + g.row * CHAR_H);
+          drawingCtx.fillStyle = `rgba(${accentRgb},${alpha.toFixed(3)})`;
+          drawingCtx.fillText(state.grid[g.row][g.col], offsetX + g.col * charW, offsetY + g.row * CHAR_H);
         }
-        ctx.shadowBlur = 0;
+        drawingCtx.shadowBlur = 0;
       }
 
       rafId = requestAnimationFrame(draw);

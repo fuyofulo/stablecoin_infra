@@ -9,7 +9,6 @@ type QueryResult<T> = Result<T, Box<dyn Error + Send + Sync>>;
 const OBSERVED_TRANSFERS_INSERT_ROWS: usize = 128;
 const OBSERVED_TRANSACTIONS_INSERT_ROWS: usize = 256;
 const OBSERVED_PAYMENTS_INSERT_ROWS: usize = 64;
-const RAW_OBSERVATIONS_INSERT_ROWS: usize = 512;
 const MATCHER_EVENTS_INSERT_ROWS: usize = 128;
 const SNAPSHOTS_INSERT_ROWS: usize = 128;
 const MATCHES_INSERT_ROWS: usize = 128;
@@ -47,15 +46,6 @@ impl ClickHouseWriter {
             user,
             password,
         }
-    }
-
-    pub async fn insert_raw_observations(&self, rows: &[RawObservationRow]) -> QueryResult<()> {
-        self.insert_json_each_row_many_chunked(
-            "raw_observations",
-            rows,
-            RAW_OBSERVATIONS_INSERT_ROWS,
-        )
-        .await
     }
 
     pub async fn insert_observed_transactions(
@@ -224,22 +214,6 @@ impl ClickHouseWriter {
 
         Ok(body)
     }
-}
-
-#[derive(Serialize)]
-pub struct RawObservationRow {
-    pub observation_id: String,
-    #[serde(serialize_with = "serialize_clickhouse_datetime")]
-    pub ingest_time: DateTime<Utc>,
-    pub slot: u64,
-    pub signature: String,
-    pub update_type: String,
-    pub pubkey: String,
-    pub owner_program: Option<String>,
-    pub write_version: u64,
-    pub raw_payload_json: String,
-    pub raw_payload_bytes: Option<String>,
-    pub parser_version: u32,
 }
 
 #[derive(Serialize)]

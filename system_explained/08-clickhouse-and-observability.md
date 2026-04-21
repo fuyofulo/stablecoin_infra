@@ -1,6 +1,6 @@
 # 08 ClickHouse And Observability
 
-ClickHouse stores observed and derived chain data. Grafana reads operational metrics and reconciliation health.
+ClickHouse stores observed and derived chain data. The API exposes focused health and reconciliation endpoints for product and operator workflows.
 
 ## Why ClickHouse Exists
 
@@ -13,7 +13,7 @@ ClickHouse is better for:
 - recent activity views
 - matching/event history
 - latency metrics
-- Grafana dashboards
+- ops health endpoints
 
 ## ClickHouse Schema
 
@@ -24,20 +24,6 @@ clickhouse/init/002-schema.sql
 ```
 
 ## Core Tables
-
-### `raw_observations`
-
-Immutable raw observation stream.
-
-Stores raw-ish Yellowstone updates and account/transaction observation metadata.
-
-Use this for:
-
-- debugging parser bugs
-- replay analysis
-- proving what the worker saw
-
-Avoid relying on it for product UI. It can be high volume.
 
 ### `observed_transactions`
 
@@ -145,36 +131,6 @@ Human/operator state, assignment, notes, status.
 
 This avoids writing high-volume worker findings into Postgres while still allowing operators to manage workflow state.
 
-## Grafana
-
-Grafana lives in:
-
-```text
-grafana/
-```
-
-It is started with:
-
-```bash
-make grafana-up
-```
-
-Local login:
-
-```text
-http://127.0.0.1:3001
-admin / admin
-```
-
-Provisioned datasources:
-
-- ClickHouse
-- Postgres
-
-Dashboard:
-
-- Axoria Operations
-
 ## Ops Health API
 
 The API exposes workspace ops health endpoints that combine:
@@ -216,7 +172,7 @@ For production, important metrics include:
 
 Do not rebuild full operational monitoring inside the frontend.
 
-Use Grafana for:
+Keep product UI monitoring focused on:
 
 - ingestion throughput
 - worker performance
@@ -262,7 +218,6 @@ SELECT * FROM matcher_events WHERE transfer_request_id = '<id>';
 
 The current schema is MVP-oriented. A production retention strategy should define:
 
-- how long raw observations are retained
 - how long materialized observations are retained
 - whether proof packets snapshot data permanently
 - whether old exceptions are archived
@@ -271,6 +226,5 @@ The current schema is MVP-oriented. A production retention strategy should defin
 The principle:
 
 ```text
-Keep proof/audit facts durable. Keep raw high-volume observations only as long as useful.
+Keep proof/audit facts durable. Avoid storing irrelevant chain-wide raw firehose data.
 ```
-
