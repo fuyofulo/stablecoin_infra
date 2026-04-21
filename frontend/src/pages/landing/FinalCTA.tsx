@@ -10,9 +10,9 @@ export function FinalCTA({ startHref = '/login' }: { startHref?: string }) {
         >
           <h2
             style={{
-              fontSize: 'clamp(40px, 5.6vw, 72px)',
-              lineHeight: 1.02,
-              letterSpacing: '-0.035em',
+              fontSize: 'clamp(32px, 4vw, 52px)',
+              lineHeight: 1.06,
+              letterSpacing: '-0.025em',
               color: 'var(--ax-text)',
               fontWeight: 500,
             }}
