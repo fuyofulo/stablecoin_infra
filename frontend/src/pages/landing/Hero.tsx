@@ -24,19 +24,19 @@ export function Hero({
             </span>
             <h1
               style={{
-                fontSize: 'clamp(52px, 7.2vw, 96px)',
-                lineHeight: 0.98,
-                letterSpacing: '-0.035em',
+                fontSize: 'clamp(34px, 4.4vw, 58px)',
+                lineHeight: 1.06,
+                letterSpacing: '-0.025em',
                 fontWeight: 500,
               }}
             >
-              Payouts
+              The payout infrastructure
               <br />
-              <span style={{ color: 'var(--ax-accent)' }}>with proof.</span>
+              <span style={{ color: 'var(--ax-accent)' }}>for stablecoin teams.</span>
             </h1>
             <p className="lp-lead" style={{ fontSize: 19, maxWidth: '52ch' }}>
-              Stablecoin payouts, signed as a batch and matched on-chain. Every run ships with a
-              verifiable proof.
+              Helping businesses move USDC on Solana with deterministic workflows, on-chain
+              reconciliation, and cryptographic proof for every payout.
             </p>
             <div className="lp-row lp-gap-12" style={{ flexWrap: 'wrap' }}>
               <a href={startHref} className="lp-btn lp-btn-primary">
