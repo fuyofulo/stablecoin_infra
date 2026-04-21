@@ -17,10 +17,16 @@ export function FinalCTA({ startHref = '/login' }: { startHref?: string }) {
               fontWeight: 500,
             }}
           >
-            Stop reconciling.
+            Ship USDC on rails
             <br />
-            <span style={{ color: 'var(--ax-accent)' }}>Start shipping receipts.</span>
+            <span style={{ color: 'var(--ax-accent)' }}>built for audit.</span>
           </h2>
+          <p
+            className="lp-lead"
+            style={{ fontSize: 19, maxWidth: '52ch', textAlign: 'center' }}
+          >
+            Policy, signature, settlement, proof — in one deterministic run.
+          </p>
           <div className="lp-row lp-gap-12" style={{ justifyContent: 'center' }}>
             <a
               href={startHref}
