@@ -75,6 +75,5 @@ function isPublicLimitedPath(path: string) {
 }
 
 function clientIp(req: Request) {
-  const forwardedFor = req.header('x-forwarded-for')?.split(',')[0]?.trim();
-  return forwardedFor || req.ip || req.socket.remoteAddress || 'unknown';
+  return req.ip || req.socket.remoteAddress || 'unknown';
 }

@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import crypto from 'node:crypto';
 import { z } from 'zod';
 import { ApiError, conflict } from '../api-errors.js';
 import { hashPassword, verifyPassword } from '../auth-passwords.js';
@@ -122,8 +123,14 @@ authRouter.post('/auth/login', async (req, res, next) => {
 
 authRouter.post('/auth/logout', requireAuth(), async (req, res, next) => {
   try {
+    const sessionTokenHash = crypto.createHash('sha256').update(req.auth!.sessionToken).digest('hex');
     await prisma.authSession.deleteMany({
-      where: { sessionToken: req.auth!.sessionToken },
+      where: {
+        OR: [
+          { sessionToken: req.auth!.sessionToken },
+          { sessionToken: sessionTokenHash },
+        ],
+      },
     });
 
     res.status(204).end();

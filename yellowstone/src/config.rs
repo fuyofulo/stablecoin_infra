@@ -16,6 +16,8 @@ pub struct AppConfig {
 
 impl AppConfig {
     pub fn from_env() -> Result<Self, env::VarError> {
+        let node_env = env::var("NODE_ENV").unwrap_or_else(|_| "development".to_string());
+        let is_production = node_env == "production";
         let yellowstone_endpoint = env::var("YELLOWSTONE_ENDPOINT")?;
         let yellowstone_token = non_empty_env("YELLOWSTONE_TOKEN");
         let clickhouse_url =
@@ -39,6 +41,10 @@ impl AppConfig {
             .ok()
             .map(|value| matches!(value.trim(), "1" | "true" | "TRUE" | "yes" | "YES"))
             .unwrap_or(false);
+
+        if is_production && control_plane_service_token.is_none() {
+            panic!("CONTROL_PLANE_SERVICE_TOKEN is required in production");
+        }
 
         Ok(Self {
             yellowstone_endpoint,

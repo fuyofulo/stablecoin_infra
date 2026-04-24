@@ -31,8 +31,14 @@ export async function authenticateRequest(authorizationHeader?: string | null) {
     return null;
   }
 
-  const session = await prisma.authSession.findUnique({
-    where: { sessionToken: token },
+  const sessionTokenHash = hashSessionToken(token);
+  const session = await prisma.authSession.findFirst({
+    where: {
+      OR: [
+        { sessionToken: sessionTokenHash },
+        { sessionToken: token },
+      ],
+    },
     include: {
       user: true,
     },
@@ -60,16 +66,22 @@ export async function authenticateRequest(authorizationHeader?: string | null) {
 
 export async function createSession(userId: string, organizationId?: string) {
   const sessionToken = crypto.randomBytes(32).toString('hex');
+  const sessionTokenHash = hashSessionToken(sessionToken);
   const expiresAt = new Date(Date.now() + SESSION_TTL_DAYS * 24 * 60 * 60 * 1000);
 
-  return prisma.authSession.create({
+  await prisma.authSession.create({
     data: {
-      sessionToken,
+      sessionToken: sessionTokenHash,
       userId,
       ...(organizationId ? { organizationId } : {}),
       expiresAt,
     },
   });
+
+  return {
+    sessionToken,
+    expiresAt,
+  };
 }
 
 export function requireAuth() {
@@ -108,4 +120,8 @@ function extractBearerToken(header?: string | null) {
   }
 
   return token;
+}
+
+function hashSessionToken(token: string) {
+  return crypto.createHash('sha256').update(token).digest('hex');
 }

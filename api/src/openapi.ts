@@ -1,4 +1,5 @@
 import { API_ENDPOINTS, type ApiEndpoint } from './api-contract.js';
+import { config } from './config.js';
 
 export function buildOpenApiSpec() {
   const paths: Record<string, Record<string, unknown>> = {};
@@ -17,10 +18,15 @@ export function buildOpenApiSpec() {
       description: 'API-first stablecoin payment control, reconciliation, execution handoff, and proof surface.',
     },
     servers: [
-      {
-        url: 'http://127.0.0.1:3100',
-        description: 'Local development',
-      },
+      config.publicApiUrl
+        ? {
+            url: config.publicApiUrl,
+            description: config.isProduction ? 'Production' : 'Configured public API',
+          }
+        : {
+            url: 'http://127.0.0.1:3100',
+            description: 'Local development',
+          },
     ],
     security: [
       { bearerAuth: [] },
@@ -37,7 +43,7 @@ export function buildOpenApiSpec() {
         serviceToken: {
           type: 'apiKey',
           in: 'header',
-          name: 'x-control-plane-token',
+          name: 'x-service-token',
           description: 'Internal worker service token.',
         },
       },

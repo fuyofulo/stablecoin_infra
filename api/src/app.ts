@@ -26,6 +26,7 @@ import { treasuryWalletsRouter } from './routes/treasury-wallets.js';
 
 export function createApp() {
   const app = express();
+  app.set('trust proxy', config.trustProxy);
 
   app.use((req, res, next) => {
     const requestId = normalizeRequestId(req.header('x-request-id')) ?? crypto.randomUUID();
@@ -36,15 +37,28 @@ export function createApp() {
 
   app.use((req, res, next) => {
     const origin = req.header('origin');
-    const allowOrigin =
-      origin && (origin === config.corsOrigin || isLocalDevOrigin(origin))
-        ? origin
-        : config.corsOrigin;
+    if (origin) {
+      if (!isAllowedOrigin(origin)) {
+        if (req.method === 'OPTIONS') {
+          res.status(403).json({
+            error: 'ForbiddenOrigin',
+            code: 'forbidden_origin',
+            message: 'Origin is not allowed',
+            requestId: req.requestId,
+          });
+          return;
+        }
 
-    res.setHeader('Access-Control-Allow-Origin', allowOrigin);
-    res.setHeader('Access-Control-Allow-Headers', 'content-type,authorization,idempotency-key,x-request-id');
-    res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PATCH,DELETE,OPTIONS');
-    res.setHeader('Access-Control-Expose-Headers', 'content-disposition,x-request-id');
+        next();
+        return;
+      }
+
+      res.setHeader('Vary', 'Origin');
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Access-Control-Allow-Headers', 'content-type,authorization,idempotency-key,x-request-id');
+      res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PATCH,DELETE,OPTIONS');
+      res.setHeader('Access-Control-Expose-Headers', 'content-disposition,x-request-id');
+    }
 
     if (req.method === 'OPTIONS') {
       res.status(204).end();
@@ -136,6 +150,18 @@ export function createApp() {
   });
 
   return app;
+}
+
+function isAllowedOrigin(origin: string) {
+  if (config.corsOrigins.includes(origin)) {
+    return true;
+  }
+
+  if (!config.isProduction && isLocalDevOrigin(origin)) {
+    return true;
+  }
+
+  return false;
 }
 
 function isLocalDevOrigin(origin: string) {

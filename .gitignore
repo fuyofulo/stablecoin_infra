@@ -1,10 +1,17 @@
 .DS_Store
 .env
+.env.*
+!.env.example
+!**/.env.example
 node_modules/
 *.jsonl
 *.jsonl.gz
 *.tsbuildinfo
 .playwright-mcp/
+*.pem
+*.key
+*.p12
+*.pfx
 
 api/node_modules/
 api/dist/
