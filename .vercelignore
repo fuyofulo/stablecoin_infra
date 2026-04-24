@@ -1,0 +1,28 @@
+# Vercel deploy only needs the frontend build + config/frontend.public.json.
+# Exclude everything else in the monorepo to keep the upload small.
+
+api
+yellowstone
+clickhouse
+postgres
+problems
+outputs
+tmp
+system_explained
+docker-compose.yml
+Makefile
+*.mp4
+
+# Build artifacts we regenerate on Vercel
+frontend/node_modules
+frontend/dist
+frontend/.vite
+
+# Git internals
+.git
+.github
+
+# IDE + OS
+.DS_Store
+.idea
+.vscode
