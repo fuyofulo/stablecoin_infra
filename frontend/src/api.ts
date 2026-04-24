@@ -35,6 +35,17 @@ const LEGACY_AUTH_STORAGE_KEY = 'usdc_ops.session_token';
 
 let sessionToken = loadStoredToken();
 
+export class ApiError extends Error {
+  status: number;
+  code: string | null;
+  constructor(message: string, status: number, code: string | null) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+    this.code = code;
+  }
+}
+
 async function request<T>(path: string, init?: RequestInit & { includeAuth?: boolean }): Promise<T> {
   const includeAuth = init?.includeAuth ?? true;
   const response = await fetch(`${API_BASE_URL}${path}`, {
@@ -48,10 +59,14 @@ async function request<T>(path: string, init?: RequestInit & { includeAuth?: boo
 
   if (!response.ok) {
     let message = `${response.status} ${response.statusText}`;
+    let code: string | null = null;
     try {
       const body = await response.json();
       if (body?.message) {
         message = body.message;
+      }
+      if (typeof body?.code === 'string') {
+        code = body.code;
       }
     } catch {
       // keep default
@@ -61,7 +76,7 @@ async function request<T>(path: string, init?: RequestInit & { includeAuth?: boo
       clearSessionToken();
     }
 
-    throw new Error(message);
+    throw new ApiError(message, response.status, code);
   }
 
   if (response.status === 204) {
@@ -107,7 +122,14 @@ export const api = {
   clearSessionToken() {
     clearSessionToken();
   },
-  login(input: { email: string; displayName?: string }) {
+  register(input: { email: string; password: string; displayName?: string }) {
+    return request<LoginResponse>('/auth/register', {
+      method: 'POST',
+      includeAuth: false,
+      body: JSON.stringify(input),
+    });
+  },
+  login(input: { email: string; password: string }) {
     return request<LoginResponse>('/auth/login', {
       method: 'POST',
       includeAuth: false,

@@ -3,7 +3,7 @@ import { useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import { Link, Navigate, Route, Routes, useLocation, useNavigate, useParams } from 'react-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AppSidebar } from './Sidebar';
-import { api } from './api';
+import { api, ApiError } from './api';
 import { PaymentRunDetailPage as PaymentRunDetailPageV2 } from './pages/PaymentRunDetail';
 import { CommandCenterPage as CommandCenterPageV2 } from './pages/CommandCenter';
 import { PaymentsPage as PaymentsPageV2 } from './pages/Payments';
@@ -106,7 +106,10 @@ function toAuthenticatedSession(result: { user: AuthenticatedSession['user']; or
 
 export function App() {
   const location = useLocation();
-  const shouldCheckSession = location.pathname !== '/login' && api.hasSessionToken();
+  const shouldCheckSession =
+    location.pathname !== '/login' &&
+    location.pathname !== '/register' &&
+    api.hasSessionToken();
   const sessionQuery = useQuery({
     queryKey: queryKeys().session,
     queryFn: () => api.getSession(),
@@ -119,6 +122,7 @@ export function App() {
       <Route path="/" element={<LandingPageV2 />} />
       <Route path="/landing" element={<LandingPageV2 />} />
       <Route path="/login" element={<LoginPage />} />
+      <Route path="/register" element={<RegisterPage />} />
       <Route path="/*" element={<RequireSession sessionQuery={sessionQuery} />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
@@ -270,35 +274,65 @@ function AppShell({ session }: { session: AuthenticatedSession }) {
   );
 }
 
+function authErrorMessage(err: unknown, fallback: string): string {
+  if (err instanceof ApiError) {
+    if (err.code === 'invalid_credentials') return 'Invalid email or password.';
+    if (err.code === 'conflict') return 'An account with this email already exists.';
+    if (err.code === 'validation_error') return err.message || 'Please check the form and try again.';
+    return err.message || fallback;
+  }
+  return err instanceof Error ? err.message : fallback;
+}
+
+function AuthTabs({ active }: { active: 'login' | 'register' }) {
+  return (
+    <div className="auth-tabs" role="tablist" aria-label="Authentication mode">
+      <Link
+        to="/login"
+        role="tab"
+        aria-selected={active === 'login'}
+        data-active={active === 'login'}
+        className="auth-tab"
+        replace
+      >
+        Sign in
+      </Link>
+      <Link
+        to="/register"
+        role="tab"
+        aria-selected={active === 'register'}
+        data-active={active === 'register'}
+        className="auth-tab"
+        replace
+      >
+        Create account
+      </Link>
+    </div>
+  );
+}
+
 function LoginPage() {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const [error, setError] = useState<string | null>(null);
   const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const loginMutation = useMutation({
-    mutationFn: (nextEmail: string) => {
+    mutationFn: (input: { email: string; password: string }) => {
       // Always start login from a clean auth state so stale tokens cannot win.
       void queryClient.cancelQueries({ queryKey: queryKeys().session });
       queryClient.removeQueries({ queryKey: queryKeys().session });
       api.clearSessionToken();
-      return api.login({ email: nextEmail });
+      return api.login(input);
     },
-    onSuccess: async (result, submittedEmail) => {
-      const expectedEmail = submittedEmail.trim().toLowerCase();
-      const actualEmail = result.user.email.trim().toLowerCase();
-      if (expectedEmail && expectedEmail !== actualEmail) {
-        api.clearSessionToken();
-        queryClient.removeQueries({ queryKey: queryKeys().session });
-        setError(`Sign-in mismatch: entered ${submittedEmail}, received session for ${result.user.email}. Please retry.`);
-        return;
-      }
+    onSuccess: async (result) => {
       api.setSessionToken(result.sessionToken);
       queryClient.setQueryData(queryKeys().session, toAuthenticatedSession(result));
       const firstWorkspaceId = result.organizations[0]?.workspaces[0]?.workspaceId;
       navigate(firstWorkspaceId ? `/workspaces/${firstWorkspaceId}` : '/setup', { replace: true });
     },
     onError: (nextError) => {
-      setError(nextError instanceof Error ? nextError.message : 'Unable to sign in.');
+      setError(authErrorMessage(nextError, 'Unable to sign in.'));
     },
   });
 
@@ -309,13 +343,18 @@ function LoginPage() {
       setError('Email is required.');
       return;
     }
+    if (!password) {
+      setError('Password is required.');
+      return;
+    }
     setError(null);
-    loginMutation.mutate(normalizedEmail);
+    loginMutation.mutate({ email: normalizedEmail, password });
   }
 
   return (
     <main className="login-shell">
       <section className="login-panel">
+        <AuthTabs active="login" />
         <form className="login-form" onSubmit={handleSubmit}>
           <label>
             Email
@@ -330,10 +369,133 @@ function LoginPage() {
               autoCapitalize="off"
               spellCheck={false}
               inputMode="email"
+              required
+            />
+          </label>
+          <label>
+            Password
+            <input
+              name="password"
+              type="password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              placeholder="Your password"
+              autoComplete="current-password"
+              required
             />
           </label>
           <button className="button button-primary" disabled={loginMutation.isPending} type="submit">
             {loginMutation.isPending ? 'Signing in...' : 'Sign in'}
+          </button>
+        </form>
+        {error ? <p className="form-error">{error}</p> : null}
+      </section>
+    </main>
+  );
+}
+
+function RegisterPage() {
+  const queryClient = useQueryClient();
+  const navigate = useNavigate();
+  const [error, setError] = useState<string | null>(null);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [displayName, setDisplayName] = useState('');
+
+  const registerMutation = useMutation({
+    mutationFn: (input: { email: string; password: string; displayName?: string }) => {
+      void queryClient.cancelQueries({ queryKey: queryKeys().session });
+      queryClient.removeQueries({ queryKey: queryKeys().session });
+      api.clearSessionToken();
+      return api.register(input);
+    },
+    onSuccess: (result) => {
+      api.setSessionToken(result.sessionToken);
+      queryClient.setQueryData(queryKeys().session, toAuthenticatedSession(result));
+      const firstWorkspaceId = result.organizations[0]?.workspaces[0]?.workspaceId;
+      navigate(firstWorkspaceId ? `/workspaces/${firstWorkspaceId}` : '/setup', { replace: true });
+    },
+    onError: (nextError) => {
+      setError(authErrorMessage(nextError, 'Unable to create account.'));
+    },
+  });
+
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const normalizedEmail = email.trim();
+    const trimmedDisplayName = displayName.trim();
+    if (!normalizedEmail) {
+      setError('Email is required.');
+      return;
+    }
+    if (password.length < 8) {
+      setError('Password must be at least 8 characters.');
+      return;
+    }
+    if (password.length > 128) {
+      setError('Password must be 128 characters or fewer.');
+      return;
+    }
+    setError(null);
+    registerMutation.mutate({
+      email: normalizedEmail,
+      password,
+      displayName: trimmedDisplayName ? trimmedDisplayName : undefined,
+    });
+  }
+
+  return (
+    <main className="login-shell">
+      <section className="login-panel">
+        <AuthTabs active="register" />
+        <form className="login-form" onSubmit={handleSubmit}>
+          <label>
+            Email
+            <input
+              name="email"
+              type="email"
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+              placeholder="ops@company.com"
+              autoComplete="email"
+              autoCorrect="off"
+              autoCapitalize="off"
+              spellCheck={false}
+              inputMode="email"
+              required
+            />
+          </label>
+          <label>
+            Password
+            <input
+              name="password"
+              type="password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              placeholder="At least 8 characters"
+              autoComplete="new-password"
+              minLength={8}
+              maxLength={128}
+              required
+            />
+          </label>
+          <label>
+            Name <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>(optional)</span>
+            <input
+              name="displayName"
+              type="text"
+              value={displayName}
+              onChange={(event) => setDisplayName(event.target.value)}
+              placeholder="Ops"
+              autoComplete="name"
+            />
+          </label>
+          <button
+            className="button button-primary"
+            disabled={registerMutation.isPending}
+            type="submit"
+          >
+            {registerMutation.isPending ? 'Creating account...' : 'Create account'}
           </button>
         </form>
         {error ? <p className="form-error">{error}</p> : null}
