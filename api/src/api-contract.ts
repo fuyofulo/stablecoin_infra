@@ -17,8 +17,11 @@ export const API_ENDPOINTS = [
   endpoint('health', 'GET', '/health', ['system'], 'Health check', 'public'),
   endpoint('capabilities', 'GET', '/capabilities', ['system'], 'Machine-readable API capability map', 'public'),
   endpoint('openapi', 'GET', '/openapi.json', ['system'], 'OpenAPI 3.1 specification', 'public'),
-  endpoint('login', 'POST', '/auth/login', ['auth'], 'Create or resume a user session', 'public', {
-    requestBody: { email: 'string email', displayName: 'string optional' },
+  endpoint('register', 'POST', '/auth/register', ['auth'], 'Create a user account and return a session', 'public', {
+    requestBody: { email: 'string email', password: 'string min 8 chars', displayName: 'string optional' },
+  }),
+  endpoint('login', 'POST', '/auth/login', ['auth'], 'Create a user session with email and password', 'public', {
+    requestBody: { email: 'string email', password: 'string min 8 chars' },
   }),
   endpoint('session', 'GET', '/auth/session', ['auth'], 'Inspect current user session', 'session'),
   endpoint('logout', 'POST', '/auth/logout', ['auth'], 'Invalidate current user session', 'session'),

@@ -49,7 +49,7 @@ Use `GET /openapi.json` for the machine-readable contract and `GET /capabilities
 
 Main route groups:
 
-- auth: `/auth/login`, `/auth/session`, `/auth/logout`
+- auth: `/auth/register`, `/auth/login`, `/auth/session`, `/auth/logout`
 - org/workspace setup: `/organizations`, `/organizations/:organizationId/workspaces`
 - address book: `/workspaces/:workspaceId/treasury-wallets`, `/counterparties`, `/destinations`
 - inputs: `/workspaces/:workspaceId/payment-requests`

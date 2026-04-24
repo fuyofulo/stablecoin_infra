@@ -71,7 +71,7 @@ function applyRateLimit(args: {
 }
 
 function isPublicLimitedPath(path: string) {
-  return path === '/auth/login' || path === '/capabilities';
+  return path === '/auth/register' || path === '/auth/login' || path === '/capabilities';
 }
 
 function clientIp(req: Request) {

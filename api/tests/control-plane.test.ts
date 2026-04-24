@@ -128,21 +128,25 @@ test('public routes enforce configured rate limits', async () => {
 });
 
 test('session auth supports organization, workspace, address-book, and policy setup', async () => {
-  const login = await post('/auth/login', { email: 'ops@example.com' });
-  assert.equal(login.status, 'authenticated');
-  assert.ok(login.sessionToken);
+  const register = await post('/auth/register', {
+    email: 'ops@example.com',
+    password: 'DemoPass123!',
+    displayName: 'Ops',
+  });
+  assert.equal(register.status, 'authenticated');
+  assert.ok(register.sessionToken);
 
   const organization = await post(
     '/organizations',
     { organizationName: 'Acme Treasury' },
-    login.sessionToken,
+    register.sessionToken,
   );
   assert.equal(organization.organizationName, 'Acme Treasury');
 
   const workspace = await post(
     `/organizations/${organization.organizationId}/workspaces`,
     { workspaceName: 'USDC Ops' },
-    login.sessionToken,
+    register.sessionToken,
   );
   assert.equal(workspace.workspaceName, 'USDC Ops');
 
@@ -153,14 +157,14 @@ test('session auth supports organization, workspace, address-book, and policy se
       address: Keypair.generate().publicKey.toBase58(),
       displayName: 'Ops Vault',
     },
-    login.sessionToken,
+    register.sessionToken,
   );
   assert.equal(treasuryWallet.displayName, 'Ops Vault');
 
   const counterparty = await post(
     `/workspaces/${workspace.workspaceId}/counterparties`,
     { displayName: 'Fuyo LLC' },
-    login.sessionToken,
+    register.sessionToken,
   );
   assert.equal(counterparty.displayName, 'Fuyo LLC');
 
@@ -173,21 +177,72 @@ test('session auth supports organization, workspace, address-book, and policy se
       counterpartyId: counterparty.counterpartyId,
       trustState: 'trusted',
     },
-    login.sessionToken,
+    register.sessionToken,
   );
   assert.equal(destination.label, 'Fuyo payout wallet');
   assert.equal(destination.trustState, 'trusted');
 
-  const policy = await get(`/workspaces/${workspace.workspaceId}/approval-policy`, login.sessionToken);
+  const policy = await get(`/workspaces/${workspace.workspaceId}/approval-policy`, register.sessionToken);
   assert.equal(policy.isActive, true);
 
-  const inbox = await get(`/workspaces/${workspace.workspaceId}/approval-inbox`, login.sessionToken);
+  const inbox = await get(`/workspaces/${workspace.workspaceId}/approval-inbox`, register.sessionToken);
   assert.deepEqual(inbox.items, []);
 
-  const session = await get('/auth/session', login.sessionToken);
+  const session = await get('/auth/session', register.sessionToken);
   assert.equal(session.authenticated, true);
   assert.equal(session.authType, 'user_session');
   assert.equal(session.organizations.length, 1);
+});
+
+test('auth registration and login require the right password', async () => {
+  const missingUser = await fetch(`${baseUrl}/auth/login`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      email: 'missing@example.com',
+      password: 'DemoPass123!',
+    }),
+  });
+  assert.equal(missingUser.status, 401);
+  assert.equal((await missingUser.json()).code, 'invalid_credentials');
+
+  const register = await post('/auth/register', {
+    email: 'auth@example.com',
+    password: 'DemoPass123!',
+    displayName: 'Auth User',
+  });
+  assert.equal(register.status, 'authenticated');
+
+  const duplicateRegister = await fetch(`${baseUrl}/auth/register`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      email: 'auth@example.com',
+      password: 'DemoPass123!',
+      displayName: 'Auth User',
+    }),
+  });
+  assert.equal(duplicateRegister.status, 409);
+  assert.equal((await duplicateRegister.json()).code, 'conflict');
+
+  const wrongPassword = await fetch(`${baseUrl}/auth/login`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      email: 'auth@example.com',
+      password: 'WrongPass123!',
+    }),
+  });
+  assert.equal(wrongPassword.status, 401);
+  assert.equal((await wrongPassword.json()).code, 'invalid_credentials');
+
+  const login = await post('/auth/login', {
+    email: 'auth@example.com',
+    password: 'DemoPass123!',
+  });
+  assert.equal(login.status, 'authenticated');
+  assert.ok(login.sessionToken);
+  assert.equal(login.user.email, 'auth@example.com');
 });
 
 async function get(path: string, token?: string) {

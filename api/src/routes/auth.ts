@@ -1,34 +1,62 @@
 import { Router } from 'express';
 import { z } from 'zod';
+import { ApiError, conflict } from '../api-errors.js';
+import { hashPassword, verifyPassword } from '../auth-passwords.js';
 import { createSession, requireAuth } from '../auth.js';
 import { prisma } from '../prisma.js';
 
 export const authRouter = Router();
 
-const loginSchema = z.object({
+const registerSchema = z.object({
   email: z.string().email(),
+  password: z.string().min(8).max(128),
   displayName: z.string().min(1).optional(),
 });
 
-authRouter.post('/auth/login', async (req, res, next) => {
-  try {
-    const input = loginSchema.parse(req.body);
+const loginSchema = z.object({
+  email: z.string().email(),
+  password: z.string().min(8).max(128),
+});
 
-    const user = await prisma.user.upsert({
-      where: { email: input.email },
-      update: {
-        displayName: input.displayName ?? undefined,
-      },
-      create: {
-        email: input.email,
-        displayName: input.displayName ?? input.email.split('@')[0],
-      },
+authRouter.post('/auth/register', async (req, res, next) => {
+  try {
+    const input = registerSchema.parse(req.body);
+    const email = normalizeEmail(input.email);
+    const passwordHash = await hashPassword(input.password);
+    const displayName = normalizeOptionalDisplayName(input.displayName) ?? defaultDisplayName(email);
+
+    const existing = await prisma.user.findUnique({
+      where: { email },
     });
+
+    let user;
+
+    if (existing) {
+      if (existing.passwordHash) {
+        throw conflict('An account with this email already exists.', { field: 'email' });
+      }
+
+      user = await prisma.user.update({
+        where: { userId: existing.userId },
+        data: {
+          passwordHash,
+          displayName,
+        },
+      });
+    } else {
+      user = await prisma.user.create({
+        data: {
+          email,
+          passwordHash,
+          displayName,
+        },
+      });
+    }
 
     const session = await createSession(user.userId);
     const organizations = await listUserOrganizations(user.userId);
 
-    res.json({
+    res.status(201).json({
       status: 'authenticated',
       sessionToken: session.sessionToken,
       user: serializeUser(user),
@@ -52,6 +80,39 @@ authRouter.get('/auth/session', requireAuth(), async (req, res, next) => {
         email: auth.userEmail,
         displayName: auth.userDisplayName,
       },
+      organizations,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+authRouter.post('/auth/login', async (req, res, next) => {
+  try {
+    const input = loginSchema.parse(req.body);
+    const email = normalizeEmail(input.email);
+
+    const user = await prisma.user.findUnique({
+      where: { email },
+    });
+
+    if (!user?.passwordHash) {
+      throw invalidCredentialsError();
+    }
+
+    const passwordValid = await verifyPassword(input.password, user.passwordHash);
+
+    if (!passwordValid) {
+      throw invalidCredentialsError();
+    }
+
+    const session = await createSession(user.userId);
+    const organizations = await listUserOrganizations(user.userId);
+
+    res.json({
+      status: 'authenticated',
+      sessionToken: session.sessionToken,
+      user: serializeUser(user),
       organizations,
     });
   } catch (error) {
@@ -104,4 +165,21 @@ function serializeUser(user: { userId: string; email: string; displayName: strin
     email: user.email,
     displayName: user.displayName,
   };
+}
+
+function normalizeEmail(email: string) {
+  return email.trim().toLowerCase();
+}
+
+function normalizeOptionalDisplayName(displayName?: string) {
+  const trimmed = displayName?.trim();
+  return trimmed?.length ? trimmed : null;
+}
+
+function defaultDisplayName(email: string) {
+  return email.split('@')[0] ?? email;
+}
+
+function invalidCredentialsError() {
+  return new ApiError(401, 'invalid_credentials', 'Invalid email or password.');
 }

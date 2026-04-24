@@ -1048,8 +1048,9 @@ async function createPaymentOrderSetup(options?: {
   workspaceName?: string;
   destinationTrustState?: 'trusted' | 'unreviewed' | 'restricted' | 'blocked';
 }) {
-  const login = await post('/auth/login', {
+  const register = await post('/auth/register', {
     email: options?.userEmail ?? 'phase-f@example.com',
+    password: 'DemoPass123!',
     displayName: 'Phase F Operator',
   });
 
@@ -1058,7 +1059,7 @@ async function createPaymentOrderSetup(options?: {
     {
       organizationName: options?.organizationName ?? 'Phase F Treasury',
     },
-    login.sessionToken,
+    register.sessionToken,
   );
 
   const workspace = await post(
@@ -1066,7 +1067,7 @@ async function createPaymentOrderSetup(options?: {
     {
       workspaceName: options?.workspaceName ?? 'Phase F Workspace',
     },
-    login.sessionToken,
+    register.sessionToken,
   );
 
   const sourceAddress = await post(
@@ -1076,7 +1077,7 @@ async function createPaymentOrderSetup(options?: {
       address: 'PGm4dkZcqPTkYKqAjNtAokVwJirJB8XQcGpYWBVcFMW',
       displayName: 'Ops source wallet',
     },
-    login.sessionToken,
+    register.sessionToken,
   );
 
   const destinationAddress = await post(
@@ -1086,7 +1087,7 @@ async function createPaymentOrderSetup(options?: {
       address: 'VhfmPjvQxSiQW2FjnvoghewGGVYaWcz4cmDxpFPQEti',
       displayName: 'Vendor destination wallet',
     },
-    login.sessionToken,
+    register.sessionToken,
   );
 
   const counterparty = await post(
@@ -1095,7 +1096,7 @@ async function createPaymentOrderSetup(options?: {
       displayName: `Vendor ${crypto.randomUUID().slice(0, 8)}`,
       category: 'vendor',
     },
-    login.sessionToken,
+    register.sessionToken,
   );
 
   const destination = await post(
@@ -1109,11 +1110,11 @@ async function createPaymentOrderSetup(options?: {
       destinationType: 'vendor_wallet',
       isInternal: false,
     },
-    login.sessionToken,
+    register.sessionToken,
   );
 
   return {
-    sessionToken: login.sessionToken as string,
+    sessionToken: register.sessionToken as string,
     organization,
     workspace,
     sourceAddress,

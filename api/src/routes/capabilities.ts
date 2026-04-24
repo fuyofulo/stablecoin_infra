@@ -79,6 +79,7 @@ capabilitiesRouter.get('/capabilities', (_req, res) => {
       {
         group: 'setup',
         routes: [
+          'POST /auth/register',
           'POST /auth/login',
           'GET /auth/session',
           'GET /openapi.json',
