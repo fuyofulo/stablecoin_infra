@@ -1969,7 +1969,7 @@ a {
 .tour-root {
   position: fixed;
   inset: 0;
-  z-index: 100;
+  z-index: 9000;
   pointer-events: none;
 }
 
@@ -1980,14 +1980,9 @@ a {
   bottom: 0;
   background: rgba(0, 0, 0, 0.6);
   backdrop-filter: blur(1px);
-  z-index: 100;
+  z-index: 9000;
   pointer-events: auto;
   animation: tour-fade 200ms ease both;
-}
-
-.ax-sidebar {
-  position: relative;
-  z-index: 110;
 }
 
 .tour-highlight {
@@ -1997,7 +1992,7 @@ a {
     0 0 0 2px var(--accent),
     0 0 0 6px rgba(46, 230, 168, 0.2),
     0 0 24px rgba(46, 230, 168, 0.35);
-  z-index: 120;
+  z-index: 9020;
   pointer-events: none;
   transition: top 200ms ease, left 200ms ease, width 200ms ease, height 200ms ease;
 }
@@ -2010,7 +2005,7 @@ a {
   border: 1px solid var(--border-strong);
   border-radius: 14px;
   box-shadow: 0 20px 40px rgba(0, 0, 0, 0.45);
-  z-index: 130;
+  z-index: 9030;
   pointer-events: auto;
   animation: tour-fade 240ms ease both;
   transition: top 200ms ease, left 200ms ease;

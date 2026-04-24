@@ -225,11 +225,11 @@ function AppShell({ session }: { session: AuthenticatedSession }) {
     api.clearSessionToken();
     queryClient.removeQueries({ queryKey: queryKeys().session });
     queryClient.clear();
-    navigate('/login', { replace: true });
+    navigate('/', { replace: true });
   }
 
   return (
-    <TourProvider>
+    <TourProvider userId={session.user.userId}>
     <div className="app-shell">
       <AppSidebar
         session={session}

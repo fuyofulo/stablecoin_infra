@@ -198,11 +198,14 @@ export function CommandCenterPage({ session }: { session: AuthenticatedSession }
     && !hasData;
 
   const tour = useTour();
+  const tourStart = tour.start;
+  const tourIsDismissed = tour.isDismissed;
+  const tourIsOpen = tour.isOpen;
   useEffect(() => {
-    if (isBrandNew && !tour.isDismissed && !tour.isOpen) {
-      tour.start();
+    if (isBrandNew && !tourIsDismissed && !tourIsOpen) {
+      tourStart();
     }
-  }, [isBrandNew, tour]);
+  }, [isBrandNew, tourIsDismissed, tourIsOpen, tourStart]);
 
   return (
     <main className="page-frame">

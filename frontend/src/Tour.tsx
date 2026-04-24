@@ -72,7 +72,7 @@ const DEFAULT_STEPS: TourStep[] = [
   },
 ];
 
-const TOUR_DISMISSED_KEY = 'axoria.tour.v1.dismissed';
+const TOUR_DISMISSED_PREFIX = 'axoria.tour.v1.dismissed';
 
 type TourContextValue = {
   isOpen: boolean;
@@ -94,17 +94,21 @@ export function useTour(): TourContextValue {
   return ctx;
 }
 
-function readDismissed(): boolean {
+function storageKey(userId?: string | null): string {
+  return userId ? `${TOUR_DISMISSED_PREFIX}:${userId}` : TOUR_DISMISSED_PREFIX;
+}
+
+function readDismissed(userId?: string | null): boolean {
   try {
-    return Boolean(window.localStorage.getItem(TOUR_DISMISSED_KEY));
+    return Boolean(window.localStorage.getItem(storageKey(userId)));
   } catch {
     return false;
   }
 }
 
-function writeDismissed() {
+function writeDismissed(userId?: string | null) {
   try {
-    window.localStorage.setItem(TOUR_DISMISSED_KEY, '1');
+    window.localStorage.setItem(storageKey(userId), '1');
   } catch {
     // ignore
   }
@@ -113,13 +117,21 @@ function writeDismissed() {
 export function TourProvider({
   children,
   steps = DEFAULT_STEPS,
+  userId,
 }: {
   children: ReactNode;
   steps?: TourStep[];
+  userId?: string | null;
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const [stepIndex, setStepIndex] = useState(0);
-  const [isDismissed, setIsDismissed] = useState<boolean>(() => readDismissed());
+  const [isDismissed, setIsDismissed] = useState<boolean>(() => readDismissed(userId));
+
+  // Re-read dismissal when the active user changes (e.g. after logout/login).
+  useEffect(() => {
+    setIsDismissed(readDismissed(userId));
+    setIsOpen(false);
+  }, [userId]);
 
   const start = useCallback(() => {
     setStepIndex(0);
@@ -127,10 +139,10 @@ export function TourProvider({
   }, []);
 
   const close = useCallback(() => {
-    writeDismissed();
+    writeDismissed(userId);
     setIsDismissed(true);
     setIsOpen(false);
-  }, []);
+  }, [userId]);
 
   const next = useCallback(() => {
     setStepIndex((idx) => {
