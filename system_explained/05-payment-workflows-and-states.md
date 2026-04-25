@@ -201,6 +201,43 @@ This older lifecycle is still important because:
 - The matcher indexes transfer requests.
 - Reconciliation detail often uses transfer request IDs.
 
+## Collection Request Flow
+
+Collections are the inbound counterpart to payouts. A `CollectionRequest` declares an expected inbound USDC payment to one of the workspace's `TreasuryWallet` rows. Matching uses the same engine as payouts but with one additional constraint.
+
+### Inputs
+
+A collection is created with:
+
+- `receivingTreasuryWalletId` — which of our wallets the funds should land in (required).
+- One of:
+  - `collectionSourceId` — references a saved `CollectionSource` (preferred — carries label, trust state, optional counterparty link, reusable).
+  - `payerWalletAddress` — raw wallet address, one-off.
+  - Neither — "any payer" mode; first matching transfer wins.
+- `amountRaw`, `reason`, optional `externalReference` and `counterpartyId`.
+
+CSV import mirrors the payment side via `POST /workspaces/:workspaceId/collection-runs/import-csv` (preview also available).
+
+### Match constraint specific to collections
+
+When a `TransferRequest` has `requestType == 'collection_request'`, the worker's `request_matches_observed_source` guard at `yellowstone/src/yellowstone/mod.rs:1105` requires:
+
+- The observed inbound transfer to a registered TreasuryWallet, AND
+- If the request has an `expected_source_wallet_address` (from the `CollectionSource` or denormalized `payerWalletAddress`), the observed source wallet must equal it.
+- If `expected_source_wallet_address` is null, any payer matches.
+
+For `payment_order` requests, this guard returns true unconditionally — payouts do not have a source-wallet equality constraint.
+
+### States
+
+A collection request flows through:
+
+```text
+draft → matching (worker watching) → matched | partially_matched | exception | cancelled
+```
+
+Proof export at `GET /workspaces/:workspaceId/collections/:collectionRequestId/proof` (and the run-level variant) returns a deterministic JSON packet parallel to the payment-side proof.
+
 ## Why There Are Multiple State Systems
 
 There are three state dimensions that must not be collapsed:

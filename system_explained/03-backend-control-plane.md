@@ -66,11 +66,18 @@ This was necessary because Vite sometimes uses different local ports.
 
 ## Authentication
 
-Authentication currently supports user sessions.
+Authentication is email + password user sessions.
 
-The frontend logs in by email. The API creates or resumes a user and returns a bearer token.
+Routes (all in `api/src/routes/auth.ts`):
 
-The session token is stored in Postgres as `AuthSession`.
+- `POST /auth/register` — create a user (email + password). Hashes the password and writes a `User` row + a fresh session.
+- `POST /auth/login` — exchange email + password for a bearer session token.
+- `GET  /auth/session` — return the current session (requires `Authorization: Bearer <token>`).
+- `POST /auth/logout` — invalidate the current session.
+
+The session token is stored in Postgres as `AuthSession`. The frontend persists it in `localStorage` under `usdc_ops_v2.session_token` (with a legacy fallback key for migration).
+
+A first-signup walkthrough tutorial in the sidebar guides new users through wallets → destinations → policy → first payment.
 
 Session auth context includes:
 

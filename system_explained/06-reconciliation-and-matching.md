@@ -26,15 +26,15 @@ The matcher has two broad inputs.
 
 Expected payments come from Postgres:
 
-- Transfer requests.
-- Payment orders.
-- Destination wallet/token account.
+- Transfer requests (both `requestType: 'payment_order'` and `requestType: 'collection_request'`).
+- Payment orders / collection requests.
+- Destination wallet/token account (for payouts) or expected source wallet/token account (for collections).
 - Source wallet/token account.
 - Expected amount.
 - Submitted signatures.
 - Workspace ownership.
 
-The worker fetches this through the API matching index.
+The worker fetches this through the API matching index. For collections, the index also carries `expected_source_wallet_address` populated from the linked `CollectionSource` (or from the denormalized `payerWalletAddress` on the `CollectionRequest`).
 
 ### Observed Side
 
@@ -122,6 +122,33 @@ Signature-first matching is stronger because:
 - the user signed the packet Axoria prepared
 - the transaction signature is unique
 - the worker can directly link on-chain reality to control-plane intent
+
+## Collections: Source-Wallet Equality Guard
+
+Collections add one extra constraint that payouts do not have. The function `request_matches_observed_source` at `yellowstone/src/yellowstone/mod.rs:1105` is:
+
+```rust
+fn request_matches_observed_source(
+    request: &WorkspaceTransferRequestMatch,
+    observed_source_wallet: Option<&str>,
+) -> bool {
+    if request.request_type != "collection_request" {
+        return true;  // payouts: no source-wallet constraint
+    }
+    match request.expected_source_wallet_address.as_deref() {
+        Some(expected) => observed_source_wallet == Some(expected),
+        None => true,   // "any payer" mode
+    }
+}
+```
+
+In plain English:
+
+- For `payment_order`, the matcher uses signature-first then destination/amount/FIFO. Source wallet is not constrained.
+- For `collection_request` with no expected source, any payer can satisfy.
+- For `collection_request` with an expected source (saved `CollectionSource` or denormalized payer), the observed source wallet MUST equal the expected one.
+
+This is why a collection that references a known source will not match a transfer from a different wallet, even if amount and destination match. It is also why "Any payer" mode in the new-collection dialog is a deliberate fallback, not the default.
 
 ## FIFO Matching
 

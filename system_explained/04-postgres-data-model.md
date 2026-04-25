@@ -100,6 +100,26 @@ Unique on `(workspaceId, walletAddress)`. Indexed on `(workspaceId, createdAt de
 
 A generic label registry that is *not* scoped to a workspace. Used to enrich arbitrary on-chain addresses seen during observation. Fields: `addressLabelId`, `chain`, `address`, `entityName`, `entityType`, `labelKind`, `roleTags` (JSON), `source`, `sourceRef?`, `confidence`, `isActive`, `notes?`, timestamps. Unique on `(chain, address)`.
 
+### `CollectionSource`
+
+Saved expected payer wallet — the inbound counterpart to `Destination`. Used by collections to constrain which payer satisfies a given collection request.
+
+Fields:
+
+- `collectionSourceId`
+- `workspaceId`, `counterpartyId?` (optional Counterparty link)
+- `chain` (default `solana`), `asset` (default `usdc`)
+- `walletAddress` — the expected payer's wallet
+- `tokenAccountAddress?` — optional pre-resolved ATA
+- `sourceType` (default `payer_wallet`)
+- `trustState` — `unreviewed | trusted | restricted | blocked`
+- `label` — human name ("Acme — ops wallet")
+- `notes?`
+- `isActive`
+- `metadataJson`, timestamps
+
+Unique on `(workspaceId, walletAddress)`. Created via the standalone `CollectionSources` page or inline from the new-collection dialog (the `AddCollectionSourceDialog` component is shared).
+
 ## Business Intent Tables
 
 ### `PaymentRequest`
@@ -151,15 +171,44 @@ Fields:
 
 No `preparedExecutionPacketJson` and no `submittedSignature` here — those live on `ExecutionRecord` via the order's `TransferRequest`.
 
+### `CollectionRequest`
+
+The inbound counterpart to `PaymentOrder` — declares an expected USDC payment INTO one of the workspace's `TreasuryWallet` rows.
+
+Fields:
+
+- `collectionRequestId`
+- `workspaceId`, `collectionRunId?` (optional batch link)
+- `transferRequestId` — every collection request projects into one `TransferRequest` with `requestType = 'collection_request'`
+- `receivingTreasuryWalletId` — which of our wallets the funds should land in
+- `collectionSourceId?` — optional saved expected payer source (preferred over raw payer fields)
+- `payerWalletAddress?`, `payerTokenAccountAddress?` — denormalized payer fields, set when `collectionSourceId` is null OR for snapshot purposes
+- `counterpartyId?`
+- `amountRaw`, `asset`, `reason`, `externalReference?`, `dueAt?`
+- `state`
+- `createdByUserId?`, `metadataJson`, timestamps
+
+### `CollectionRun`
+
+Batch container for collection requests. Same shape as `PaymentRun` but for the inbound side.
+
+Fields: `collectionRunId`, `workspaceId`, `runName`, `inputSource`, `state`, `metadataJson`, `createdByUserId?`, timestamps.
+
+### `CollectionRequestEvent`
+
+Append-only audit log per collection request. Same shape as `TransferRequestEvent` (eventType, actorType, before/after state, linked signature, payloadJson, etc.).
+
 ## Transfer-Level Tables (The Matcher's View)
 
 ### `TransferRequest`
 
 The lower-level expected-settlement record. A `PaymentOrder` usually spawns one `TransferRequest`. This is what the matcher reconciles observed USDC movement against.
 
-Fields: `transferRequestId`, `workspaceId`, `paymentOrderId?`, `sourceTreasuryWalletId?`, `destinationId`, `requestType`, `asset`, `amountRaw`, `requestedByUserId?`, `reason?`, `externalReference?`, `status` (default `submitted`), `requestedAt`, `dueAt?`, `propertiesJson`, timestamps.
+Fields: `transferRequestId`, `workspaceId`, `paymentOrderId?`, `sourceTreasuryWalletId?`, `destinationId`, `requestType` — `'payment_order'` or `'collection_request'`, `asset`, `amountRaw`, `requestedByUserId?`, `reason?`, `externalReference?`, `status` (default `submitted`), `requestedAt`, `dueAt?`, `propertiesJson`, timestamps.
 
-Relations: approvals, execution records, events, notes. Several compound indexes for matcher and UI queries.
+Relations: approvals, execution records, events, notes, optional one-to-one `CollectionRequest`. Several compound indexes for matcher and UI queries.
+
+The matcher branches on `requestType`: collection requests get the source-wallet equality guard at `yellowstone/src/yellowstone/mod.rs:1105`; payment orders do not.
 
 ### `ApprovalPolicy`
 

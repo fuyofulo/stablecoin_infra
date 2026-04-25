@@ -7,85 +7,84 @@ This repository contains one product split across several runtime processes.
 ```text
 .
 ├── api/                 TypeScript Express control-plane API
-├── frontend/            React/Vite human interface
-├── yellowstone/         Rust Solana Yellowstone ingestion and matching worker
-├── postgres/            Postgres initialization scripts
-├── clickhouse/          ClickHouse initialization scripts
-├── outputs/             Research/application/proof artifacts
-├── problems/            Problem writeups and logs
-├── Makefile             Local development and test commands
+├── frontend/            React/Vite SPA
+├── yellowstone/         Rust Solana Yellowstone ingestion + matching worker
+├── postgres/            Postgres init scripts (used by docker volume init)
+├── clickhouse/          ClickHouse init scripts
+├── config/              Public/runtime config (worker.config.json, frontend.public.json)
+├── scripts/             Operational shell scripts
+├── system_explained/    These onboarding docs
+├── outputs/             Research / proof artifacts
+├── problems/            Incident writeups
+├── backups/             Postgres pg_dump snapshots (gitignored)
+├── Makefile             Developer + production-backed workflows
 ├── docker-compose.yml   Local Postgres and ClickHouse
-└── list.md              Product implementation checklist
+├── vercel.json          Vercel deploy config (frontend-only static SPA)
+└── list.md              Implementation checklist
 ```
 
 ## Runtime Processes
 
-Local development usually starts these processes:
+The production-backed runtime that serves https://axoria.fun consists of:
 
 ```text
-Postgres
-Control-plane relational database.
+Frontend (Vercel CDN)
+  Static React/Vite SPA at https://axoria.fun. No Vercel functions, no proxy.
+  Served from CDN edge. Build output = frontend/dist.
 
-ClickHouse
-Event/reconciliation/observability database.
+Cloudflare Tunnel (cloudflared)
+  Outbound tunnel from the laptop to Cloudflare. Exposes the laptop API as
+  https://api.axoria.fun. The browser hits this URL directly — Vercel is NOT
+  in the API call path.
 
-API
-Express server at http://127.0.0.1:3100.
+API (laptop)
+  Express server at http://127.0.0.1:3100 run via `tsx watch`.
+  Reachable from the world via the Cloudflare tunnel above.
 
-Frontend
-Vite app, usually at http://localhost:5174 or whatever Vite chooses.
+Postgres (laptop, docker)
+  Control-plane database. Container `usdc-ops-postgres`, port 54329.
 
-Yellowstone worker
-Rust process that connects to a Solana Yellowstone endpoint and writes ClickHouse.
+ClickHouse (laptop, docker)
+  Event/reconciliation/observability database. Container `usdc-ops-clickhouse`,
+  port 8123.
+
+Yellowstone worker (laptop)
+  Rust process. Subscribes to Solana mainnet via Yellowstone gRPC (currently
+  https://solana-rpc.parafi.tech:10443). Writes ClickHouse, fetches matching
+  context from API via /internal/matching-index + SSE.
 ```
+
+For local dev (no tunnel, no Vercel), `make dev` brings up Postgres + ClickHouse + API + Vite frontend + worker on the laptop only.
+
+## Why this topology
+
+The laptop hosts everything except the static frontend bundle. Tradeoffs:
+
+- **Free**, no managed services, no card needed.
+- Per-DB-query latency is ~2ms (loopback) instead of ~300ms (was Singapore Supabase). Page loads dropped 4–5×.
+- Cloudflare Tunnel solves the "residential ISP doesn't give you a public IP" problem and survives WiFi changes — `cloudflared` reconnects from wherever the laptop is.
+- Cost: laptop sleep / lid close / internet drop kills the demo. Use `caffeinate -i make prod-backend` and a hotspot backup.
 
 ## Important Commands
 
-### Start Local Infrastructure
-
 ```bash
-make infra-up
+make prod-backend     # production-backed runtime (Postgres + ClickHouse + API + tunnel + worker)
+make dev              # full local dev stack (no tunnel)
+make infra-up         # Postgres + ClickHouse only
+make infra-down
+
+make dev-api          # individual processes
+make dev-frontend
+make dev-worker
+make tunnel
+
+make test             # api + worker + frontend
+make backup-db        # pg_dump local Postgres
+make restore-db FILE=backups/<name>.sql
+make reset-data       # truncate local docker tables
 ```
 
-Starts Postgres and ClickHouse, waits for them, and applies schema sync.
-
-### Start Full Development Stack
-
-```bash
-make dev
-```
-
-Starts infrastructure, API, frontend, and the Yellowstone worker if `YELLOWSTONE_ENDPOINT` is set.
-
-### Run Tests
-
-```bash
-make test
-```
-
-Runs:
-
-- API tests.
-- Worker Rust tests.
-- Frontend tests.
-
-Individual commands:
-
-```bash
-make test-api
-make test-worker
-make test-frontend
-```
-
-### Reset Local Data
-
-```bash
-make reset-data
-```
-
-Stops the docker services, deletes local volumes, restarts infra, and syncs Prisma schema.
-
-Use this only when you intentionally want a clean local database.
+See doc 11 for full operational details.
 
 ## Docker Services
 
@@ -94,98 +93,84 @@ Use this only when you intentionally want a clean local database.
 ### Postgres
 
 ```text
-container: usdc_ops_postgres
-port: 54329
-database: usdc_ops
-user: usdc_ops
-password: usdc_ops
+container: usdc-ops-postgres
+ports:     54329:5432
+database:  usdc_ops
+user:      usdc_ops
+password:  usdc_ops
+volume:    stablecoin_intelligence_postgres_data (named, persistent)
 ```
 
 ### ClickHouse
 
 ```text
-container: usdc_ops_clickhouse
-ports: 8123 HTTP, 9000 native
-database: usdc_ops
-user: default
-password: empty
+container: usdc-ops-clickhouse
+ports:     8123 HTTP, 9000 native
+database:  usdc_ops
+user:      default
+password:  empty
 ```
 
 ## Data Ownership
 
-Postgres and ClickHouse have different roles.
-
 Postgres owns the control-plane truth:
 
-- Users.
-- Organizations.
-- Workspaces.
-- Treasury wallets (Solana wallets we own; source of every payment).
+- Users, organizations, workspaces.
+- Treasury wallets (Solana wallets we own; sources for payouts, receivers for collections).
 - Destinations (counterparty wallets we pay).
-- Counterparties (optional business-entity tag on destinations).
-- Payment requests.
-- Payment runs.
-- Payment orders.
-- Transfer requests.
-- Approval policy.
-- Approval decisions.
+- Counterparties (optional org-scoped tag).
+- Collection sources (saved expected payer wallets with trust state).
+- Payment requests, payment runs, payment orders.
+- Collection requests, collection runs.
+- Transfer requests (the matcher's intent row).
+- Approval policy + decisions.
 - Execution records.
-- Operator notes.
-- Exception metadata.
+- Audit events, operator notes, exception metadata.
 - Idempotency records.
+- Auth sessions.
 
 ClickHouse owns high-volume observed and derived data:
 
-- Observed transactions.
-- Observed USDC transfers.
-- Reconstructed observed payments.
-- Matching events.
-- Current settlement matches.
+- Observed transactions, USDC transfers, reconstructed payments.
+- Matcher events, settlement matches.
 - Worker-generated exceptions.
 
-This split is important. Do not move high-volume chain event data into Postgres casually.
+Do not move high-volume chain event data into Postgres casually.
 
 ## Control Flow Between Services
 
-The main runtime path is:
-
 ```text
-Frontend or API client
-  -> API
+Browser (axoria.fun, Vercel CDN)
+  -> Cloudflare Tunnel
+  -> API (laptop)
   -> Postgres control-plane records
   -> matching-index invalidation event
-  -> Yellowstone worker refreshes matching index
-  -> Yellowstone stream produces transaction updates
+  -> Yellowstone worker refreshes matching index (via SSE)
+  -> Yellowstone gRPC stream produces transaction updates
   -> worker reconstructs and filters relevant USDC movement
   -> worker writes ClickHouse matches/exceptions
   -> API reads Postgres + ClickHouse
-  -> frontend/API client sees updated reconciliation/proof state
+  -> frontend sees updated reconciliation/proof state
 ```
 
 ## Why There Is No Redis/Kafka Yet
 
-The current architecture uses:
+The current architecture uses Postgres for durable control state, ClickHouse for events, in-process SSE for matching-index refresh, and Yellowstone as the external event stream. This is intentionally simpler than adding Redis or Kafka.
 
-- Postgres for durable control state.
-- ClickHouse for event/reconciliation storage.
-- In-process Server-Sent Events for matching-index refresh.
-- Yellowstone as the external event stream.
+A queue/stream would become useful when:
 
-This is intentionally simpler than adding Redis or Kafka. A queue/stream would become useful if:
+- The API runs across multiple replicas and SSE refresh is no longer in-process.
+- Background jobs need retries, visibility timeouts, durable scheduling.
+- Proof generation becomes heavy enough to need a worker queue.
+- Worker fleet needs partitioned high-throughput ingestion.
 
-- Matching refresh events become unreliable across multiple API replicas.
-- Background jobs need retries, visibility timeouts, and durable scheduling.
-- Export/proof generation becomes heavy enough to need a worker queue.
-- The worker fleet needs partitioned high-throughput ingestion.
-
-For the current MVP, adding Kafka would add operational weight before the product proves it needs it.
+Adding Kafka before any of those exist would add operational weight before the product proves it needs it.
 
 ## Code Quality Reality
 
-The backend has grown quickly. It has real tests and real architecture, but it also has areas where route modules and service modules are still tightly coupled. The docs call these out in the risk map.
-
-Important rule for future refactors:
+The backend has grown quickly. It has real tests and architecture, but route modules and service modules are still tightly coupled in places. The risk map (doc 12) tracks specifics.
 
 ```text
-Do not refactor state transitions, matching invalidation, or proof generation without tests around the current behavior.
+Do not refactor state transitions, matching invalidation, or proof generation
+without tests around the current behavior.
 ```

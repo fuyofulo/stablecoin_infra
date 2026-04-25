@@ -33,16 +33,23 @@ Core worker loop.
 
 The worker:
 
-1. Connects to a Yellowstone gRPC endpoint.
+1. Connects to a Yellowstone gRPC endpoint (currently `https://solana-rpc.parafi.tech:10443`, mainnet).
 2. Subscribes to transaction updates.
-3. Maintains a matching index from the API.
+3. Maintains a matching index from the API (`/internal/matching-index` + `/internal/matching-index/events` SSE).
 4. Reconstructs transaction context.
 5. Extracts USDC transfer legs.
 6. Reconstructs payment-level movement.
-7. Filters for relevance.
-8. Runs matching.
+7. Filters for relevance — only transfers touching a registered `TreasuryWallet` address (or its USDC ATA) are considered.
+8. Runs matching against open `TransferRequest` rows in the index.
 9. Writes ClickHouse rows.
 10. Reports worker stage metrics back to the API.
+
+The matcher branches on `request_type`:
+
+- For `'payment_order'`, the source-wallet equality guard returns true unconditionally — match by signature → destination → amount → FIFO.
+- For `'collection_request'`, `request_matches_observed_source` at `yellowstone/src/yellowstone/mod.rs:1105` requires the observed source wallet to equal `expected_source_wallet_address` (when set). If null, any payer matches.
+
+The worker only sees live slots — there is no historical backfill. A request created BEFORE the worker started will never match retroactively. This is an open item in `list.md`.
 
 ## Configuration
 

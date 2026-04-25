@@ -186,15 +186,18 @@ Needed:
 
 ## Frontend Risks
 
-### Large `App.tsx`
+### `App.tsx` cleanup is partially done
 
-The frontend has too much page/component logic in one file.
+`App.tsx` was once ~5,400 lines of inline page components. Most user-facing pages (Payments, Collections, Approvals, Execution, Settlement, Proofs, Wallets, Counterparties, CommandCenter, Landing, plus the *Detail variants) are now extracted to `frontend/src/pages/`. As of 2026-04-26 `App.tsx` is still ~5,280 lines because:
 
-Needed:
+- Router shell, auth gate, and shared layout still live there.
+- Legacy inline pages (Policy, Exceptions, parts of the address book) haven't been extracted.
+- Several large shared components (table primitives, lifecycle rails, dialog templates) are still inline.
 
-- split pages
-- split shared table components
-- split modals/drawers
+Remaining cleanup:
+
+- extract Policy and Exceptions into pages
+- pull shared table/dialog primitives out of App.tsx
 - centralize lifecycle UI components
 
 ### UX Still Needs Institutional Polish
@@ -295,3 +298,24 @@ Do not delete these just because they look indirect:
 - direct transfer-request creation flows if payment orders fully replace them
 - excessive proof JSON verbosity
 - route-heavy logic once service modules are split
+
+## Collections-Specific Risks
+
+The collections wedge landed recently (CollectionRequest / CollectionRun / CollectionSource entities, frontend pages, source-wallet match guard). It is functional and demoable, but the polish lags payouts:
+
+- **No historical backfill.** The Yellowstone worker only sees live slots. A collection created BEFORE the worker started will never match retroactively. Same constraint as payouts — affects collections more because users naturally try inbound test payments before bringing the worker up.
+- **Source trust workflow is shallow.** `CollectionSource.trustState` exists but there's no review queue or approval-policy hook for unreviewed sources analogous to destination trust on the payout side.
+- **No source verification beyond label.** A user can save a CollectionSource for any wallet address; nothing currently proves the wallet actually belongs to the named counterparty. Future: signed-message verification, KYB hook, or oracle attestation.
+- **Inbound timing UX is sparse.** No "expected by" SLA, no late-payment escalation. Collections with a `dueAt` in the past don't surface anywhere prominent.
+- **No duplicate-source detection across workspaces.** A wallet labeled "Acme — ops" in one workspace might be flagged differently in another. Outside MVP scope.
+
+## Operational Risks (laptop-hosted production)
+
+The "production" runtime serving https://axoria.fun runs on the user's laptop. This is intentional (free, low latency, see `local_prod_architecture.md`) but adds operational risks not present in managed-infra setups:
+
+- Mac sleep / lid close kills the cloudflared tunnel. Mitigation: `caffeinate -i make prod-backend`.
+- Internet drop kills the API entirely. Mitigation: mobile hotspot backup before any demo.
+- Data loss if the docker volume is removed (`docker compose down -v`). Mitigation: `make backup-db` before risky operations; backups land in `./backups/`.
+- No automated monitoring / restart on crash. The Vercel frontend will keep loading but every API call will 502 until the tunnel is back.
+
+These are explicitly accepted for the hackathon + grant period. Migrating to a hosted API + DB is a follow-up.

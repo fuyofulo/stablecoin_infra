@@ -32,6 +32,8 @@ This is a compact product map for clients. It describes the main workflows:
 
 - single payment
 - CSV/payment-run import
+- collection request (single or batched via collection-runs)
+- collection sources (saved expected payer wallets)
 - exception operations
 
 ### User Sessions
@@ -84,6 +86,24 @@ POST /workspaces/:workspaceId/payment-runs/:paymentRunId/prepare-execution
 POST /workspaces/:workspaceId/payment-runs/:paymentRunId/attach-signature
 POST /workspaces/:workspaceId/payment-runs/:paymentRunId/close
 GET  /workspaces/:workspaceId/payment-runs/:paymentRunId/proof?format=markdown
+```
+
+### Single Collection (Inbound)
+
+```text
+POST /workspaces/:workspaceId/collection-sources                          (optional, save the payer)
+POST /workspaces/:workspaceId/collections                                 (create with collectionSourceId or payerWalletAddress)
+GET  /workspaces/:workspaceId/collections/:collectionRequestId            (poll status)
+GET  /workspaces/:workspaceId/collections/:collectionRequestId/proof      (deterministic JSON proof when matched)
+```
+
+### Batch Collection Run
+
+```text
+POST /workspaces/:workspaceId/collection-runs/import-csv/preview
+POST /workspaces/:workspaceId/collection-runs/import-csv
+GET  /workspaces/:workspaceId/collection-runs/:collectionRunId
+GET  /workspaces/:workspaceId/collection-runs/:collectionRunId/proof
 ```
 
 ### Reconciliation Review

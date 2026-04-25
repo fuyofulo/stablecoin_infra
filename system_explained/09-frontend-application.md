@@ -4,15 +4,19 @@ The frontend lives in `frontend/` and is a Vite + React + TypeScript app with Re
 
 ## High-level shape
 
-- `frontend/src/App.tsx` — a thin router shell. Mounts auth, the sidebar, and one `<Route>` per page.
-- `frontend/src/Sidebar.tsx` — institutional sidebar: workspace switcher, nav groups (**Operations** / **Registry** / **Advanced**), theme toggle, profile menu.
-- `frontend/src/pages/*.tsx` — one file per top-level page. This is where the real UI logic lives.
+- `frontend/src/App.tsx` — router shell + shared layout + auth gate. Still ~5,280 lines because some legacy inline page components (Policy, Exceptions, parts of the address book) and shared row/table primitives haven't been extracted yet. Most user-facing pages have been moved out.
+- `frontend/src/Sidebar.tsx` — institutional sidebar: workspace switcher, nav groups (**Operations** / **Registry** / **Advanced**), theme toggle, profile menu, walkthrough tutorial trigger on first signup.
+- `frontend/src/pages/*.tsx` — one file per top-level extracted page (see "Page-by-page notes" below).
+- `frontend/src/pages/landing/*.tsx` — landing page composed of `Hero`, `Features`, `Workflow`, `ProductUI`, `CodeWall`, `FinalCTA`, `Icons`, `heroVisuals/`. Shipped via Vercel at https://axoria.fun.
 - `frontend/src/api.ts` — typed HTTP client for every endpoint the UI uses.
+- `frontend/src/public-config.ts` — reads `config/frontend.public.json` for `apiBaseUrl` (`https://api.axoria.fun` in prod) and the public Solana RPC URL.
 - `frontend/src/domain.ts` — cross-cutting helpers: address shortening, USDC formatting, Solana wallet discovery / signing, USD value computation.
 - `frontend/src/ui/Toast.tsx` — toast provider used by every page for success / error / info notices.
 - `frontend/src/styles/` — the design system (see below).
 
-There used to be one big `App.tsx` containing most pages. That monolith is legacy; active pages live under `frontend/src/pages/`.
+## Deployment
+
+Frontend is deployed to Vercel CDN at https://axoria.fun. `vercel.json` configures it as a static SPA: `buildCommand: "cd frontend && npm install && npm run build"`, `outputDirectory: "frontend/dist"`, framework null, with a single SPA-fallback rewrite to `index.html`. There are NO Vercel functions and NO API proxy — the browser hits the API directly at `https://api.axoria.fun` (Cloudflare tunnel to the laptop).
 
 ## Design system
 
@@ -78,6 +82,10 @@ From `App.tsx`:
 - `/workspaces/:workspaceId/execution` → **Execution** (Ready to sign / In flight / Executed).
 - `/workspaces/:workspaceId/settlement` → **Settlement** (Matched / Pending / Exceptions).
 - `/workspaces/:workspaceId/proofs` → **Proofs**.
+- `/workspaces/:workspaceId/collections` → **Collections** (unified list of `CollectionRun`s + standalone `CollectionRequest`s).
+- `/workspaces/:workspaceId/collections/:collectionRequestId` → **CollectionDetail**.
+- `/workspaces/:workspaceId/collection-runs/:collectionRunId` → **CollectionRunDetail**.
+- `/workspaces/:workspaceId/collection-sources` → **CollectionSources** (registry of saved expected payer wallets).
 - `/workspaces/:workspaceId/policy` → Policy.
 - `/workspaces/:workspaceId/exceptions` → Exceptions.
 
@@ -174,6 +182,34 @@ Tabs: **All / Ready to sign / In flight / Executed**. Batch-expandable rows. Bat
 File: `frontend/src/pages/Settlement.tsx`.
 
 Tabs: **All / Matched / Pending / Exceptions**. Batch-expandable rows. Match pill uses the `--ax-accent` / `--ax-warning` / `--ax-danger` tones. Signature column prefers the matched settlement signature over the execution-submitted signature.
+
+### Collections
+
+File: `frontend/src/pages/Collections.tsx`.
+
+Unified list of `CollectionRun` batches + standalone `CollectionRequest` rows, mirroring the Payments page. Columns: Recipient/Run, Receiver (treasury wallet), Payer, Amount, Reference, State.
+
+Hosts:
+- **New collection** dialog. Three payer modes: **Any payer** (no source constraint), **Known source** (pick from `CollectionSource` rows; supports inline-add via `AddCollectionSourceDialog` reused from `CollectionSources.tsx`), **New wallet** (one-off raw `payerWalletAddress`). After inline source-add, the new source auto-selects via React Query refetch + an ID-diff effect.
+- **Import CSV** dialog with preview step.
+
+### CollectionDetail
+
+File: `frontend/src/pages/CollectionDetail.tsx`.
+
+Per-`CollectionRequest` view. Shows readiness state (Source review / Reconciliation state / verifier digest), expected source vs observed source, matched transfer if any, JSON proof preview when ready.
+
+### CollectionRunDetail
+
+File: `frontend/src/pages/CollectionRunDetail.tsx`.
+
+Per-batch view of a collection run, mirroring `PaymentRunDetail`. Lifecycle, child-request table with per-row state, run-level proof export.
+
+### CollectionSources
+
+File: `frontend/src/pages/CollectionSources.tsx`.
+
+Registry of saved expected payer wallets. Add / Edit dialogs. Trust filter (All / Trusted / Unreviewed / Restricted / Blocked). `AddCollectionSourceDialog` is **exported** so the Collections create dialog can reuse it inline.
 
 ### Policy
 

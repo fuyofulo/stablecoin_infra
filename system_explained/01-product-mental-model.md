@@ -18,7 +18,7 @@ Some USDC token account sent tokens to another USDC token account in transaction
 
 Axoria sits between those two worlds — but it is not a reconciler pitched at the end of the pipeline. It is a workflow engine that owns the path from intent to proof, end to end. The reconciliation and proof pieces are where Axoria is strongest, but the point is that the same system also routes policy, prepares execution, and matches settlement to intent. **Same inputs → same proof digest, every time.**
 
-The current wedge is Solana USDC payouts. Everything else (inbound matching, DAO treasury views, agent runtime) is downstream of getting this one lane right.
+The current wedges are **Solana USDC payouts** and **Solana USDC collections** (inbound expected payments matched against intent). Both are fully built end-to-end and demoable. DAO treasury views, agent runtime, and other downstream surfaces follow.
 
 ## The Four Product Layers
 

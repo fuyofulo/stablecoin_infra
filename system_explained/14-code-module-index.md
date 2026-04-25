@@ -35,10 +35,11 @@ Files that no longer exist but may still appear in old search results:
 - `actor.ts` — uniform user actor representation for audit logs.
 - `axoria-client.ts` — internal HTTP client used by the API to talk to the worker and back.
 
-### Treasury wallets, destinations, counterparties
+### Treasury wallets, destinations, counterparties, collection sources
 
 - `treasury-wallets.ts` — CRUD for workspace treasury wallets. Handles `usdcAtaAddress` derivation on create. Serializes rows for the API.
 - `destinations.ts` — CRUD for `Destination` + `Counterparty`. Destinations store `walletAddress` directly; this module enforces the `(workspaceId, walletAddress)` uniqueness and the trust-state transitions.
+- `collection-sources.ts` — CRUD for `CollectionSource` (saved expected payer wallets). Handles `findOrCreateCollectionSourceForPayer` used by the collections service when a payer is referenced by raw wallet address.
 - `pricing.ts` — SOL/USD price with a 60-second in-memory TTL. Uses Binance `SOLUSDT`, with stale fallback if the HTTP call fails. Consumed by `/treasury-wallets/balances`.
 - `solana.ts` — Solana helpers: RPC client, ATA derivation, balance fetch.
 
@@ -49,6 +50,9 @@ Files that no longer exist but may still appear in old search results:
 - `payment-run-state.ts` — derived state for a `PaymentRun` based on its child orders.
 - `payment-orders.ts` — order service: submit, cancel, prepare, attach signature, proof.
 - `payment-order-state.ts` — state machine for a single `PaymentOrder`.
+- `collections.ts` — collection request service: create / list / cancel / proof, plus CSV import preview. Resolves `collectionSourceId` or raw payer wallet into the underlying `TransferRequest` with `requestType: 'collection_request'`.
+- `collection-runs.ts` (if present) / collection batch helpers in `collections.ts` — CSV import for a `CollectionRun`, mirroring `payment-runs.ts` shape.
+- `collection-request-proof.ts` / `collection-run-proof.ts` — JSON proof packets for collections (parallel to the payment-side proof modules).
 - `approval-policy.ts` — policy evaluation. Reads `ruleJson` and decides whether a request is auto-cleared, routed, or needs escalation.
 - `execution-records.ts` — `ExecutionRecord` creation and updates. Used when preparing packets and attaching signatures.
 - `transfer-request-lifecycle.ts` — the transfer-request-level state machine.
@@ -72,9 +76,10 @@ Files that no longer exist but may still appear in old search results:
 One file per route group; each wires its own router that `app.ts` mounts. Current files:
 
 - `health.ts`, `capabilities.ts`, `openapi.ts`
-- `auth.ts`, `organizations.ts`
+- `auth.ts` (register / login / logout / session), `organizations.ts`
 - `treasury-wallets.ts` *(replaces old `addresses.ts`)*
 - `destinations.ts`
+- `collection-sources.ts`, `collections.ts` *(handles both collection requests and collection runs)*
 - `payment-requests.ts`, `payment-runs.ts`, `payment-orders.ts`
 - `approvals.ts`, `events.ts`
 - `ops.ts`
@@ -110,12 +115,18 @@ The frontend was fully rebuilt around an institutional dual-theme design system.
 
 ### Pages (`frontend/src/pages/`)
 
+- `Landing.tsx` + `landing/` (Hero, Features, Workflow, ProductUI, CodeWall, FinalCTA, Icons, heroVisuals/) — pre-auth marketing page served at `/landing`. Same Vercel build, no separate site.
 - `CommandCenter.tsx` — workspace Overview. Treasury hero (`$total`, USDC, SOL), operations metric strip, Recent activity table (same shape as the Payments table), onboarding empty state.
 - `Wallets.tsx` — Treasury wallets with live RPC balances (USDC + SOL + USD value via Binance), add-wallet modal.
+- `Destinations.tsx` — destinations table (the Counterparties.tsx page hosts both).
 - `Counterparties.tsx` — destinations + counterparties with trust filters, Edit modal for destinations (label, trust state, counterparty, notes, active flag).
 - `Payments.tsx` — unified table of runs + standalone orders. Source column, Origin pill (`Single` / `Batch · N rows`), CSV import dialog with preview and duplicate-fingerprint error surfacing.
 - `PaymentDetail.tsx` — single payment order view (approval, execution, reconciliation).
 - `PaymentRunDetail.tsx` — run view with lifecycle rail, primary action card (`Approve all` / `Review individually`), per-payment rows, signer selection, proof export.
+- `Collections.tsx` — unified list of collection runs + standalone collection requests. New-collection dialog with "Any payer / Known source / New wallet" picker; Known source supports inline source-add via the exported `AddCollectionSourceDialog`.
+- `CollectionDetail.tsx` — per-collection-request detail (proof readiness, source review, matched transfer, JSON proof preview).
+- `CollectionRunDetail.tsx` — per-collection-run batch view, parallel to `PaymentRunDetail.tsx`.
+- `CollectionSources.tsx` — saved expected payer wallets with Add / Edit dialogs and trust filter. Exports `AddCollectionSourceDialog` for inline reuse from `Collections.tsx`.
 - `Approvals.tsx` — batch-expandable pending table, runId filter banner (from "Review individually"), green Approve / red Reject, decision history also batch-grouped.
 - `Proofs.tsx` — single unified list (batches expand to reveal payments). Inline Preview / Export. Preview dialog renders `ProofJsonView`.
 - `Execution.tsx` — All / Ready to sign / In flight / Executed tabs, batch-expandable rows with aggregated signature display.
@@ -149,10 +160,14 @@ The worker only treats `TreasuryWallet.address` entries as "ours." Destination w
 
 ## Infrastructure
 
-- `Makefile` — `make infra-up`, `make dev`, `make test`, `make reset-data`, etc.
-- `docker-compose.yml` — Postgres + ClickHouse dev stack.
-- `postgres/init/001-control-plane.sql` — initial Postgres seed / support objects.
+- `Makefile` — `make prod-backend` (production-backed runtime serving https://axoria.fun), `make dev` (full local stack), `make infra-up`, `make test`, `make backup-db` / `make restore-db` / `make list-backups`, `make reset-data`, `make reset-prod-data`, individual `dev-api` / `dev-frontend` / `dev-worker` / `tunnel`. `.SILENT` is set so recipe text is not echoed.
+- `docker-compose.yml` — Postgres + ClickHouse dev stack. Container names: `usdc-ops-postgres`, `usdc-ops-clickhouse`. Postgres volume: `stablecoin_intelligence_postgres_data`.
+- `vercel.json` — frontend deploy config (static SPA, no functions).
+- `postgres/init/001-control-plane.sql` — initial Postgres seed / support objects (idempotent CREATE IF NOT EXISTS). Note: `002-supabase-hardening.sql` was deleted 2026-04-26 when the project moved off Supabase to local docker — it would have errored against any non-Supabase Postgres because it referenced the `anon` and `authenticated` roles.
 - `clickhouse/init/` — observed-data tables, matcher events, settlement matches, exceptions.
+- `config/worker.config.json` — non-secret runtime settings for the Yellowstone worker (gRPC endpoint, ClickHouse URL, control-plane API URL, refresh interval).
+- `config/frontend.public.json` — non-secret browser-facing values (`apiBaseUrl`, `solanaRpcUrl`).
+- `scripts/reset-prod-data.sh` — generic Postgres + ClickHouse truncate, prompts for confirmation. Operates on whatever `DATABASE_URL` points at.
 
 ## Repo-root docs and briefs
 

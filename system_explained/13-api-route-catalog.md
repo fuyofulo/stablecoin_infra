@@ -6,12 +6,13 @@ All workspace-scoped routes require a user session: `Authorization: Bearer <sess
 
 ## Public Routes (No Auth)
 
-- `GET /health` — liveness ping.
+- `GET /health` — liveness ping. Runs `SELECT 1` against Postgres.
 - `GET /capabilities` — advertised feature set and versions.
 - `GET /openapi.json` — OpenAPI 3 spec generated from `api-contract.ts`.
-- `POST /auth/login` — email-based session creation.
+- `POST /auth/register` — create a new user (email + password).
+- `POST /auth/login` — email + password session creation.
 - `GET /auth/session` — returns the authenticated session (requires auth).
-- `POST /auth/logout` — invalidates the current session.
+- `POST /auth/logout` — invalidates the current session (requires auth).
 
 ## Organizations And Workspaces
 
@@ -44,6 +45,37 @@ Destinations are what you pay; counterparties are an optional org-scoped entity 
 - `PATCH /workspaces/:workspaceId/destinations/:destinationId` — update any editable field (label, trust state, counterparty tag, notes, active flag). Unique `(workspaceId, walletAddress)` is enforced.
 
 There are **no `/payees` routes**. Payees were removed — use a destination + optional counterparty.
+
+## Collection Sources
+
+Saved expected payer wallets (the inbound side's equivalent of a destination). A collection that references a `collectionSourceId` becomes match-restricted to that wallet via the worker's `request_matches_observed_source` guard.
+
+- `GET   /workspaces/:workspaceId/collection-sources` — list active sources.
+- `POST  /workspaces/:workspaceId/collection-sources` — create. Body: `{ label, walletAddress, tokenAccountAddress?, sourceType?, trustState?, counterpartyId?, notes? }`. `trustState` defaults to `unreviewed`.
+- `PATCH /workspaces/:workspaceId/collection-sources/:collectionSourceId` — update label, trust state, counterparty tag, notes, active flag.
+
+The new-collection dialog supports inline source creation in its "Known source" tab — same backing endpoint.
+
+## Collections (single requests)
+
+Inbound expected payments. One per `CollectionRequest` row.
+
+- `GET  /workspaces/:workspaceId/collections` — list standalone collection requests.
+- `POST /workspaces/:workspaceId/collections` — create. Body: `{ receivingTreasuryWalletId, counterpartyId?, collectionSourceId? | payerWalletAddress?, payerTokenAccountAddress?, amountRaw, reason, externalReference? }`. Either `collectionSourceId` (preferred) or raw `payerWalletAddress` constrains the matcher to a specific payer; omit both for "any payer."
+- `POST /workspaces/:workspaceId/collections/import-csv/preview` — parse and validate a CSV without writing.
+- `GET  /workspaces/:workspaceId/collections/:collectionRequestId` — detail.
+- `GET  /workspaces/:workspaceId/collections/:collectionRequestId/proof` — JSON proof packet.
+- `POST /workspaces/:workspaceId/collections/:collectionRequestId/cancel` — cancel.
+
+## Collection Runs
+
+Batches of collection requests, usually from CSV.
+
+- `GET    /workspaces/:workspaceId/collection-runs` — list.
+- `POST   /workspaces/:workspaceId/collection-runs/import-csv` — create a run from CSV.
+- `POST   /workspaces/:workspaceId/collection-runs/import-csv/preview` — preview without writing.
+- `GET    /workspaces/:workspaceId/collection-runs/:collectionRunId` — detail with child requests.
+- `GET    /workspaces/:workspaceId/collection-runs/:collectionRunId/proof` — JSON proof packet for the run.
 
 ## Payment Requests
 
@@ -118,12 +150,12 @@ Transfer requests are still the internal reconciliation row behind a payment ord
 
 ## Internal (Worker ↔ API)
 
-Used by the Yellowstone worker via a service token, not exposed to end users.
+Used by the Yellowstone worker via the `x-service-token` header (`CONTROL_PLANE_SERVICE_TOKEN`), not exposed to end users.
 
-- `GET  /internal/workspaces` — list workspaces the worker should watch.
-- `GET  /internal/workspaces/:workspaceId/matching-context` — matcher context for one workspace.
-- `GET  /internal/matching-index` — global matching index (treasury wallets, destinations, open transfer requests, watched signatures).
-- `GET  /internal/matching-index/events` — SSE stream of matching-index invalidations so the worker can refresh without polling.
+- `GET /internal/workspaces` — list workspaces the worker should watch.
+- `GET /internal/workspaces/:workspaceId/matching-context` — matcher context for one workspace.
+- `GET /internal/matching-index` — global matching index. Returns `{version, workspaces: [{workspace, treasury_wallets, matches, addresses, transferRequests}]}` where `matches` is the list of open transfer requests (both `payment_order` and `collection_request`) with their expected source, destination, and any submitted signature.
+- `GET /internal/matching-index/events` — SSE stream of matching-index invalidations so the worker can refresh without polling.
 
 ## Route Change Checklist
 

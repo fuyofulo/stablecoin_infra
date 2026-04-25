@@ -1,75 +1,114 @@
 # 11 Operating Testing And Debugging
 
-This file explains how to run, test, and debug Axoria locally.
+This file explains how to run, test, and debug Axoria locally and on the production-backed runtime that serves https://axoria.fun.
 
-## Start Everything
+## Run Modes
+
+Axoria has two practical run modes; pick by intent.
+
+### Production-backed runtime (default for demos)
+
+```bash
+make prod-backend
+```
+
+Brings up local Postgres and ClickHouse via docker compose, applies schemas, starts the API, kills any stale `cloudflared` and starts a fresh tunnel exposing the API as `https://api.axoria.fun`, waits for `/health`, then compiles and starts the Yellowstone worker. The deployed Vercel frontend at https://axoria.fun talks to this API. There is no local frontend in this mode.
+
+Requires `api/.env` with a local `DATABASE_URL` and `yellowstone/.env` with `YELLOWSTONE_ENDPOINT` set (the Makefile gates the worker on the env var even though `config/worker.config.json` also carries it).
+
+### Full local dev stack
 
 ```bash
 make dev
 ```
 
-This starts:
+Brings up Postgres + ClickHouse, then starts API, frontend, and the worker (if `YELLOWSTONE_ENDPOINT` is set) all in one terminal. Use this when iterating on the frontend locally.
 
-- Postgres
-- ClickHouse
-- API
-- frontend
-- Yellowstone worker if configured
+### Individual processes
 
-## Start Infrastructure Only
+For separate terminals:
+
+```bash
+make dev-api        # API only
+make dev-frontend   # Vite frontend only
+make dev-worker     # Yellowstone worker only
+make tunnel         # Cloudflare tunnel only (api.axoria.fun -> localhost:3100)
+```
+
+### Infrastructure only
 
 ```bash
 make infra-up
+make infra-down
 ```
 
-Use this when running API/frontend manually.
+Starts/stops local Postgres + ClickHouse without any application processes.
 
 ## Run Tests
 
 ```bash
-make test
-```
-
-Individual:
-
-```bash
+make test            # api + worker + frontend
 make test-api
 make test-worker
 make test-frontend
 ```
 
-## Current Test Coverage
+API tests cover the API contract, ClickHouse integration, control-plane workflows, payment orders, payment-run state, and transfer-request lifecycle. Worker tests run via `cargo test --test-threads=1`. Frontend "tests" today mean the production build runs clean.
 
-API tests include:
+## Make output is silent by default
 
-- API contract.
-- ClickHouse integration.
-- Control plane workflow.
-- Payment orders.
-- Payment run state.
-- Transfer request lifecycle.
+The Makefile has `.SILENT` set, so Make does NOT echo recipe text before running it. What you see in the terminal is the actual runtime output of the underlying commands (cargo, cloudflared, npm, docker). Don't read recipe-source text in the terminal as runtime output — that's a misread (it has happened before, especially the conditional `else echo "Skipping ..."` block inside `prod-backend` which is just a script branch, not a runtime line).
 
-Frontend tests are present through the frontend test command.
-
-Worker tests run through Cargo if Rust tests exist in the crate.
+To see what a recipe would do without running it: `make -n <target>`. To trace execution: `make --trace <target>`.
 
 ## Health Checks
 
-API health endpoints are public.
+- `GET /health` — public liveness; runs `SELECT 1` against Postgres.
+- `GET /workspaces/:workspaceId/ops-health` — workspace-scoped health: worker freshness, route health, matching latency, exception counts, ClickHouse reachability.
 
-Ops health endpoints are workspace-scoped and protected.
+## Backups (local Postgres)
 
-Use ops health to understand:
+The "production" Postgres now runs as a docker volume on the same machine as the API. Take backups before risky changes.
 
-- worker freshness
-- API route health
-- matching latency
-- exception counts
-- ClickHouse reachability
+```bash
+make backup-db                                      # writes backups/usdc_ops-<timestamp>.sql
+make list-backups
+make restore-db FILE=backups/usdc_ops-<timestamp>.sql
+```
+
+`backups/` is gitignored. Plain-SQL `pg_dump` with `--clean --if-exists --no-owner` so restore is idempotent.
+
+## Reset Data
+
+```bash
+make reset-data         # silent: TRUNCATEs known application tables in local Postgres + ClickHouse
+make reset-prod-data    # prompts for "yes": dynamically TRUNCATEs every public table + all ClickHouse usdc_ops tables
+```
+
+`reset-data` is fast and used during dev/test iteration. `reset-prod-data` is more thorough (uses `pg_tables` to discover every table) and is meant for "give me a clean slate before a curated demo." Both operate on whatever `DATABASE_URL` points at — by default that's local docker.
+
+Neither command removes the docker volume. To completely wipe and re-init from scratch:
+
+```bash
+docker compose down postgres
+docker compose rm -f postgres
+docker volume rm stablecoin_intelligence_postgres_data
+docker compose up -d postgres   # init scripts re-run because volume is fresh
+```
+
+NEVER run `docker compose down -v` — that nukes the volume without warning.
+
+## Operational gotchas (laptop-hosted prod)
+
+The "production" runs on the user's laptop. Three things will silently kill the demo:
+
+- **Mac sleep / lid close** kills cloudflared. Use `caffeinate -i make prod-backend` or set Battery preferences to prevent sleep on power.
+- **Internet drop** kills the tunnel. Mobile hotspot is the backup.
+- **`docker compose down -v`** nukes the Postgres volume. Don't.
+
+The deployed `axoria.fun` frontend on Vercel keeps serving even when the laptop is offline, but every API call from the browser will fail until the tunnel is back.
 
 ## Debug A Payment That Did Not Settle
-
-Work through this checklist.
 
 ### 1. Check Payment Order
 
@@ -84,59 +123,61 @@ In API/frontend:
 
 ### 2. Check Matching Index
 
-Confirm the worker knows about it.
+The worker reads from `/internal/matching-index` and subscribes to `/internal/matching-index/events` (SSE). To inspect what the worker can see:
 
-Questions:
+```bash
+curl -s -H "x-service-token: $CONTROL_PLANE_SERVICE_TOKEN" \
+  http://127.0.0.1:3100/internal/matching-index | jq '{
+    version,
+    workspaces: [.workspaces[] | {
+      ws: .workspace.workspaceId,
+      wallets: (.treasury_wallets | length),
+      requests: (.matches | length)
+    }]
+  }'
+```
 
-- Did the API emit a matching-index refresh event?
-- Did the worker log a new matching-index version?
-- Does the index include the transfer request?
-- Does the index include the submitted signature?
-- Does the index include the destination token account/wallet?
+If the request is not in the index, the API mutation didn't reach the worker. Check matching-index invalidation in the relevant route.
+
+The Yellowstone worker only sees **live** slots. A request created BEFORE the worker started will never match retroactively. There is no historical backfill (open item in `list.md`).
 
 ### 3. Check Solana Transaction
 
-Questions:
-
 - Did the transaction confirm?
-- Was it mainnet/devnet consistent with the worker endpoint?
-- Was it USDC mint expected by Axoria?
+- Is the worker on the same network as the wallet (currently mainnet via `solana-rpc.parafi.tech:10443`)?
+- Was it the USDC mint Axoria expects?
 - Did it transfer to the intended token account/wallet?
 - Was the amount raw value correct?
 
 ### 4. Check ClickHouse
 
-Query by signature:
-
 ```sql
 SELECT * FROM observed_transactions WHERE signature = '<signature>';
-SELECT * FROM observed_transfers WHERE signature = '<signature>';
-SELECT * FROM observed_payments WHERE signature = '<signature>';
+SELECT * FROM observed_transfers     WHERE signature = '<signature>';
+SELECT * FROM observed_payments      WHERE signature = '<signature>';
+SELECT * FROM settlement_matches     WHERE has(matched_signatures, '<signature>');
+SELECT * FROM exceptions             WHERE signature = '<signature>';
 ```
 
-Query matches:
+`docker exec -it usdc-ops-clickhouse clickhouse-client` opens a shell against the local instance.
 
-```sql
-SELECT * FROM settlement_matches WHERE has(matched_signatures, '<signature>');
-```
+## Debug A Collection That Did Not Match
 
-### 5. Check Exceptions
+Collections add one extra match constraint relative to payments: the `request_matches_observed_source` guard at `yellowstone/src/yellowstone/mod.rs:1105`. For `request_type == 'collection_request'`, the matcher requires:
 
-```sql
-SELECT * FROM exceptions WHERE signature = '<signature>';
-```
+- An observed inbound transfer to one of the workspace's TreasuryWallet addresses, AND
+- If the collection has an `expected_source_wallet_address` (set when a known `CollectionSource` is referenced or `payerWalletAddress` is supplied), the observed source wallet must equal it. If both are null, any payer matches.
 
-Then check API exception overlays.
+So if a collection isn't matching:
+
+- Confirm the receiver is a registered TreasuryWallet.
+- Confirm the sender wallet matches the expected source (or the collection has no source set).
+- Confirm amount and timing window.
+- Confirm the transaction is on mainnet.
 
 ## Debug Repeated Matching Index Refreshes
 
-Repeated logs:
-
-```text
-Matching index refreshed to version N.
-```
-
-mean the worker received refresh events or refreshed on startup/reconnect.
+Logs like `Matching index refreshed to version N` mean the worker received refresh events or refreshed on startup/reconnect.
 
 If it refreshes constantly:
 
@@ -147,24 +188,9 @@ If it refreshes constantly:
 
 The worker should not need polling to stay fresh.
 
-## Debug Repeated Unknown Address Noise
-
-The old Orb label resolver was removed. If unknown addresses are noisy again, the correct fix is not to reintroduce remote label lookups in the hot path.
-
-Correct behavior should be:
-
-- use workspace labels first
-- use saved wallet/destination labels first
-- cache negative Orb result
-- avoid repeated log spam
-
 ## Debug CORS
 
-Local frontend may run on different ports.
-
-The API should allow localhost/127.0.0.1 dev origins.
-
-If a browser request fails with CORS:
+Local frontend may run on a different port than the API. The API allows localhost / 127.0.0.1 dev origins by default. The deployed frontend at https://axoria.fun is also allowed by the API CORS config. If a browser request fails with CORS:
 
 - check method is allowed
 - check route exists
@@ -175,44 +201,34 @@ If a browser request fails with CORS:
 
 If sign/submit fails:
 
-- verify browser wallet is installed
-- verify correct wallet is selected
-- verify selected public key equals required signer
-- verify RPC endpoint is reachable
+- verify a Solana wallet (Phantom, Solflare, Backpack, etc.) is installed
+- verify the connected wallet matches the required signer (usually the source TreasuryWallet)
+- verify the configured RPC (`SOLANA_RPC_URL` in `api/.env`, currently Alchemy mainnet) is reachable
 - verify recent blockhash can be fetched
-- verify transaction is built with correct accounts
-- verify source wallet has USDC token account and balance
+- verify the source wallet has a USDC token account and balance
 
-The frontend uses configured RPC. A 403 from RPC means provider access issue, not necessarily an Axoria transaction bug.
+A 403 from RPC means a provider access issue, not necessarily an Axoria transaction bug.
 
 ## Debug CSV Import
 
-Expected header:
+### Payments
 
 ```csv
 counterparty,destination,amount,reference,due_date
 ```
 
-`counterparty` is optional human-readable context. `destination` is the external Solana wallet address of the recipient. Re-importing the same CSV returns the existing `PaymentRun` with `importResult.imported: 0` (idempotent by fingerprint); the frontend surfaces this as an error toast ("This CSV was already imported as …").
+`counterparty` is optional human-readable context. `destination` is the external Solana wallet address of the recipient. Re-importing the same CSV returns the existing `PaymentRun` with `importResult.imported: 0` (idempotent by fingerprint); the frontend surfaces this as "This CSV was already imported as …".
+
+### Collections
+
+Same flow but creates a `CollectionRun` with rows targeting registered TreasuryWallets as receivers. CSV preview is at `POST /workspaces/:workspaceId/collection-runs/import-csv/preview`.
 
 If import does nothing:
 
 - open browser console
 - check network request
 - check API validation error
-- verify button handler submits correctly
-- verify backend route accepts body shape
 - verify destination/wallet validation rules
-
-## Reset Local Data
-
-```bash
-make reset-data
-```
-
-This deletes local Docker volumes and restarts clean.
-
-Only use when intentionally discarding local state.
 
 ## Development Safety Rules
 
