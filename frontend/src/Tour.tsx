@@ -26,13 +26,13 @@ const DEFAULT_STEPS: TourStep[] = [
     key: 'payments',
     title: 'Payments',
     body:
-      'Outbound USDC. Pay one recipient or a CSV batch. Policy routes approval, you sign, Axoria matches it on-chain.',
+      'Outbound USDC. Pay one recipient or a CSV batch. Policy routes approval, you sign, Decimal matches it on-chain.',
   },
   {
     key: 'collections',
     title: 'Collections',
     body:
-      'Inbound USDC. Tell Axoria a payment is expected from a counterparty; when it lands on-chain we match it and emit a proof.',
+      'Inbound USDC. Tell Decimal a payment is expected from a counterparty; when it lands on-chain we match it and emit a proof.',
   },
   {
     key: 'policy',
@@ -72,7 +72,7 @@ const DEFAULT_STEPS: TourStep[] = [
   },
 ];
 
-const TOUR_DISMISSED_PREFIX = 'axoria.tour.v1.dismissed';
+const TOUR_DISMISSED_PREFIX = 'decimal.tour.v1.dismissed';
 
 type TourContextValue = {
   isOpen: boolean;

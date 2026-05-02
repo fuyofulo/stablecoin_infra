@@ -87,7 +87,7 @@ test('public health, capabilities, and OpenAPI endpoints expose the lean API sur
   const capabilitiesResponse = await fetch(`${baseUrl}/capabilities`);
   assert.equal(capabilitiesResponse.status, 200);
   const capabilities = await capabilitiesResponse.json();
-  assert.equal(capabilities.product, 'axoria');
+  assert.equal(capabilities.product, 'decimal');
   assert.equal(capabilities.version, 1);
   assert.ok(capabilities.workflows.some((workflow: { id: string }) => workflow.id === 'single_payment'));
   assert.ok(capabilities.workflows.some((workflow: { id: string }) => workflow.id === 'csv_to_payment_run'));

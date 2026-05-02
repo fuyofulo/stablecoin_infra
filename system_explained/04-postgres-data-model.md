@@ -1,6 +1,6 @@
 # 04 Postgres Data Model
 
-Postgres is Axoria's control plane: the canonical source of truth for business intent, policy state, approvals, execution evidence, and the audit timeline. ClickHouse holds chain facts; Postgres holds everything operators decide or configure.
+Postgres is Decimal's control plane: the canonical source of truth for business intent, policy state, approvals, execution evidence, and the audit timeline. ClickHouse holds chain facts; Postgres holds everything operators decide or configure.
 
 The schema lives in `api/prisma/schema.prisma` and the seed SQL is under `postgres/init/`.
 

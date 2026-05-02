@@ -9,7 +9,7 @@ import { Workflow } from './landing/Workflow';
 import { Features } from './landing/Features';
 import { FinalCTA } from './landing/FinalCTA';
 
-const THEME_KEY = 'axoria.theme';
+const THEME_KEY = 'decimal.theme';
 const LEGACY_THEME_KEY = 'ax-theme';
 
 type Theme = 'dark' | 'light';
@@ -54,7 +54,7 @@ export function LandingPage() {
       <nav className="lp-nav" data-scrolled={scrolled ? 'true' : 'false'}>
         <div className="lp-container lp-nav-inner">
           <Link to="/" className="lp-brand">
-            <span>Axoria</span>
+            <span>Decimal</span>
           </Link>
           <div className="lp-nav-links">
             <a href="#how" className="hide-m">
@@ -90,10 +90,10 @@ export function LandingPage() {
       <footer className="lp-footer">
         <div className="lp-container lp-footer-inner">
           <Link to="/" className="lp-brand">
-            Axoria
+            Decimal
           </Link>
           <span className="mono" style={{ fontSize: 11, color: 'var(--ax-text-faint)' }}>
-            © 2026 Axoria Labs · Built on Solana
+            © 2026 Decimal Labs · Built on Solana
           </span>
         </div>
       </footer>

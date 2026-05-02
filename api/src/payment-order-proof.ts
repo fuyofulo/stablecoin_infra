@@ -128,7 +128,7 @@ export async function buildPaymentOrderProofPacket(workspaceId: string, paymentO
   const canonicalDigest = buildCanonicalDigest(packetBody);
 
   return {
-    proofId: `axoria_payment_proof_${canonicalDigest.slice(0, 24)}`,
+    proofId: `decimal_payment_proof_${canonicalDigest.slice(0, 24)}`,
     canonicalDigest,
     canonicalDigestAlgorithm: 'sha256:stable-json-v1',
     generatedAt: new Date().toISOString(),

@@ -15,7 +15,7 @@ It stores:
 
 ## Local Docker Postgres (used for both dev and prod-backend)
 
-Axoria runs against the local Postgres container in every environment —
+Decimal runs against the local Postgres container in every environment —
 tests, local dev, and the production-backed runtime serving https://axoria.fun
 via Cloudflare Tunnel.
 

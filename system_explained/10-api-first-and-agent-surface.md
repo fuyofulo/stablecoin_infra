@@ -1,6 +1,6 @@
 # 10 API First Surface
 
-Axoria should be usable without the frontend, but the current lean build does **not** include workspace API keys or an autonomous agent runtime.
+Decimal should be usable without the frontend, but the current lean build does **not** include workspace API keys or an autonomous agent runtime.
 
 The present goal is simpler:
 
@@ -134,7 +134,7 @@ The following surfaces were removed because they were adding complexity before r
 - agent task SSE stream
 - API-key scope enforcement
 
-This does not mean Axoria can never support agents. It means agent support should return only after we validate a concrete workflow and threat model.
+This does not mean Decimal can never support agents. It means agent support should return only after we validate a concrete workflow and threat model.
 
 ## What Agents Would Need Later
 

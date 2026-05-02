@@ -1,6 +1,6 @@
 # 01 Product Mental Model
 
-Axoria is the **deterministic financial workflow engine for crypto payments**.
+Decimal is the **deterministic financial workflow engine for crypto payments**.
 
 The product exists because stablecoin operations have a gap between business intent and on-chain reality.
 
@@ -16,7 +16,7 @@ On-chain, the observable reality is only:
 Some USDC token account sent tokens to another USDC token account in transaction X.
 ```
 
-Axoria sits between those two worlds — but it is not a reconciler pitched at the end of the pipeline. It is a workflow engine that owns the path from intent to proof, end to end. The reconciliation and proof pieces are where Axoria is strongest, but the point is that the same system also routes policy, prepares execution, and matches settlement to intent. **Same inputs → same proof digest, every time.**
+Decimal sits between those two worlds — but it is not a reconciler pitched at the end of the pipeline. It is a workflow engine that owns the path from intent to proof, end to end. The reconciliation and proof pieces are where Decimal is strongest, but the point is that the same system also routes policy, prepares execution, and matches settlement to intent. **Same inputs → same proof digest, every time.**
 
 The current wedges are **Solana USDC payouts** and **Solana USDC collections** (inbound expected payments matched against intent). Both are fully built end-to-end and demoable. DAO treasury views, agent runtime, and other downstream surfaces follow.
 
@@ -24,7 +24,7 @@ The current wedges are **Solana USDC payouts** and **Solana USDC collections** (
 
 ### 1. Inputs
 
-Inputs are how payment intent enters Axoria.
+Inputs are how payment intent enters Decimal.
 
 Current input types:
 
@@ -65,27 +65,27 @@ The control plane is implemented in the TypeScript API and stored mostly in Post
 
 ### 3. Execution Handoff
 
-Axoria does not custody private keys.
+Decimal does not custody private keys.
 
 The current execution model is:
 
-- Axoria builds a prepared transaction (execution packet).
+- Decimal builds a prepared transaction (execution packet).
 - The frontend (or another client) asks the source wallet to sign and submit.
-- The submitted Solana signature is attached back to Axoria.
-- Axoria treats that signature as strong evidence for matching.
+- The submitted Solana signature is attached back to Decimal.
+- Decimal treats that signature as strong evidence for matching.
 
 This is why the product says "execution handoff" rather than "custodial execution."
 
 The important security boundary is:
 
-- Axoria may prepare instructions.
-- Axoria may record signatures.
-- **Axoria must not silently move funds.**
+- Decimal may prepare instructions.
+- Decimal may record signatures.
+- **Decimal must not silently move funds.**
 - A wallet, multisig, or external signer must authorize the transaction.
 
 ### 4. Verification And Proof
 
-Verification is Axoria's strongest layer.
+Verification is Decimal's strongest layer.
 
 The Yellowstone worker observes Solana in real time, reconstructs USDC movements, filters for the workspace's `TreasuryWallet` addresses and tracked signatures, and runs matching logic. Destination wallets are *not* watched as "ours"; they are the expected counterparty side of a match.
 
@@ -104,7 +104,7 @@ Proof generation turns that internal verification into something a finance or op
 The one-line promise:
 
 ```text
-Axoria starts from a payout intent, controls the workflow, observes Solana,
+Decimal starts from a payout intent, controls the workflow, observes Solana,
 reconciles settlement, and produces proof — deterministically.
 ```
 
@@ -116,7 +116,7 @@ A wallet watcher says:
 This wallet had activity.
 ```
 
-Axoria says:
+Decimal says:
 
 ```text
 This payment was intended, approved under policy, signed once as a batch,
@@ -167,7 +167,7 @@ In a mature product, users should arrive from their real workflow:
 - "I have a payment order from another system."
 - "An agent detected an obligation and created a request."
 
-Axoria now has the primitives to support those workflows; more product work is needed to make the entry layer feel natural.
+Decimal now has the primitives to support those workflows; more product work is needed to make the entry layer feel natural.
 
 ## Mental Model For Future Work
 

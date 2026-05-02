@@ -196,7 +196,7 @@ list-backups:
 # Help --------------------------------------------------------------------
 
 help:
-	@echo "Axoria Make targets:"
+	@echo "Decimal Make targets:"
 	@echo ""
 	@echo "  Local dev (docker postgres + clickhouse, api + frontend + worker)"
 	@echo "    dev                Start everything locally in one terminal"

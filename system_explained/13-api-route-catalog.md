@@ -1,6 +1,6 @@
 # 13 API Route Catalog
 
-This file lists the HTTP routes the Axoria API currently exposes, grouped by responsibility. Routes are defined in `api/src/routes/*.ts` and mounted in `api/src/app.ts`. The machine-readable contract lives in `api/src/api-contract.ts` and is served at `/openapi.json`.
+This file lists the HTTP routes the Decimal API currently exposes, grouped by responsibility. Routes are defined in `api/src/routes/*.ts` and mounted in `api/src/app.ts`. The machine-readable contract lives in `api/src/api-contract.ts` and is served at `/openapi.json`.
 
 All workspace-scoped routes require a user session: `Authorization: Bearer <session-token>`.
 

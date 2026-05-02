@@ -15,7 +15,7 @@ type FileConfig = {
   publicRateLimitMax?: number;
 };
 
-type AxoriaConfig = {
+type DecimalConfig = {
   nodeEnv: string;
   isProduction: boolean;
   host: string;
@@ -32,15 +32,15 @@ type AxoriaConfig = {
   publicRateLimitMax: number;
 };
 
-export const config: AxoriaConfig = buildConfig();
+export const config: DecimalConfig = buildConfig();
 
-function buildConfig(): AxoriaConfig {
+function buildConfig(): DecimalConfig {
   const nodeEnv = process.env.NODE_ENV ?? 'development';
   const isProduction = nodeEnv === 'production';
   const fileConfig = loadApiFileConfig();
   const controlPlaneServiceToken = (process.env.CONTROL_PLANE_SERVICE_TOKEN ?? '').trim();
 
-  const nextConfig: AxoriaConfig = {
+  const nextConfig: DecimalConfig = {
     nodeEnv,
     isProduction,
     host: fileConfig.host ?? '0.0.0.0',
@@ -63,7 +63,7 @@ function buildConfig(): AxoriaConfig {
 }
 
 function loadApiFileConfig(): FileConfig {
-  const explicitPath = process.env.AXORIA_API_CONFIG_PATH?.trim();
+  const explicitPath = process.env.DECIMAL_API_CONFIG_PATH?.trim();
   const candidates = [
     explicitPath,
     path.resolve(process.cwd(), 'config/api.config.json'),
@@ -91,7 +91,7 @@ function normalizeOptionalUrl(value: string | null | undefined) {
   return trimmed ? trimmed.replace(/\/+$/, '') : null;
 }
 
-function validateConfig(nextConfig: AxoriaConfig) {
+function validateConfig(nextConfig: DecimalConfig) {
   if (!nextConfig.isProduction) {
     return;
   }

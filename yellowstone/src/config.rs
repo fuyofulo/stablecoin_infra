@@ -94,7 +94,7 @@ impl AppConfig {
 
 fn load_worker_file_config() -> FileConfig {
     let mut candidates = Vec::new();
-    if let Ok(explicit) = env::var("AXORIA_WORKER_CONFIG_PATH") {
+    if let Ok(explicit) = env::var("DECIMAL_WORKER_CONFIG_PATH") {
         if !explicit.trim().is_empty() {
             candidates.push(PathBuf::from(explicit));
         }

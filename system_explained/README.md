@@ -1,18 +1,18 @@
-# Axoria System Explained
+# Decimal System Explained
 
-This folder is the onboarding manual for Axoria. It explains the product, the runtime architecture, the codebase, the data model, the reconciliation pipeline, the API surface, the frontend, the worker, observability, and the current risks.
+This folder is the onboarding manual for Decimal. It explains the product, the runtime architecture, the codebase, the data model, the reconciliation pipeline, the API surface, the frontend, the worker, observability, and the current risks.
 
 The goal is not to describe only the happy path. The goal is to make a new engineer productive enough to change the system without accidentally breaking execution tracking, reconciliation, or proof generation.
 
-## What Axoria Is
+## What Decimal Is
 
-Axoria is the **deterministic financial workflow engine for crypto payments**.
+Decimal is the **deterministic financial workflow engine for crypto payments**.
 
 The product takes a CSV or API-created payout intent, walks it through policy approval, one-signature batch execution, and on-chain matching, then hands back a cryptographic proof packet that a finance or audit team can verify.
 
-Axoria is deliberately narrow. The current wedge is **Solana USDC payouts** — not general reconciliation, not a wallet watcher, not an analytics dashboard. Payouts come first because that's where crypto operations break down for finance teams; everything else (inbound matching, treasury analytics, agent runtime) is downstream of getting this one flow right.
+Decimal is deliberately narrow. The current wedge is **Solana USDC payouts** — not general reconciliation, not a wallet watcher, not an analytics dashboard. Payouts come first because that's where crypto operations break down for finance teams; everything else (inbound matching, treasury analytics, agent runtime) is downstream of getting this one flow right.
 
-In product terms, Axoria answers:
+In product terms, Decimal answers:
 
 - What payment did we intend to make?
 - Who requested it? Was it allowed by policy?
@@ -23,7 +23,7 @@ In product terms, Axoria answers:
 - If not, what exception should an operator review?
 - Can we export a signed, deterministic proof packet?
 
-In system terms, Axoria has four layers:
+In system terms, Decimal has four layers:
 
 ```text
 Input layer

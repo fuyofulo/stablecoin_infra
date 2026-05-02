@@ -4,7 +4,7 @@ export const capabilitiesRouter = Router();
 
 capabilitiesRouter.get('/capabilities', (_req, res) => {
   res.json({
-    product: 'axoria',
+    product: 'decimal',
     version: 1,
     generatedAt: new Date().toISOString(),
     auth: {

@@ -230,7 +230,7 @@ Signing flow:
 3. The frontend uses the chosen wallet to sign + submit and receives a signature.
 4. The frontend hits `/attach-signature` with that signature; the API creates / updates the matching `ExecutionRecord`.
 
-Axoria never holds keys. If a signer isn't detected, the UI tells the user to install or unlock a Solana wallet.
+Decimal never holds keys. If a signer isn't detected, the UI tells the user to install or unlock a Solana wallet.
 
 ## Data fetching conventions
 

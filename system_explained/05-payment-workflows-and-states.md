@@ -1,6 +1,6 @@
 # 05 Payment Workflows And States
 
-This file explains how a payment moves through Axoria.
+This file explains how a payment moves through Decimal.
 
 ## The Main Workflow
 

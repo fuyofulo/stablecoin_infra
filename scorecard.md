@@ -1,4 +1,4 @@
-# Axoria Agent Payments Scorecard
+# Decimal Agent Payments Scorecard
 
 Source basis:
 
@@ -56,7 +56,7 @@ Interpretation:
 | Novelty | 5.5 | The category is not novel anymore. The exact product cut is still somewhat differentiated. | Copilot surfaced `33` comparable projects, including x402, subscriptions, agent commerce, and merchant payments. Direct protocol/infra experiments already exist. |
 | Market Timing | 8.5 | Strong timing. Protocol and research momentum are converging now. | Archive hits include a16z and Galaxy research on agent payments, x402, and stablecoin-backed B2B/agent commerce. |
 | Competitive Gap | 6.5 | There is a gap, but it is not empty. The gap is merchant operations, not raw rails. | Search results skew toward rails, Solana Pay wrappers, and recurring-billing primitives. Very few look like a Stripe-like merchant operating system. |
-| Mechanism Design | 7.5 | Strong if Axoria stays on the operating layer and composes MPP/x402 instead of inventing another rail. | MPP covers one-shot + session logic; x402 covers simple 402 paywalls. Your mechanism advantage is billing state, reconciliation, proofs, and merchant UX. |
+| Mechanism Design | 7.5 | Strong if Decimal stays on the operating layer and composes MPP/x402 instead of inventing another rail. | MPP covers one-shot + session logic; x402 covers simple 402 paywalls. Your mechanism advantage is billing state, reconciliation, proofs, and merchant UX. |
 | Accelerator Overlap | 4.0 | Weak-to-moderate accelerator pull from current evidence. | Top surfaced matches mostly had `accelerator: null`. The concept is plausible for accelerator interest, but Copilot did not show a strong existing accelerator cluster around this exact wedge. |
 | Hackathon Precedent | 7.0 | Plenty of precedent for pieces of the stack. | Projects like `MCPay`, `Solana a2a payment`, `x402 SDK for Solana`, `BLOCKSUB`, `LinkWave`, `Bundl`, and `DePlan` show repeated hackathon interest. |
 | Archive Backing | 8.0 | Strong external narrative support. | Copilot archives returned a16z, Galaxy, Pantera, and Superteam materials that explicitly discuss agent payments, batching, x402, and stablecoin commerce. |
@@ -66,13 +66,13 @@ Interpretation:
 
 This is not a blue ocean.
 
-If Axoria pitches:
+If Decimal pitches:
 
 > "we do agent payments on Solana"
 
 then the score drops immediately, because Copilot already shows enough adjacent projects that this sounds generic.
 
-If Axoria pitches:
+If Decimal pitches:
 
 > "we are the Stripe-like merchant operating layer for crypto-native agent billing"
 
@@ -117,15 +117,15 @@ Why still good:
 
 - the merchant operating layer is still meaningfully underbuilt
 - archive and protocol momentum say timing is real
-- the product cut is coherent if Axoria avoids the protocol trap
+- the product cut is coherent if Decimal avoids the protocol trap
 
 ## Recommended next framing
 
-Do not frame Axoria as:
+Do not frame Decimal as:
 
 > agent payments infrastructure
 
-Frame Axoria as:
+Frame Decimal as:
 
 > the merchant operating system for crypto-native agent billing
 

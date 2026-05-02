@@ -1,10 +1,10 @@
 # 11 Operating Testing And Debugging
 
-This file explains how to run, test, and debug Axoria locally and on the production-backed runtime that serves https://axoria.fun.
+This file explains how to run, test, and debug Decimal locally and on the production-backed runtime that serves https://axoria.fun.
 
 ## Run Modes
 
-Axoria has two practical run modes; pick by intent.
+Decimal has two practical run modes; pick by intent.
 
 ### Production-backed runtime (default for demos)
 
@@ -145,7 +145,7 @@ The Yellowstone worker only sees **live** slots. A request created BEFORE the wo
 
 - Did the transaction confirm?
 - Is the worker on the same network as the wallet (currently mainnet via `solana-rpc.parafi.tech:10443`)?
-- Was it the USDC mint Axoria expects?
+- Was it the USDC mint Decimal expects?
 - Did it transfer to the intended token account/wallet?
 - Was the amount raw value correct?
 
@@ -207,7 +207,7 @@ If sign/submit fails:
 - verify recent blockhash can be fetched
 - verify the source wallet has a USDC token account and balance
 
-A 403 from RPC means a provider access issue, not necessarily an Axoria transaction bug.
+A 403 from RPC means a provider access issue, not necessarily an Decimal transaction bug.
 
 ## Debug CSV Import
 

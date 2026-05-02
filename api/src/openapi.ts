@@ -13,7 +13,7 @@ export function buildOpenApiSpec() {
   return {
     openapi: '3.1.0',
     info: {
-      title: 'Axoria API',
+      title: 'Decimal API',
       version: '0.1.0',
       description: 'API-first stablecoin payment control, reconciliation, execution handoff, and proof surface.',
     },
@@ -106,7 +106,7 @@ function buildOperation(endpoint: ApiEndpoint) {
       '429': errorResponse('Rate limited'),
       '500': errorResponse('Unexpected server error'),
     },
-    'x-axoria-auth': endpoint.auth,
+    'x-decimal-auth': endpoint.auth,
     'x-required-scope': endpoint.scope,
   };
 }

@@ -137,13 +137,13 @@ const FEATURES: Feature[] = [
   {
     id: 'match',
     title: 'Matched on-chain. Never silent.',
-    desc: 'Axoria observes USDC transfers in real time and matches every intent to its on-chain transfer. Amount variance, partials, and overfills surface as exceptions.',
+    desc: 'Decimal observes USDC transfers in real time and matches every intent to its on-chain transfer. Amount variance, partials, and overfills surface as exceptions.',
     Visual: MatchVisual,
   },
   {
     id: 'proof',
     title: 'Deterministic proof, forever.',
-    desc: 'Every run ships as a SHA-256-stamped JSON packet. Recompute the canonical digest a year from now — same inputs, same hash. Verifiable without Axoria running.',
+    desc: 'Every run ships as a SHA-256-stamped JSON packet. Recompute the canonical digest a year from now — same inputs, same hash. Verifiable without Decimal running.',
     Visual: ProofVisual,
   },
 ];

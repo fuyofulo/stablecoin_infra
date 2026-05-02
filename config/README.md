@@ -1,4 +1,4 @@
-# Axoria Config
+# Decimal Config
 
 This directory contains **non-secret runtime configuration**.
 

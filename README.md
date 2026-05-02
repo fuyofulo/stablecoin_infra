@@ -1,6 +1,6 @@
-# Axoria
+# Decimal
 
-Axoria is a stablecoin payment operations layer for Solana.
+Decimal is a stablecoin payment operations layer for Solana.
 
 It helps teams define expected USDC movement, route approvals, hand off execution, reconcile onchain settlement, and export proof packets.
 
@@ -113,7 +113,7 @@ Main route groups:
 
 ## Proof packets
 
-Axoria exports JSON proof packets for:
+Decimal exports JSON proof packets for:
 
 - payment orders
 - payment runs
@@ -158,7 +158,7 @@ Not built:
 - bank integrations
 - full enterprise infra
 
-Axoria is an operations and proof layer, not a custodian.
+Decimal is an operations and proof layer, not a custodian.
 
 ## More docs
 

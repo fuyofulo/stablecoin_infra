@@ -113,7 +113,7 @@ export async function buildCollectionProofPacket(workspaceId: string, collection
   const canonicalDigest = buildCanonicalDigest(packetBody);
 
   return {
-    proofId: `axoria_collection_proof_${canonicalDigest.slice(0, 24)}`,
+    proofId: `decimal_collection_proof_${canonicalDigest.slice(0, 24)}`,
     canonicalDigest,
     canonicalDigestAlgorithm: 'sha256:stable-json-v1',
     generatedAt: new Date().toISOString(),
@@ -199,7 +199,7 @@ export async function buildCollectionRunProofPacket(
   const canonicalDigest = buildCanonicalDigest(packetBody);
 
   return {
-    proofId: `axoria_collection_run_proof_${canonicalDigest.slice(0, 24)}`,
+    proofId: `decimal_collection_run_proof_${canonicalDigest.slice(0, 24)}`,
     canonicalDigest,
     canonicalDigestAlgorithm: 'sha256:stable-json-v1',
     generatedAt: new Date().toISOString(),

@@ -33,7 +33,7 @@ Files that no longer exist but may still appear in old search results:
 - `auth.ts` — login, session creation, session lookup, `requireAuth` middleware.
 - `idempotency.ts` — idempotency-key handling backed by `IdempotencyRecord`.
 - `actor.ts` — uniform user actor representation for audit logs.
-- `axoria-client.ts` — internal HTTP client used by the API to talk to the worker and back.
+- `decimal-client.ts` — internal HTTP client used by the API to talk to the worker and back.
 
 ### Treasury wallets, destinations, counterparties, collection sources
 
@@ -145,7 +145,7 @@ The frontend was fully rebuilt around an institutional dual-theme design system.
 - `app-dark.css` — dark theme overrides (applied via `:root[data-theme='dark']`).
 - `styles.css` (legacy) — older layout/spacing rules being phased out. New code should prefer `canonical.css` and `run-detail.css`.
 
-The dark/light theme toggle is wired in `Sidebar.tsx` and persists in `localStorage` under `axoria.theme`.
+The dark/light theme toggle is wired in `Sidebar.tsx` and persists in `localStorage` under `decimal.theme`.
 
 ## Yellowstone Worker (`yellowstone/src/`)
 

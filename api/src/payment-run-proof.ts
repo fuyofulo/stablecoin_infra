@@ -73,7 +73,7 @@ export async function buildPaymentRunProofPacket(
   const canonicalDigest = buildCanonicalDigest(packetBody);
 
   return {
-    proofId: `axoria_payment_run_proof_${canonicalDigest.slice(0, 24)}`,
+    proofId: `decimal_payment_run_proof_${canonicalDigest.slice(0, 24)}`,
     canonicalDigest,
     canonicalDigestAlgorithm: 'sha256:stable-json-v1',
     generatedAt: new Date().toISOString(),

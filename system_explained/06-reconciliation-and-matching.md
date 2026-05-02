@@ -14,7 +14,7 @@ This is harder than comparing amount and destination because:
 - One transaction can contain multiple token transfers.
 - Swaps and unrelated USDC movements can appear near watched wallets.
 - Token accounts differ from wallet addresses.
-- Users may submit transactions outside Axoria.
+- Users may submit transactions outside Decimal.
 - Multiple pending requests may target the same destination.
 - Partial and overfilled payments need exceptions, not silent success.
 
@@ -104,7 +104,7 @@ Do not store the whole world. Store relevant observed data for watched workspace
 
 ## Signature-First Matching
 
-If Axoria prepared execution and recorded a submitted signature, matching should prefer that signature.
+If Decimal prepared execution and recorded a submitted signature, matching should prefer that signature.
 
 Algorithm concept:
 
@@ -119,7 +119,7 @@ This matters because app-originated payments should not rely only on amount/dest
 
 Signature-first matching is stronger because:
 
-- the user signed the packet Axoria prepared
+- the user signed the packet Decimal prepared
 - the transaction signature is unique
 - the worker can directly link on-chain reality to control-plane intent
 
@@ -311,7 +311,7 @@ UI and API should communicate this.
 
 ### External Execution Without Signature
 
-If a user sends outside Axoria and does not attach signature, FIFO matching may still settle the request if amount/destination match.
+If a user sends outside Decimal and does not attach signature, FIFO matching may still settle the request if amount/destination match.
 
 This is useful, but not as strong as signature-first matching.
 

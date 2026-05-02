@@ -23,7 +23,7 @@ const queryClient = new QueryClient({
   },
 });
 
-const storedTheme = window.localStorage.getItem('axoria.theme');
+const storedTheme = window.localStorage.getItem('decimal.theme');
 const initialTheme = storedTheme === 'dark' ? 'dark' : 'light';
 if (initialTheme === 'dark') {
   document.documentElement.setAttribute('data-theme', 'dark');

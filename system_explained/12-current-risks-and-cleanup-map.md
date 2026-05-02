@@ -5,7 +5,7 @@ This file is intentionally direct. It lists the main risks and cleanup areas tha
 ## Recently resolved (context — do not reopen)
 
 - **Schema split** (landed 2026-04-19): `WorkspaceAddress` → `TreasuryWallet`; `Destination` made first-class (stores `walletAddress` directly); `Payee` removed entirely; `Counterparty` is an optional org-scoped tag. All compat shims removed. Old code that still mentions the legacy names is actively legacy.
-- **Frontend v2**: fully rebuilt around an institutional dual-theme design system (`--ax-*` tokens, `brand.md`). All primary pages use the `rd-*` batch-expandable pattern. Toast system, institutional sidebar, and the Axoria positioning landed.
+- **Frontend v2**: fully rebuilt around an institutional dual-theme design system (`--ax-*` tokens, `brand.md`). All primary pages use the `rd-*` batch-expandable pattern. Toast system, institutional sidebar, and the Decimal positioning landed.
 - **Pricing**: SOL/USD via Binance SOLUSDT with a 60s TTL and stale fallback, wired into `/treasury-wallets/balances`.
 
 ## Doc-staleness risk
@@ -17,7 +17,7 @@ This file is intentionally direct. It lists the main risks and cleanup areas tha
 
 ### Input Layer Is Still Young
 
-Payment requests and CSV import exist, but Axoria does not yet deeply plug into real customer workflows.
+Payment requests and CSV import exist, but Decimal does not yet deeply plug into real customer workflows.
 
 Needed:
 
@@ -29,7 +29,7 @@ Needed:
 
 ### Execution Is Credible But Not Fully Mature
 
-Axoria can prepare/sign/submit through a browser wallet path, but execution UX and integration options need hardening.
+Decimal can prepare/sign/submit through a browser wallet path, but execution UX and integration options need hardening.
 
 Needed:
 

@@ -538,7 +538,7 @@ function PrimaryAction({
           Watching for <span className="rd-mono">{amountLabel}</span>
         </h2>
         <p className="rd-primary-body">
-          Share the receiver ({receiverLine}) with the payer. Axoria matches the transfer the
+          Share the receiver ({receiverLine}) with the payer. Decimal matches the transfer the
           moment it lands on-chain — typically within seconds of inclusion.
         </p>
         {canCancel ? (

@@ -14,7 +14,7 @@ type RequestOptions = {
   idempotencyKey?: string;
 };
 
-export class AxoriaClient {
+export class DecimalClient {
   private readonly baseUrl: string;
   private readonly token: string | undefined;
   private readonly fetchImpl: typeof fetch;
@@ -28,7 +28,7 @@ export class AxoriaClient {
   async request<T = unknown>(endpointId: ApiEndpointId, options: RequestOptions = {}): Promise<T> {
     const endpoint = API_ENDPOINTS.find((item) => item.id === endpointId);
     if (!endpoint) {
-      throw new Error(`Unknown Axoria endpoint "${endpointId}"`);
+      throw new Error(`Unknown Decimal endpoint "${endpointId}"`);
     }
 
     const url = new URL(`${this.baseUrl}${interpolatePath(endpoint.path, options.path ?? {})}`);
@@ -66,22 +66,22 @@ export class AxoriaClient {
     if (!response.ok) {
       const message = typeof payload === 'object' && payload && 'message' in payload
         ? String((payload as { message: unknown }).message)
-        : `Axoria API request failed with status ${response.status}`;
-      throw new AxoriaApiError(message, response.status, payload);
+        : `Decimal API request failed with status ${response.status}`;
+      throw new DecimalApiError(message, response.status, payload);
     }
 
     return payload as T;
   }
 }
 
-export class AxoriaApiError extends Error {
+export class DecimalApiError extends Error {
   constructor(
     message: string,
     readonly status: number,
     readonly payload: unknown,
   ) {
     super(message);
-    this.name = 'AxoriaApiError';
+    this.name = 'DecimalApiError';
   }
 }
 

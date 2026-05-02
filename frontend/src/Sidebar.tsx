@@ -215,7 +215,7 @@ function useTheme(): { theme: 'light' | 'dark'; setTheme: (next: 'light' | 'dark
       document.documentElement.removeAttribute('data-theme');
     }
     try {
-      window.localStorage.setItem('axoria.theme', next);
+      window.localStorage.setItem('decimal.theme', next);
     } catch {
       // storage may be unavailable; that's fine
     }
@@ -270,7 +270,7 @@ export function AppSidebar({
           A
         </span>
         <div className="ax-sidebar-brand-text">
-          <strong>Axoria</strong>
+          <strong>Decimal</strong>
         </div>
       </div>
 

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { API_ENDPOINTS } from '../src/api-contract.js';
-import { AxoriaClient } from '../src/axoria-client.js';
+import { DecimalClient } from '../src/decimal-client.js';
 import { buildOpenApiSpec } from '../src/openapi.js';
 
 test('API contract has stable unique endpoint IDs and covers the backend surface', () => {
@@ -16,15 +16,15 @@ test('API contract has stable unique endpoint IDs and covers the backend surface
 test('OpenAPI spec is generated from the API contract', () => {
   const spec = buildOpenApiSpec();
   assert.equal(spec.openapi, '3.1.0');
-  assert.equal(spec.info.title, 'Axoria API');
+  assert.equal(spec.info.title, 'Decimal API');
   assert.equal(spec.paths['/workspaces/{workspaceId}/payment-orders/{paymentOrderId}/proof'].get.operationId, 'payment_order_proof');
   assert.equal(spec.paths['/workspaces/{workspaceId}/payment-runs/import-csv/preview'].post.operationId, 'preview_payment_run_csv');
   assert.deepEqual(spec.paths['/health'].get.security, []);
 });
 
-test('typed Axoria client interpolates path, query, body, and auth headers', async () => {
+test('typed Decimal client interpolates path, query, body, and auth headers', async () => {
   const calls: Array<{ url: string; init: RequestInit }> = [];
-  const client = new AxoriaClient({
+  const client = new DecimalClient({
     baseUrl: 'http://127.0.0.1:3100/',
     token: 'test-token',
     fetchImpl: (async (url: URL | RequestInfo, init?: RequestInit) => {

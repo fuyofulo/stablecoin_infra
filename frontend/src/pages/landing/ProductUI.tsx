@@ -299,7 +299,7 @@ export function ProofJsonMockup() {
 
       <pre className="lp-proof-json mono">
 {`{
-  "proofId": "axoria_payment_run_proof_6ec01ec8aefb3c71d0b4f892",
+  "proofId": "decimal_payment_run_proof_6ec01ec8aefb3c71d0b4f892",
   "canonicalDigest": "6e4f15f3168546ec7ea80328eda76d82 \\
                       5c6b39ea8ca2e8f870842951709ebf13",
   "canonicalDigestAlgorithm": "sha256:stable-json-v1",

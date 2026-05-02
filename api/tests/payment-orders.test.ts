@@ -327,14 +327,14 @@ test('payment runs import CSV rows and prepare one batch execution packet', asyn
   );
   assert.equal(runProof.packetType, 'stablecoin_payment_run_proof');
   assert.equal(runProof.detailLevel, 'summary');
-  assert.match(runProof.proofId, /^axoria_payment_run_proof_/);
+  assert.match(runProof.proofId, /^decimal_payment_run_proof_/);
   assert.match(runProof.canonicalDigest, /^[a-f0-9]{64}$/);
   assert.equal(runProof.orderProofs.length, 0);
   assert.equal(runProof.readiness.counts.total, 2);
   assert.equal(runProof.reconciliationSummary.requestedAmountRaw, '30000');
   assert.equal(runProof.reconciliationSummary.settlementCounts.pending, 2);
   assert.equal(runProof.agentSummary.canTreatAsFinal, false);
-  assert.match(runProof.orders[0].proofId, /^axoria_payment_proof_/);
+  assert.match(runProof.orders[0].proofId, /^decimal_payment_proof_/);
   assert.match(runProof.orders[0].proofDigest, /^[a-f0-9]{64}$/);
   assert.match(runProof.orders[0].fullProofEndpoint, /\/payment-orders\/.+\/proof$/);
   assert.equal(runProof.orders[0].latestExecution, undefined);
@@ -983,7 +983,7 @@ test('payment orders derive settled and exception states from existing reconcili
     setup.sessionToken,
   );
   assert.equal(proof.packetType, 'stablecoin_payment_proof');
-  assert.match(proof.proofId, /^axoria_payment_proof_/);
+  assert.match(proof.proofId, /^decimal_payment_proof_/);
   assert.match(proof.canonicalDigest, /^[a-f0-9]{64}$/);
   assert.equal(proof.status, 'complete');
   assert.equal(proof.readiness.status, 'needs_review');
