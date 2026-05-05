@@ -2,12 +2,12 @@ export type User = {
   userId: string;
   email: string;
   displayName: string;
+  emailVerifiedAt: string | null;
 };
 
-export type Workspace = {
-  workspaceId: string;
-  organizationId?: string;
-  workspaceName: string;
+export type Organization = {
+  organizationId: string;
+  organizationName: string;
   status: string;
   createdAt: string;
   updatedAt: string;
@@ -18,10 +18,9 @@ export type OrganizationMembership = {
   organizationName: string;
   role: string;
   status: string;
-  workspaces: Workspace[];
 };
 
-export type WorkspaceMember = {
+export type OrganizationMember = {
   membershipId: string;
   role: string;
   status: string;
@@ -39,11 +38,37 @@ export type LoginResponse = {
   sessionToken: string;
   user: User;
   organizations: OrganizationMembership[];
+  devEmailVerificationCode?: string | null;
+};
+
+export type UserWallet = {
+  userWalletId: string;
+  userId: string;
+  chain: string;
+  walletAddress: string;
+  walletType: 'external' | 'privy_embedded' | string;
+  provider: string | null;
+  providerWalletId: string | null;
+  label: string | null;
+  status: string;
+  verifiedAt: string | null;
+  lastUsedAt: string | null;
+  metadataJson: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type WalletChallenge = {
+  chain: 'solana';
+  walletAddress: string;
+  nonce: string;
+  message: string;
+  expiresAt: string;
 };
 
 export type TreasuryWallet = {
   treasuryWalletId: string;
-  workspaceId: string;
+  organizationId: string;
   chain: string;
   address: string;
   assetScope: string;
@@ -80,7 +105,7 @@ export type Counterparty = {
 
 export type Destination = {
   destinationId: string;
-  workspaceId: string;
+  organizationId: string;
   counterpartyId: string | null;
   chain: string;
   asset: string;
@@ -108,7 +133,7 @@ export type ApprovalPolicyRule = {
 
 export type ApprovalPolicy = {
   approvalPolicyId: string;
-  workspaceId: string;
+  organizationId: string;
   policyName: string;
   isActive: boolean;
   ruleJson: ApprovalPolicyRule;
@@ -134,7 +159,7 @@ export type ApprovalDecision = {
   approvalDecisionId: string;
   approvalPolicyId: string | null;
   transferRequestId: string;
-  workspaceId: string;
+  organizationId: string;
   actorUserId: string | null;
   actorType: string;
   action: 'routed_for_approval' | 'auto_approved' | 'approve' | 'reject' | 'escalate';
@@ -147,7 +172,7 @@ export type ApprovalDecision = {
 
 export type TransferRequest = {
   transferRequestId: string;
-  workspaceId: string;
+  organizationId: string;
   paymentOrderId: string | null;
   sourceTreasuryWalletId: string | null;
   destinationId: string;
@@ -168,7 +193,7 @@ export type TransferRequest = {
 export type ExecutionRecord = {
   executionRecordId: string;
   transferRequestId: string;
-  workspaceId: string;
+  organizationId: string;
   submittedSignature: string | null;
   executionSource: string;
   executorUserId: string | null;
@@ -197,7 +222,7 @@ export type ObservedExecutionTransaction = {
 export type TransferRequestEvent = {
   transferRequestEventId: string;
   transferRequestId: string;
-  workspaceId: string;
+  organizationId: string;
   eventType: string;
   actorType: string;
   actorId: string | null;
@@ -214,7 +239,7 @@ export type TransferRequestEvent = {
 export type TransferRequestNote = {
   transferRequestNoteId: string;
   transferRequestId: string;
-  workspaceId: string;
+  organizationId: string;
   body: string;
   createdAt: string;
   authorUser: User | null;
@@ -244,7 +269,7 @@ export type ObservedTransfer = {
 
 export type ReconciliationRow = {
   transferRequestId: string;
-  workspaceId: string;
+  organizationId: string;
   paymentOrderId: string | null;
   sourceTreasuryWalletId: string | null;
   destinationId: string;
@@ -320,7 +345,7 @@ export type PaymentOrderState =
 export type PaymentOrderEvent = {
   paymentOrderEventId: string;
   paymentOrderId: string;
-  workspaceId: string;
+  organizationId: string;
   eventType: string;
   actorType: string;
   actorId: string | null;
@@ -337,7 +362,7 @@ export type PaymentRequestState = 'submitted' | 'converted_to_order' | 'cancelle
 
 export type PaymentRequest = {
   paymentRequestId: string;
-  workspaceId: string;
+  organizationId: string;
   paymentRunId: string | null;
   destinationId: string;
   counterpartyId: string | null;
@@ -438,7 +463,7 @@ export type PaymentExecutionPreparation = {
 
 export type PaymentRun = {
   paymentRunId: string;
-  workspaceId: string;
+  organizationId: string;
   sourceTreasuryWalletId: string | null;
   runName: string;
   inputSource: string;
@@ -477,7 +502,7 @@ export type PaymentRunExecutionPreparation = {
 
 export type PaymentOrder = {
   paymentOrderId: string;
-  workspaceId: string;
+  organizationId: string;
   paymentRequestId: string | null;
   paymentRunId: string | null;
   destinationId: string;
@@ -533,7 +558,7 @@ export type PaymentProofPacket = {
   packetType: 'stablecoin_payment_proof';
   version: number;
   generatedAt: string;
-  workspaceId: string;
+  organizationId: string;
   status: 'complete' | 'partial' | 'exception' | 'closed' | 'in_progress';
   intent: Record<string, unknown>;
   parties: Record<string, unknown>;
@@ -580,7 +605,7 @@ export type CollectionProofPacket = {
   packetType: 'stablecoin_collection_proof';
   version: number;
   generatedAt: string;
-  workspaceId: string;
+  organizationId: string;
   status: 'complete' | 'partial' | 'exception' | 'closed' | 'cancelled' | 'in_progress';
   readiness: ProofReadiness;
   intent: Record<string, unknown>;
@@ -598,7 +623,7 @@ export type CollectionRunProofPacket = {
   packetType: 'stablecoin_collection_run_proof';
   version: number;
   generatedAt: string;
-  workspaceId: string;
+  organizationId: string;
   collectionRunId: string;
   runName: string;
   status: string;
@@ -621,7 +646,7 @@ export type CollectionSourceTrustState = 'unreviewed' | 'trusted' | 'restricted'
 
 export type CollectionSource = {
   collectionSourceId: string;
-  workspaceId: string;
+  organizationId: string;
   counterpartyId: string | null;
   chain: string;
   asset: string;
@@ -641,7 +666,7 @@ export type CollectionSource = {
 export type CollectionRequestEvent = {
   collectionRequestEventId: string;
   collectionRequestId: string;
-  workspaceId: string;
+  organizationId: string;
   eventType: string;
   actorType: string;
   actorId: string | null;
@@ -654,7 +679,7 @@ export type CollectionRequestEvent = {
 
 export type CollectionRequest = {
   collectionRequestId: string;
-  workspaceId: string;
+  organizationId: string;
   collectionRunId: string | null;
   receivingTreasuryWalletId: string;
   collectionSourceId: string | null;
@@ -696,7 +721,7 @@ export type CollectionRequest = {
 
 export type CollectionRunSummary = {
   collectionRunId: string;
-  workspaceId: string;
+  organizationId: string;
   receivingTreasuryWalletId: string | null;
   runName: string;
   inputSource: string;
@@ -782,7 +807,7 @@ export type ExceptionItem = {
 export type ExceptionNote = {
   exceptionNoteId: string;
   exceptionId: string;
-  workspaceId: string;
+  organizationId: string;
   body: string;
   createdAt: string;
   authorUser: User | null;

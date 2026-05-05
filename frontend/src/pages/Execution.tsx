@@ -67,29 +67,29 @@ function runInFilter(run: PaymentRun, filter: Filter): boolean {
 }
 
 export function ExecutionPage({ session: _session }: { session: AuthenticatedSession }) {
-  const { workspaceId } = useParams<{ workspaceId: string }>();
+  const { organizationId } = useParams<{ organizationId: string }>();
   const [filter, setFilter] = useState<Filter>('all');
   const [expandedRunId, setExpandedRunId] = useState<string | null>(null);
 
   const ordersQuery = useQuery({
-    queryKey: ['payment-orders', workspaceId] as const,
-    queryFn: () => api.listPaymentOrders(workspaceId!),
-    enabled: Boolean(workspaceId),
+    queryKey: ['payment-orders', organizationId] as const,
+    queryFn: () => api.listPaymentOrders(organizationId!),
+    enabled: Boolean(organizationId),
     refetchInterval: 5_000,
   });
   const runsQuery = useQuery({
-    queryKey: ['payment-runs', workspaceId] as const,
-    queryFn: () => api.listPaymentRuns(workspaceId!),
-    enabled: Boolean(workspaceId),
+    queryKey: ['payment-runs', organizationId] as const,
+    queryFn: () => api.listPaymentRuns(organizationId!),
+    enabled: Boolean(organizationId),
     refetchInterval: 5_000,
   });
 
-  if (!workspaceId) {
+  if (!organizationId) {
     return (
       <main className="page-frame">
         <div className="rd-state">
-          <h2 className="rd-state-title">Workspace unavailable</h2>
-          <p className="rd-state-body">Pick a workspace from the sidebar.</p>
+          <h2 className="rd-state-title">Organization unavailable</h2>
+          <p className="rd-state-body">Pick a organization from the sidebar.</p>
         </div>
       </main>
     );
@@ -235,7 +235,7 @@ export function ExecutionPage({ session: _session }: { session: AuthenticatedSes
                     return (
                       <RunRows
                         key={group.key}
-                        workspaceId={workspaceId}
+                        organizationId={organizationId}
                         group={group}
                         expanded={expanded}
                         onToggle={() =>
@@ -280,7 +280,7 @@ export function ExecutionPage({ session: _session }: { session: AuthenticatedSes
                       </td>
                       <td>
                         <Link
-                          to={`/workspaces/${workspaceId}/payments/${order.paymentOrderId}#execution`}
+                          to={`/organizations/${organizationId}/payments/${order.paymentOrderId}#execution`}
                           className="rd-btn rd-btn-secondary"
                           style={{
                             minHeight: 28,
@@ -305,12 +305,12 @@ export function ExecutionPage({ session: _session }: { session: AuthenticatedSes
 }
 
 function RunRows({
-  workspaceId,
+  organizationId,
   group,
   expanded,
   onToggle,
 }: {
-  workspaceId: string;
+  organizationId: string;
   group: Extract<ExecutionGroup, { kind: 'run' }>;
   expanded: boolean;
   onToggle: () => void;
@@ -357,7 +357,7 @@ function RunRows({
         </td>
         <td onClick={(e) => e.stopPropagation()}>
           <Link
-            to={`/workspaces/${workspaceId}/runs/${run.paymentRunId}`}
+            to={`/organizations/${organizationId}/runs/${run.paymentRunId}`}
             className="rd-btn rd-btn-secondary"
             style={{ minHeight: 28, padding: '4px 10px', fontSize: 12, textDecoration: 'none' }}
           >
@@ -380,7 +380,7 @@ function RunRows({
                     </span>
                     <div className="rd-recipient-main">
                       <Link
-                        to={`/workspaces/${workspaceId}/payments/${order.paymentOrderId}#execution`}
+                        to={`/organizations/${organizationId}/payments/${order.paymentOrderId}#execution`}
                         style={{ color: 'var(--ax-text)', textDecoration: 'none', fontWeight: 500 }}
                       >
                         {order.counterparty?.displayName ?? order.destination.label}
@@ -413,7 +413,7 @@ function RunRows({
                 </td>
                 <td>
                   <Link
-                    to={`/workspaces/${workspaceId}/payments/${order.paymentOrderId}#execution`}
+                    to={`/organizations/${organizationId}/payments/${order.paymentOrderId}#execution`}
                     className="rd-btn rd-btn-ghost"
                     style={{
                       minHeight: 28,

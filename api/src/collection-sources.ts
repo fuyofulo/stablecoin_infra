@@ -27,9 +27,9 @@ export type UpdateCollectionSourceInput = {
   isActive?: boolean;
 };
 
-export async function listCollectionSources(workspaceId: string, options?: { limit?: number }) {
+export async function listCollectionSources(organizationId: string, options?: { limit?: number }) {
   const items = await prisma.collectionSource.findMany({
-    where: { workspaceId },
+    where: { organizationId },
     include: { counterparty: true },
     orderBy: { createdAt: 'desc' },
     take: options?.limit ?? 100,
@@ -38,20 +38,20 @@ export async function listCollectionSources(workspaceId: string, options?: { lim
   return { items: items.map(serializeCollectionSource) };
 }
 
-export async function createCollectionSource(workspaceId: string, input: CreateCollectionSourceInput) {
-  const workspace = await getWorkspaceOrg(workspaceId);
+export async function createCollectionSource(organizationId: string, input: CreateCollectionSourceInput) {
+  const organization = await getOrganization(organizationId);
 
   if (input.counterpartyId) {
-    await assertCounterpartyBelongsToOrg(workspace.organizationId, input.counterpartyId);
+    await assertCounterpartyBelongsToOrg(organization.organizationId, input.counterpartyId);
   }
 
-  await assertCollectionSourceLabelAvailable(workspaceId, input.label);
-  await assertCollectionSourceWalletAvailable(workspaceId, input.walletAddress);
+  await assertCollectionSourceLabelAvailable(organizationId, input.label);
+  await assertCollectionSourceWalletAvailable(organizationId, input.walletAddress);
   const tokenAccountAddress = normalizeOptionalText(input.tokenAccountAddress) ?? deriveUsdcAtaForWallet(input.walletAddress);
 
   const source = await prisma.collectionSource.create({
     data: {
-      workspaceId,
+      organizationId,
       counterpartyId: input.counterpartyId ?? null,
       chain: input.chain ?? SOLANA_CHAIN,
       asset: input.asset ?? USDC_ASSET,
@@ -71,27 +71,27 @@ export async function createCollectionSource(workspaceId: string, input: CreateC
 }
 
 export async function updateCollectionSource(
-  workspaceId: string,
+  organizationId: string,
   collectionSourceId: string,
   input: UpdateCollectionSourceInput,
 ) {
-  const [workspace, current] = await Promise.all([
-    getWorkspaceOrg(workspaceId),
+  const [organization, current] = await Promise.all([
+    getOrganization(organizationId),
     prisma.collectionSource.findFirstOrThrow({
-      where: { workspaceId, collectionSourceId },
+      where: { organizationId, collectionSourceId },
     }),
   ]);
 
   if (input.counterpartyId) {
-    await assertCounterpartyBelongsToOrg(workspace.organizationId, input.counterpartyId);
+    await assertCounterpartyBelongsToOrg(organization.organizationId, input.counterpartyId);
   }
 
   const nextLabel = input.label?.trim() || current.label;
-  await assertCollectionSourceLabelAvailable(workspaceId, nextLabel, collectionSourceId);
+  await assertCollectionSourceLabelAvailable(organizationId, nextLabel, collectionSourceId);
 
   const nextWalletAddress = input.walletAddress?.trim();
   if (nextWalletAddress && nextWalletAddress !== current.walletAddress) {
-    await assertCollectionSourceWalletAvailable(workspaceId, nextWalletAddress, collectionSourceId);
+    await assertCollectionSourceWalletAvailable(organizationId, nextWalletAddress, collectionSourceId);
   }
 
   const shouldUpdateTokenAccount = input.tokenAccountAddress !== undefined || Boolean(nextWalletAddress);
@@ -119,7 +119,7 @@ export async function updateCollectionSource(
 }
 
 export async function findOrCreateCollectionSourceForPayer(args: {
-  workspaceId: string;
+  organizationId: string;
   counterpartyId?: string | null;
   payerWalletAddress: string;
   payerTokenAccountAddress?: string | null;
@@ -130,8 +130,8 @@ export async function findOrCreateCollectionSourceForPayer(args: {
   const tokenAccountAddress = normalizeOptionalText(args.payerTokenAccountAddress) ?? deriveUsdcAtaForWallet(payerWalletAddress);
   const existing = await prisma.collectionSource.findUnique({
     where: {
-      workspaceId_walletAddress: {
-        workspaceId: args.workspaceId,
+      organizationId_walletAddress: {
+        organizationId: args.organizationId,
         walletAddress: payerWalletAddress,
       },
     },
@@ -152,7 +152,7 @@ export async function findOrCreateCollectionSourceForPayer(args: {
 
   const source = await prisma.collectionSource.create({
     data: {
-      workspaceId: args.workspaceId,
+      organizationId: args.organizationId,
       counterpartyId: args.counterpartyId ?? null,
       chain: SOLANA_CHAIN,
       asset: USDC_ASSET,
@@ -160,7 +160,7 @@ export async function findOrCreateCollectionSourceForPayer(args: {
       tokenAccountAddress,
       sourceType: 'payer_wallet',
       trustState: 'unreviewed',
-      label: await buildAvailableCollectionSourceLabel(args.workspaceId, args.label ?? shortenAddress(payerWalletAddress)),
+      label: await buildAvailableCollectionSourceLabel(args.organizationId, args.label ?? shortenAddress(payerWalletAddress)),
       notes: 'Automatically created from an expected collection payer wallet.',
       isActive: true,
       metadataJson: {
@@ -177,7 +177,7 @@ export async function findOrCreateCollectionSourceForPayer(args: {
 export function serializeCollectionSource(source: CollectionSource & { counterparty?: Counterparty | null }) {
   return {
     collectionSourceId: source.collectionSourceId,
-    workspaceId: source.workspaceId,
+    organizationId: source.organizationId,
     counterpartyId: source.counterpartyId,
     chain: source.chain,
     asset: source.asset,
@@ -195,9 +195,9 @@ export function serializeCollectionSource(source: CollectionSource & { counterpa
   };
 }
 
-function getWorkspaceOrg(workspaceId: string) {
-  return prisma.workspace.findUniqueOrThrow({
-    where: { workspaceId },
+function getOrganization(organizationId: string) {
+  return prisma.organization.findUniqueOrThrow({
+    where: { organizationId },
     select: { organizationId: true },
   });
 }
@@ -216,13 +216,13 @@ async function assertCounterpartyBelongsToOrg(organizationId: string, counterpar
 }
 
 async function assertCollectionSourceLabelAvailable(
-  workspaceId: string,
+  organizationId: string,
   label: string,
   excludeCollectionSourceId?: string,
 ) {
   const existing = await prisma.collectionSource.findFirst({
     where: {
-      workspaceId,
+      organizationId,
       label: {
         equals: label,
         mode: 'insensitive',
@@ -233,18 +233,18 @@ async function assertCollectionSourceLabelAvailable(
   });
 
   if (existing) {
-    throw new Error(`Collection source name "${label}" already exists in this workspace`);
+    throw new Error(`Collection source name "${label}" already exists in this organization`);
   }
 }
 
 async function assertCollectionSourceWalletAvailable(
-  workspaceId: string,
+  organizationId: string,
   walletAddress: string,
   excludeCollectionSourceId?: string,
 ) {
   const existing = await prisma.collectionSource.findFirst({
     where: {
-      workspaceId,
+      organizationId,
       walletAddress,
       ...(excludeCollectionSourceId ? { collectionSourceId: { not: excludeCollectionSourceId } } : {}),
     },
@@ -252,16 +252,16 @@ async function assertCollectionSourceWalletAvailable(
   });
 
   if (existing) {
-    throw new Error(`Collection source wallet "${walletAddress}" already exists in this workspace`);
+    throw new Error(`Collection source wallet "${walletAddress}" already exists in this organization`);
   }
 }
 
-async function buildAvailableCollectionSourceLabel(workspaceId: string, baseLabel: string) {
+async function buildAvailableCollectionSourceLabel(organizationId: string, baseLabel: string) {
   let candidate = normalizeRequiredText(baseLabel, 'Collection source label is required');
   for (let suffix = 1; suffix <= 50; suffix += 1) {
     const existing = await prisma.collectionSource.findFirst({
       where: {
-        workspaceId,
+        organizationId,
         label: { equals: candidate, mode: 'insensitive' },
       },
       select: { collectionSourceId: true },

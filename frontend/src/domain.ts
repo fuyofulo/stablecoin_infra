@@ -11,6 +11,7 @@ export {
 } from './lib/app';
 export {
   discoverSolanaWallets,
+  signWalletVerificationMessage,
   signAndSubmitPreparedPayment,
   subscribeSolanaWallets,
   type BrowserWalletOption,

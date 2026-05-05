@@ -24,9 +24,9 @@ type ObservedTransferRow = {
   chain_to_write_ms: string | number;
 };
 
-export async function listObservedTransfersForWorkspace(workspaceId: string, options: { limit: number }) {
+export async function listObservedTransfersForOrganization(organizationId: string, options: { limit: number }) {
   const addresses = await prisma.treasuryWallet.findMany({
-    where: { workspaceId, isActive: true },
+    where: { organizationId, isActive: true },
     select: {
       address: true,
       usdcAtaAddress: true,

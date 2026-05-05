@@ -33,34 +33,34 @@ function payerLabel(collection: CollectionRequest): string {
 }
 
 export function CollectionRunDetailPage() {
-  const { workspaceId, collectionRunId } = useParams<{
-    workspaceId: string;
+  const { organizationId, collectionRunId } = useParams<{
+    organizationId: string;
     collectionRunId: string;
   }>();
   const navigate = useNavigate();
   const { error: toastError } = useToast();
 
   const runQuery = useQuery({
-    queryKey: ['collection-run', workspaceId, collectionRunId] as const,
-    queryFn: () => api.getCollectionRun(workspaceId!, collectionRunId!),
-    enabled: Boolean(workspaceId && collectionRunId),
+    queryKey: ['collection-run', organizationId, collectionRunId] as const,
+    queryFn: () => api.getCollectionRun(organizationId!, collectionRunId!),
+    enabled: Boolean(organizationId && collectionRunId),
     refetchInterval: 10_000,
   });
 
   const proofQuery = useQuery({
-    queryKey: ['collection-run-proof', workspaceId, collectionRunId] as const,
-    queryFn: () => api.getCollectionRunProof(workspaceId!, collectionRunId!),
-    enabled: Boolean(workspaceId && collectionRunId),
+    queryKey: ['collection-run-proof', organizationId, collectionRunId] as const,
+    queryFn: () => api.getCollectionRunProof(organizationId!, collectionRunId!),
+    enabled: Boolean(organizationId && collectionRunId),
     refetchInterval: 15_000,
   });
 
   const proofDownloadMutation = useMutation({
-    mutationFn: () => api.downloadCollectionRunProofJson(workspaceId!, collectionRunId!),
+    mutationFn: () => api.downloadCollectionRunProofJson(organizationId!, collectionRunId!),
     onError: (err) =>
       toastError(err instanceof Error ? err.message : 'Could not export collection run proof.'),
   });
 
-  if (!workspaceId || !collectionRunId) {
+  if (!organizationId || !collectionRunId) {
     return (
       <main className="page-frame">
         <div className="rd-state">
@@ -86,7 +86,7 @@ export function CollectionRunDetailPage() {
         <div className="rd-state">
           <h2 className="rd-state-title">Not found</h2>
           <p className="rd-state-body">This collection run does not exist.</p>
-          <Link to={`/workspaces/${workspaceId}/collections`} className="button button-secondary">
+          <Link to={`/organizations/${organizationId}/collections`} className="button button-secondary">
             Back to collections
           </Link>
         </div>
@@ -103,7 +103,7 @@ export function CollectionRunDetailPage() {
       <div style={{ marginBottom: 12 }}>
         <button
           type="button"
-          onClick={() => navigate(`/workspaces/${workspaceId}/collections`)}
+          onClick={() => navigate(`/organizations/${organizationId}/collections`)}
           className="rd-btn rd-btn-secondary"
         >
           ← Back to collections
@@ -229,7 +229,7 @@ export function CollectionRunDetailPage() {
                   <tr
                     key={c.collectionRequestId}
                     onClick={() =>
-                      navigate(`/workspaces/${workspaceId}/collections/${c.collectionRequestId}`)
+                      navigate(`/organizations/${organizationId}/collections/${c.collectionRequestId}`)
                     }
                     style={{ cursor: 'pointer' }}
                   >

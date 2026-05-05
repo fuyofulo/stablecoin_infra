@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import crypto from 'node:crypto';
 import { z } from 'zod';
-import { ApiError, conflict } from '../api-errors.js';
+import { ApiError, badRequest, conflict } from '../api-errors.js';
 import { hashPassword, verifyPassword } from '../auth-passwords.js';
 import { createSession, requireAuth } from '../auth.js';
 import { prisma } from '../prisma.js';
@@ -19,6 +19,10 @@ const loginSchema = z.object({
   password: z.string().min(8).max(128),
 });
 
+const verifyEmailSchema = z.object({
+  code: z.string().trim().min(6).max(12),
+});
+
 authRouter.post('/auth/register', async (req, res, next) => {
   try {
     const input = registerSchema.parse(req.body);
@@ -31,6 +35,7 @@ authRouter.post('/auth/register', async (req, res, next) => {
     });
 
     let user;
+    let devEmailVerificationCode: string | null = null;
 
     if (existing) {
       if (existing.passwordHash) {
@@ -45,11 +50,14 @@ authRouter.post('/auth/register', async (req, res, next) => {
         },
       });
     } else {
+      const verificationCode = generateVerificationCode();
+      devEmailVerificationCode = verificationCode;
       user = await prisma.user.create({
         data: {
           email,
           passwordHash,
           displayName,
+          ...emailVerificationFieldsForCode(verificationCode),
         },
       });
     }
@@ -62,6 +70,7 @@ authRouter.post('/auth/register', async (req, res, next) => {
       sessionToken: session.sessionToken,
       user: serializeUser(user),
       organizations,
+      devEmailVerificationCode,
     });
   } catch (error) {
     next(error);
@@ -80,6 +89,7 @@ authRouter.get('/auth/session', requireAuth(), async (req, res, next) => {
         userId: auth.userId,
         email: auth.userEmail,
         displayName: auth.userDisplayName,
+        emailVerifiedAt: auth.userEmailVerifiedAt,
       },
       organizations,
     });
@@ -115,6 +125,71 @@ authRouter.post('/auth/login', async (req, res, next) => {
       sessionToken: session.sessionToken,
       user: serializeUser(user),
       organizations,
+      devEmailVerificationCode: null,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+authRouter.post('/auth/verify-email', requireAuth(), async (req, res, next) => {
+  try {
+    const input = verifyEmailSchema.parse(req.body);
+    const user = await prisma.user.findUniqueOrThrow({
+      where: { userId: req.auth!.userId },
+    });
+
+    if (user.emailVerifiedAt) {
+      res.json({ user: serializeUser(user) });
+      return;
+    }
+
+    if (!user.emailVerificationCodeHash || !user.emailVerificationExpiresAt) {
+      throw badRequest('Verification code is not active. Request a new code.');
+    }
+
+    if (user.emailVerificationExpiresAt <= new Date()) {
+      throw badRequest('Verification code expired. Request a new code.');
+    }
+
+    if (hashCode(input.code) !== user.emailVerificationCodeHash) {
+      throw badRequest('Verification code is incorrect.');
+    }
+
+    const verified = await prisma.user.update({
+      where: { userId: user.userId },
+      data: {
+        emailVerifiedAt: new Date(),
+        emailVerificationCodeHash: null,
+        emailVerificationExpiresAt: null,
+      },
+    });
+
+    res.json({ user: serializeUser(verified) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+authRouter.post('/auth/resend-verification', requireAuth(), async (req, res, next) => {
+  try {
+    const user = await prisma.user.findUniqueOrThrow({
+      where: { userId: req.auth!.userId },
+    });
+    if (user.emailVerifiedAt) {
+      res.json({ user: serializeUser(user), devEmailVerificationCode: null });
+      return;
+    }
+
+    const code = generateVerificationCode();
+    const updated = await prisma.user.update({
+      where: { userId: user.userId },
+      data: emailVerificationFieldsForCode(code),
+    });
+
+    res.json({
+      user: serializeUser(updated),
+      devEmailVerificationCode: code,
     });
   } catch (error) {
     next(error);
@@ -145,15 +220,7 @@ async function listUserOrganizations(userId: string) {
       userId,
       status: 'active',
     },
-    include: {
-      organization: {
-        include: {
-          workspaces: {
-            orderBy: { createdAt: 'asc' },
-          },
-        },
-      },
-    },
+    include: { organization: true },
     orderBy: { createdAt: 'asc' },
   });
 
@@ -162,15 +229,15 @@ async function listUserOrganizations(userId: string) {
     organizationName: membership.organization.organizationName,
     role: membership.role,
     status: membership.organization.status,
-    workspaces: membership.organization.workspaces,
   }));
 }
 
-function serializeUser(user: { userId: string; email: string; displayName: string }) {
+function serializeUser(user: { userId: string; email: string; displayName: string; emailVerifiedAt?: Date | null }) {
   return {
     userId: user.userId,
     email: user.email,
     displayName: user.displayName,
+    emailVerifiedAt: user.emailVerifiedAt?.toISOString() ?? null,
   };
 }
 
@@ -189,4 +256,19 @@ function defaultDisplayName(email: string) {
 
 function invalidCredentialsError() {
   return new ApiError(401, 'invalid_credentials', 'Invalid email or password.');
+}
+
+function emailVerificationFieldsForCode(code: string) {
+  return {
+    emailVerificationCodeHash: hashCode(code),
+    emailVerificationExpiresAt: new Date(Date.now() + 30 * 60 * 1000),
+  };
+}
+
+function generateVerificationCode() {
+  return String(crypto.randomInt(100_000, 1_000_000));
+}
+
+function hashCode(code: string) {
+  return crypto.createHash('sha256').update(code.trim()).digest('hex');
 }

@@ -17,7 +17,7 @@ export function serializeTransferRequestEvent(event: ReturnType<typeof parseTran
   return {
     transferRequestEventId: event.transferRequestEventId,
     transferRequestId: event.transferRequestId,
-    workspaceId: event.workspaceId,
+    organizationId: event.organizationId,
     eventType: event.eventType,
     actorType: event.actorType,
     actorId: event.actorId,
@@ -40,7 +40,7 @@ export function serializeTransferRequestNote(
   return {
     transferRequestNoteId: note.transferRequestNoteId,
     transferRequestId: note.transferRequestId,
-    workspaceId: note.workspaceId,
+    organizationId: note.organizationId,
     body: note.body,
     createdAt: note.createdAt,
     authorUser: serializeUserRef(note.authorUser),
@@ -63,7 +63,7 @@ export function serializeExceptionNote(
   return {
     exceptionNoteId: note.exceptionNoteId,
     exceptionId: note.exceptionId,
-    workspaceId: note.workspaceId,
+    organizationId: note.organizationId,
     body: note.body,
     createdAt: note.createdAt,
     authorUser: serializeUserRef(note.authorUser),

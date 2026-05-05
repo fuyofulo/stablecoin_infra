@@ -50,7 +50,7 @@ export function isCollectionRequestState(value: string): value is CollectionRequ
 }
 
 export async function listCollectionRequests(
-  workspaceId: string,
+  organizationId: string,
   options?: {
     limit?: number;
     state?: string;
@@ -59,7 +59,7 @@ export async function listCollectionRequests(
 ) {
   const requests = await prisma.collectionRequest.findMany({
     where: {
-      workspaceId,
+      organizationId,
       ...(options?.state ? { state: options.state } : {}),
       ...(options?.collectionRunId ? { collectionRunId: options.collectionRunId } : {}),
     },
@@ -71,9 +71,9 @@ export async function listCollectionRequests(
   return { items: await Promise.all(requests.map(serializeCollectionRequest)) };
 }
 
-export async function getCollectionRequestDetail(workspaceId: string, collectionRequestId: string) {
+export async function getCollectionRequestDetail(organizationId: string, collectionRequestId: string) {
   const request = await prisma.collectionRequest.findFirstOrThrow({
-    where: { workspaceId, collectionRequestId },
+    where: { organizationId, collectionRequestId },
     include: {
       ...collectionRequestInclude,
       events: { orderBy: { createdAt: 'asc' } },
@@ -84,7 +84,7 @@ export async function getCollectionRequestDetail(workspaceId: string, collection
 }
 
 export async function createCollectionRequest(args: {
-  workspaceId: string;
+  organizationId: string;
   actorUserId: string;
   collectionRunId?: string | null;
   receivingTreasuryWalletId: string;
@@ -101,7 +101,7 @@ export async function createCollectionRequest(args: {
 }) {
   const receivingWallet = await prisma.treasuryWallet.findFirst({
     where: {
-      workspaceId: args.workspaceId,
+      organizationId: args.organizationId,
       treasuryWalletId: args.receivingTreasuryWalletId,
       isActive: true,
     },
@@ -114,7 +114,7 @@ export async function createCollectionRequest(args: {
     ? await prisma.counterparty.findFirst({
         where: {
           counterpartyId: args.counterpartyId,
-          organization: { workspaces: { some: { workspaceId: args.workspaceId } } },
+          organizationId: args.organizationId,
           status: 'active',
         },
       })
@@ -124,7 +124,7 @@ export async function createCollectionRequest(args: {
   }
 
   const collectionSource = await resolveCollectionSource({
-    workspaceId: args.workspaceId,
+    organizationId: args.organizationId,
     collectionSourceId: args.collectionSourceId,
     counterpartyId: counterparty?.counterpartyId ?? null,
     payerWalletAddress: args.payerWalletAddress,
@@ -137,21 +137,21 @@ export async function createCollectionRequest(args: {
   const payerTokenAccountAddress = collectionSource?.tokenAccountAddress ?? normalizeOptionalText(args.payerTokenAccountAddress);
 
   await enforceDuplicateCollectionRequest({
-    workspaceId: args.workspaceId,
+    organizationId: args.organizationId,
     receivingTreasuryWalletId: receivingWallet.treasuryWalletId,
     amountRaw: args.amountRaw,
     externalReference: normalizeOptionalText(args.externalReference),
   });
 
   const receivingDestination = await getOrCreateInternalReceivingDestination({
-    workspaceId: args.workspaceId,
+    organizationId: args.organizationId,
     receivingWallet,
   });
 
   const created = await prisma.$transaction(async (tx) => {
     const request = await tx.collectionRequest.create({
       data: {
-        workspaceId: args.workspaceId,
+        organizationId: args.organizationId,
         collectionRunId: args.collectionRunId ?? null,
         receivingTreasuryWalletId: receivingWallet.treasuryWalletId,
         collectionSourceId: collectionSource?.collectionSourceId ?? null,
@@ -171,7 +171,7 @@ export async function createCollectionRequest(args: {
 
     const transferRequest = await tx.transferRequest.create({
       data: {
-        workspaceId: args.workspaceId,
+        organizationId: args.organizationId,
         sourceTreasuryWalletId: null,
         destinationId: receivingDestination.destinationId,
         requestType: 'collection_request',
@@ -202,7 +202,7 @@ export async function createCollectionRequest(args: {
 
     await createCollectionRequestEvent(tx, {
       collectionRequestId: request.collectionRequestId,
-      workspaceId: args.workspaceId,
+      organizationId: args.organizationId,
       eventType: 'collection_created',
       actorType: 'user',
       actorId: args.actorUserId,
@@ -220,7 +220,7 @@ export async function createCollectionRequest(args: {
 
     await createTransferRequestEvent(tx, {
       transferRequestId: transferRequest.transferRequestId,
-      workspaceId: args.workspaceId,
+      organizationId: args.organizationId,
       eventType: 'collection_expected',
       actorType: 'user',
       actorId: args.actorUserId,
@@ -241,19 +241,19 @@ export async function createCollectionRequest(args: {
     return request;
   });
 
-  return getCollectionRequestDetail(args.workspaceId, created.collectionRequestId);
+  return getCollectionRequestDetail(args.organizationId, created.collectionRequestId);
 }
 
 export async function cancelCollectionRequest(args: {
-  workspaceId: string;
+  organizationId: string;
   collectionRequestId: string;
   actorUserId: string;
 }) {
   const current = await prisma.collectionRequest.findFirstOrThrow({
-    where: { workspaceId: args.workspaceId, collectionRequestId: args.collectionRequestId },
+    where: { organizationId: args.organizationId, collectionRequestId: args.collectionRequestId },
   });
   if (current.state === 'cancelled') {
-    return getCollectionRequestDetail(args.workspaceId, args.collectionRequestId);
+    return getCollectionRequestDetail(args.organizationId, args.collectionRequestId);
   }
   if (['collected', 'closed'].includes(current.state)) {
     throw new Error(`Collection request ${current.state} cannot be cancelled`);
@@ -271,7 +271,7 @@ export async function cancelCollectionRequest(args: {
       });
       await createTransferRequestEvent(tx, {
         transferRequestId: current.transferRequestId,
-        workspaceId: args.workspaceId,
+        organizationId: args.organizationId,
         eventType: 'collection_cancelled',
         actorType: 'user',
         actorId: args.actorUserId,
@@ -283,7 +283,7 @@ export async function cancelCollectionRequest(args: {
     }
     await createCollectionRequestEvent(tx, {
       collectionRequestId: args.collectionRequestId,
-      workspaceId: args.workspaceId,
+      organizationId: args.organizationId,
       eventType: 'collection_cancelled',
       actorType: 'user',
       actorId: args.actorUserId,
@@ -294,12 +294,12 @@ export async function cancelCollectionRequest(args: {
     });
   });
 
-  return getCollectionRequestDetail(args.workspaceId, args.collectionRequestId);
+  return getCollectionRequestDetail(args.organizationId, args.collectionRequestId);
 }
 
-export async function listCollectionRuns(workspaceId: string) {
+export async function listCollectionRuns(organizationId: string) {
   const runs = await prisma.collectionRun.findMany({
-    where: { workspaceId },
+    where: { organizationId },
     include: collectionRunInclude,
     orderBy: { createdAt: 'desc' },
     take: 100,
@@ -307,12 +307,12 @@ export async function listCollectionRuns(workspaceId: string) {
   return { items: await Promise.all(runs.map(serializeCollectionRunSummary)) };
 }
 
-export async function getCollectionRunDetail(workspaceId: string, collectionRunId: string) {
+export async function getCollectionRunDetail(organizationId: string, collectionRunId: string) {
   const run = await prisma.collectionRun.findFirstOrThrow({
-    where: { workspaceId, collectionRunId },
+    where: { organizationId, collectionRunId },
     include: collectionRunInclude,
   });
-  const collections = await listCollectionRequests(workspaceId, {
+  const collections = await listCollectionRequests(organizationId, {
     collectionRunId,
     limit: 250,
   });
@@ -323,14 +323,14 @@ export async function getCollectionRunDetail(workspaceId: string, collectionRunI
 }
 
 export async function previewCollectionRunCsv(args: {
-  workspaceId: string;
+  organizationId: string;
   csv: string;
   receivingTreasuryWalletId?: string | null;
 }) {
   return {
     csvFingerprint: buildCsvFingerprint(args.csv),
     ...(await previewCollectionRequestsCsv({
-      workspaceId: args.workspaceId,
+      organizationId: args.organizationId,
       csv: args.csv,
       defaultReceivingTreasuryWalletId: args.receivingTreasuryWalletId,
     })),
@@ -338,7 +338,7 @@ export async function previewCollectionRunCsv(args: {
 }
 
 export async function importCollectionRunFromCsv(args: {
-  workspaceId: string;
+  organizationId: string;
   actorUserId: string;
   csv: string;
   runName?: string | null;
@@ -348,13 +348,13 @@ export async function importCollectionRunFromCsv(args: {
   const csvFingerprint = buildCsvFingerprint(args.csv);
   const importKey = normalizeOptionalText(args.importKey);
   const existingRun = await findExistingImportedCollectionRun({
-    workspaceId: args.workspaceId,
+    organizationId: args.organizationId,
     importKey,
     csvFingerprint,
   });
   if (existingRun) {
     return {
-      collectionRun: await getCollectionRunDetail(args.workspaceId, existingRun.collectionRunId),
+      collectionRun: await getCollectionRunDetail(args.organizationId, existingRun.collectionRunId),
       importResult: {
         idempotentReplay: true,
         imported: 0,
@@ -365,7 +365,7 @@ export async function importCollectionRunFromCsv(args: {
   }
 
   const preview = await previewCollectionRunCsv({
-    workspaceId: args.workspaceId,
+    organizationId: args.organizationId,
     csv: args.csv,
     receivingTreasuryWalletId: args.receivingTreasuryWalletId,
   });
@@ -380,7 +380,7 @@ export async function importCollectionRunFromCsv(args: {
 
   const run = await prisma.collectionRun.create({
     data: {
-      workspaceId: args.workspaceId,
+      organizationId: args.organizationId,
       receivingTreasuryWalletId: args.receivingTreasuryWalletId ?? null,
       runName: normalizeOptionalText(args.runName) ?? `CSV collection run ${new Date().toISOString().slice(0, 10)}`,
       inputSource: 'csv_import',
@@ -395,7 +395,7 @@ export async function importCollectionRunFromCsv(args: {
   });
 
   const importResult = await importCollectionRequestsFromCsv({
-    workspaceId: args.workspaceId,
+    organizationId: args.organizationId,
     actorUserId: args.actorUserId,
     csv: args.csv,
     collectionRunId: run.collectionRunId,
@@ -413,13 +413,13 @@ export async function importCollectionRunFromCsv(args: {
   }
 
   return {
-    collectionRun: await getCollectionRunDetail(args.workspaceId, run.collectionRunId),
+    collectionRun: await getCollectionRunDetail(args.organizationId, run.collectionRunId),
     importResult,
   };
 }
 
 export async function importCollectionRequestsFromCsv(args: {
-  workspaceId: string;
+  organizationId: string;
   actorUserId: string;
   csv: string;
   collectionRunId?: string | null;
@@ -441,7 +441,7 @@ export async function importCollectionRequestsFromCsv(args: {
 
     try {
       const parsed = await parseCollectionCsvRecord({
-        workspaceId: args.workspaceId,
+        organizationId: args.organizationId,
         record,
         rowNumber,
         defaultReceivingTreasuryWalletId: args.defaultReceivingTreasuryWalletId,
@@ -454,7 +454,7 @@ export async function importCollectionRequestsFromCsv(args: {
       seenImportKeys.set(importKey, rowNumber);
 
       const collectionRequest = await createCollectionRequest({
-        workspaceId: args.workspaceId,
+        organizationId: args.organizationId,
         actorUserId: args.actorUserId,
         collectionRunId: args.collectionRunId,
         receivingTreasuryWalletId: parsed.receivingTreasuryWalletId,
@@ -493,7 +493,7 @@ export async function importCollectionRequestsFromCsv(args: {
 }
 
 export async function previewCollectionRequestsCsv(args: {
-  workspaceId: string;
+  organizationId: string;
   csv: string;
   defaultReceivingTreasuryWalletId?: string | null;
 }) {
@@ -511,7 +511,7 @@ export async function previewCollectionRequestsCsv(args: {
     const record = Object.fromEntries(headers.map((header, cellIndex) => [header, row[cellIndex]?.trim() ?? '']));
     try {
       const parsed = await parseCollectionCsvRecord({
-        workspaceId: args.workspaceId,
+        organizationId: args.organizationId,
         record,
         rowNumber,
         defaultReceivingTreasuryWalletId: args.defaultReceivingTreasuryWalletId,
@@ -520,7 +520,7 @@ export async function previewCollectionRequestsCsv(args: {
       const duplicateRowNumber = seenImportKeys.get(importKey) ?? null;
       seenImportKeys.set(importKey, duplicateRowNumber ?? rowNumber);
       const duplicate = await findActiveCollectionDuplicate({
-        workspaceId: args.workspaceId,
+        organizationId: args.organizationId,
         receivingTreasuryWalletId: parsed.receivingTreasuryWalletId,
         amountRaw: parsed.amountRaw,
         externalReference: parsed.externalReference,
@@ -604,13 +604,13 @@ const collectionRunInclude = {
 
 async function serializeCollectionRequest(request: CollectionRequestWithRelations) {
   const reconciliationDetail = request.transferRequestId
-    ? await safeGetReconciliationDetail(request.workspaceId, request.transferRequestId)
+    ? await safeGetReconciliationDetail(request.organizationId, request.transferRequestId)
     : null;
 
   const derivedState = deriveCollectionState(request.state, reconciliationDetail);
   return {
     collectionRequestId: request.collectionRequestId,
-    workspaceId: request.workspaceId,
+    organizationId: request.organizationId,
     collectionRunId: request.collectionRunId,
     receivingTreasuryWalletId: request.receivingTreasuryWalletId,
     collectionSourceId: request.collectionSourceId,
@@ -645,14 +645,14 @@ async function serializeCollectionRequest(request: CollectionRequestWithRelation
 }
 
 async function serializeCollectionRunSummary(run: CollectionRunWithRelations) {
-  const collections = await listCollectionRequests(run.workspaceId, {
+  const collections = await listCollectionRequests(run.organizationId, {
     collectionRunId: run.collectionRunId,
     limit: 250,
   });
   const derivedState = deriveCollectionRunState(run.state, collections.items);
   return {
     collectionRunId: run.collectionRunId,
-    workspaceId: run.workspaceId,
+    organizationId: run.organizationId,
     receivingTreasuryWalletId: run.receivingTreasuryWalletId,
     runName: run.runName,
     inputSource: run.inputSource,
@@ -713,16 +713,16 @@ function deriveCollectionRunState(storedState: string, collections: Array<{ deri
   return storedState;
 }
 
-async function safeGetReconciliationDetail(workspaceId: string, transferRequestId: string) {
+async function safeGetReconciliationDetail(organizationId: string, transferRequestId: string) {
   try {
-    return await getReconciliationDetail(workspaceId, transferRequestId);
+    return await getReconciliationDetail(organizationId, transferRequestId);
   } catch {
     return null;
   }
 }
 
 async function getOrCreateInternalReceivingDestination(args: {
-  workspaceId: string;
+  organizationId: string;
   receivingWallet: TreasuryWallet;
 }) {
   const tokenAccountAddress = args.receivingWallet.usdcAtaAddress ?? deriveUsdcAtaForWallet(args.receivingWallet.address);
@@ -733,8 +733,8 @@ async function getOrCreateInternalReceivingDestination(args: {
   return prisma.$transaction(async (tx) => {
     const existing = await tx.destination.findUnique({
       where: {
-        workspaceId_walletAddress: {
-          workspaceId: args.workspaceId,
+        organizationId_walletAddress: {
+          organizationId: args.organizationId,
           walletAddress: args.receivingWallet.address,
         },
       },
@@ -750,13 +750,13 @@ async function getOrCreateInternalReceivingDestination(args: {
           metadataJson: mergeJsonObject(existing.metadataJson, {
             internalReceivingTreasuryWalletId: args.receivingWallet.treasuryWalletId,
             internalUse: 'collections',
-          }),
+          }) as Prisma.InputJsonValue,
         },
       });
     }
     return tx.destination.create({
       data: {
-        workspaceId: args.workspaceId,
+        organizationId: args.organizationId,
         chain: SOLANA_CHAIN,
         asset: USDC_ASSET,
         walletAddress: args.receivingWallet.address,
@@ -777,7 +777,7 @@ async function getOrCreateInternalReceivingDestination(args: {
 }
 
 async function parseCollectionCsvRecord(args: {
-  workspaceId: string;
+  organizationId: string;
   record: Record<string, string>;
   rowNumber: number;
   defaultReceivingTreasuryWalletId?: string | null;
@@ -786,7 +786,7 @@ async function parseCollectionCsvRecord(args: {
     args.record.counterparty ?? args.record.counterparty_name ?? args.record.customer ?? args.record.name,
   );
   const counterparty = counterpartyName
-    ? await findOrCreateCounterparty(args.workspaceId, counterpartyName)
+    ? await findOrCreateCounterparty(args.organizationId, counterpartyName)
     : null;
   const receivingInput = normalizeOptionalText(
     args.record.receiving_wallet
@@ -798,7 +798,7 @@ async function parseCollectionCsvRecord(args: {
   if (!receivingInput) {
     throw new Error(`Row ${args.rowNumber}: receiving wallet is required`);
   }
-  const receivingWallet = await findTreasuryWallet(args.workspaceId, receivingInput);
+  const receivingWallet = await findTreasuryWallet(args.organizationId, receivingInput);
   if (!receivingWallet) {
     throw new Error(`Row ${args.rowNumber}: receiving treasury wallet "${receivingInput}" was not found`);
   }
@@ -816,9 +816,9 @@ async function parseCollectionCsvRecord(args: {
       ?? args.record.source,
   );
   const collectionSource = collectionSourceInput
-    ? await findCollectionSource(args.workspaceId, collectionSourceInput)
+    ? await findCollectionSource(args.organizationId, collectionSourceInput)
     : payerWalletAddress
-      ? await findCollectionSource(args.workspaceId, payerWalletAddress)
+      ? await findCollectionSource(args.organizationId, payerWalletAddress)
       : null;
   if (collectionSourceInput && !collectionSource) {
     throw new Error(`Row ${args.rowNumber}: collection source "${collectionSourceInput}" was not found`);
@@ -854,14 +854,14 @@ async function parseCollectionCsvRecord(args: {
   };
 }
 
-async function findOrCreateCounterparty(workspaceId: string, displayName: string) {
-  const workspace = await prisma.workspace.findUniqueOrThrow({
-    where: { workspaceId },
+async function findOrCreateCounterparty(organizationId: string, displayName: string) {
+  const organization = await prisma.organization.findUniqueOrThrow({
+    where: { organizationId },
     select: { organizationId: true },
   });
   const existing = await prisma.counterparty.findFirst({
     where: {
-      organizationId: workspace.organizationId,
+      organizationId: organization.organizationId,
       displayName: { equals: displayName, mode: 'insensitive' },
       status: 'active',
     },
@@ -871,7 +871,7 @@ async function findOrCreateCounterparty(workspaceId: string, displayName: string
   }
   return prisma.counterparty.create({
     data: {
-      organizationId: workspace.organizationId,
+      organizationId: organization.organizationId,
       displayName,
       category: 'customer',
       metadataJson: { inputSource: 'collection_csv_import' },
@@ -879,32 +879,32 @@ async function findOrCreateCounterparty(workspaceId: string, displayName: string
   });
 }
 
-async function findTreasuryWallet(workspaceId: string, value: string) {
+async function findTreasuryWallet(organizationId: string, value: string) {
   const alternatives: Prisma.TreasuryWalletWhereInput[] = [
     { treasuryWalletId: isUuid(value) ? value : undefined },
     { address: value },
     { usdcAtaAddress: value },
-    { displayName: { equals: value, mode: 'insensitive' } },
+    { displayName: { equals: value, mode: 'insensitive' as const } },
   ].filter((item) => Object.values(item).some((entry) => entry !== undefined));
   return prisma.treasuryWallet.findFirst({
     where: {
-      workspaceId,
+      organizationId,
       isActive: true,
       OR: alternatives,
     },
   });
 }
 
-async function findCollectionSource(workspaceId: string, value: string) {
+async function findCollectionSource(organizationId: string, value: string) {
   const alternatives: Prisma.CollectionSourceWhereInput[] = [
     { collectionSourceId: isUuid(value) ? value : undefined },
     { walletAddress: value },
     { tokenAccountAddress: value },
-    { label: { equals: value, mode: 'insensitive' } },
+    { label: { equals: value, mode: 'insensitive' as const } },
   ].filter((item) => Object.values(item).some((entry) => entry !== undefined));
   return prisma.collectionSource.findFirst({
     where: {
-      workspaceId,
+      organizationId,
       isActive: true,
       OR: alternatives,
     },
@@ -913,7 +913,7 @@ async function findCollectionSource(workspaceId: string, value: string) {
 }
 
 async function resolveCollectionSource(args: {
-  workspaceId: string;
+  organizationId: string;
   collectionSourceId?: string | null;
   counterpartyId?: string | null;
   payerWalletAddress?: string | null;
@@ -924,7 +924,7 @@ async function resolveCollectionSource(args: {
   if (args.collectionSourceId) {
     const source = await prisma.collectionSource.findFirst({
       where: {
-        workspaceId: args.workspaceId,
+        organizationId: args.organizationId,
         collectionSourceId: args.collectionSourceId,
         isActive: true,
       },
@@ -948,7 +948,7 @@ async function resolveCollectionSource(args: {
   }
 
   return findOrCreateCollectionSourceForPayer({
-    workspaceId: args.workspaceId,
+    organizationId: args.organizationId,
     counterpartyId: args.counterpartyId,
     payerWalletAddress,
     payerTokenAccountAddress: args.payerTokenAccountAddress,
@@ -966,7 +966,7 @@ function buildCollectionSourceLabel(reason: string, walletAddress: string) {
 }
 
 async function enforceDuplicateCollectionRequest(args: {
-  workspaceId: string;
+  organizationId: string;
   receivingTreasuryWalletId: string;
   amountRaw: string | bigint;
   externalReference: string | null;
@@ -978,7 +978,7 @@ async function enforceDuplicateCollectionRequest(args: {
 }
 
 async function findActiveCollectionDuplicate(args: {
-  workspaceId: string;
+  organizationId: string;
   receivingTreasuryWalletId: string;
   amountRaw: string | bigint;
   externalReference: string | null;
@@ -988,7 +988,7 @@ async function findActiveCollectionDuplicate(args: {
   }
   return prisma.collectionRequest.findFirst({
     where: {
-      workspaceId: args.workspaceId,
+      organizationId: args.organizationId,
       receivingTreasuryWalletId: args.receivingTreasuryWalletId,
       amountRaw: BigInt(args.amountRaw),
       externalReference: { equals: args.externalReference, mode: 'insensitive' },
@@ -1002,13 +1002,13 @@ async function findActiveCollectionDuplicate(args: {
 }
 
 async function findExistingImportedCollectionRun(args: {
-  workspaceId: string;
+  organizationId: string;
   importKey: string | null;
   csvFingerprint: string;
 }) {
   return prisma.collectionRun.findFirst({
     where: {
-      workspaceId: args.workspaceId,
+      organizationId: args.organizationId,
       inputSource: 'csv_import',
       OR: [
         { metadataJson: { path: ['csvFingerprint'], equals: args.csvFingerprint } },
@@ -1023,7 +1023,7 @@ async function createCollectionRequestEvent(
   client: Prisma.TransactionClient,
   args: {
     collectionRequestId: string;
-    workspaceId: string;
+    organizationId: string;
     eventType: string;
     actorType: string;
     actorId?: string | null;
@@ -1036,7 +1036,7 @@ async function createCollectionRequestEvent(
   await client.collectionRequestEvent.create({
     data: {
       collectionRequestId: args.collectionRequestId,
-      workspaceId: args.workspaceId,
+      organizationId: args.organizationId,
       eventType: args.eventType,
       actorType: args.actorType,
       actorId: args.actorId ?? null,
@@ -1052,7 +1052,7 @@ function serializeCollectionRequestEvent(event: CollectionRequestEvent) {
   return {
     collectionRequestEventId: event.collectionRequestEventId,
     collectionRequestId: event.collectionRequestId,
-    workspaceId: event.workspaceId,
+    organizationId: event.organizationId,
     eventType: event.eventType,
     actorType: event.actorType,
     actorId: event.actorId,
@@ -1067,7 +1067,7 @@ function serializeCollectionRequestEvent(event: CollectionRequestEvent) {
 function serializeTreasuryWallet(wallet: TreasuryWallet) {
   return {
     treasuryWalletId: wallet.treasuryWalletId,
-    workspaceId: wallet.workspaceId,
+    organizationId: wallet.organizationId,
     chain: wallet.chain,
     address: wallet.address,
     assetScope: wallet.assetScope,

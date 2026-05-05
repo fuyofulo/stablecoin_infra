@@ -1,8 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
+import { forbidden } from '../api-errors.js';
 import { prisma } from '../prisma.js';
-import { assertOrganizationAccess } from '../workspace-access.js';
-import { listResponse } from '../api-format.js';
 
 export const organizationsRouter = Router();
 
@@ -12,11 +11,6 @@ const orgParamsSchema = z.object({
 
 const createOrganizationSchema = z.object({
   organizationName: z.string().min(1),
-});
-
-const createWorkspaceSchema = z.object({
-  workspaceName: z.string().min(1),
-  status: z.string().default('active'),
 });
 
 async function assertOrganizationNameAvailable(organizationName: string) {
@@ -35,28 +29,6 @@ async function assertOrganizationNameAvailable(organizationName: string) {
   }
 }
 
-async function assertWorkspaceNameAvailable(
-  organizationId: string,
-  workspaceName: string,
-  excludeWorkspaceId?: string,
-) {
-  const existing = await prisma.workspace.findFirst({
-    where: {
-      organizationId,
-      workspaceName: {
-        equals: workspaceName,
-        mode: 'insensitive',
-      },
-      ...(excludeWorkspaceId ? { workspaceId: { not: excludeWorkspaceId } } : {}),
-    },
-    select: { workspaceId: true },
-  });
-
-  if (existing) {
-    throw new Error(`Workspace name "${workspaceName}" already exists in this organization`);
-  }
-}
-
 organizationsRouter.get('/organizations', async (req, res, next) => {
   try {
     // Scoped to the current user's memberships. We intentionally do not expose
@@ -70,11 +42,6 @@ organizationsRouter.get('/organizations', async (req, res, next) => {
           },
         },
       },
-      include: {
-        _count: {
-          select: { workspaces: true },
-        },
-      },
       orderBy: { createdAt: 'asc' },
     });
 
@@ -83,7 +50,6 @@ organizationsRouter.get('/organizations', async (req, res, next) => {
         organizationId: organization.organizationId,
         organizationName: organization.organizationName,
         status: organization.status,
-        workspaceCount: organization._count.workspaces,
         isMember: true,
       })),
     });
@@ -94,6 +60,7 @@ organizationsRouter.get('/organizations', async (req, res, next) => {
 
 organizationsRouter.post('/organizations', async (req, res, next) => {
   try {
+    assertVerifiedEmail(req.auth!.userEmailVerifiedAt);
     const input = createOrganizationSchema.parse(req.body);
     const organizationName = input.organizationName.trim();
     await assertOrganizationNameAvailable(organizationName);
@@ -121,7 +88,6 @@ organizationsRouter.post('/organizations', async (req, res, next) => {
       organizationName: organization.organizationName,
       role: 'owner',
       status: organization.status,
-      workspaces: [],
     });
   } catch (error) {
     next(error);
@@ -130,6 +96,7 @@ organizationsRouter.post('/organizations', async (req, res, next) => {
 
 organizationsRouter.post('/organizations/:organizationId/join', async (req, res, next) => {
   try {
+    assertVerifiedEmail(req.auth!.userEmailVerifiedAt);
     const { organizationId } = orgParamsSchema.parse(req.params);
 
     const organization = await prisma.organization.findUnique({
@@ -162,57 +129,19 @@ organizationsRouter.post('/organizations/:organizationId/join', async (req, res,
       },
     });
 
-    const workspaces = await prisma.workspace.findMany({
-      where: { organizationId },
-      orderBy: { createdAt: 'asc' },
-    });
-
     res.status(201).json({
       organizationId: organization.organizationId,
       organizationName: organization.organizationName,
       role: membership.role,
       status: organization.status,
-      workspaces,
     });
   } catch (error) {
     next(error);
   }
 });
 
-organizationsRouter.get('/organizations/:organizationId/workspaces', async (req, res, next) => {
-  try {
-    const { organizationId } = orgParamsSchema.parse(req.params);
-    await assertOrganizationAccess(organizationId, req.auth!);
-
-    const items = await prisma.workspace.findMany({
-      where: { organizationId },
-      orderBy: { createdAt: 'asc' },
-    });
-
-    res.json(listResponse(items));
-  } catch (error) {
-    next(error);
+function assertVerifiedEmail(emailVerifiedAt: string | null) {
+  if (!emailVerifiedAt) {
+    throw forbidden('Email verification is required before joining or creating an organization.');
   }
-});
-
-organizationsRouter.post('/organizations/:organizationId/workspaces', async (req, res, next) => {
-  try {
-    const { organizationId } = orgParamsSchema.parse(req.params);
-    await assertOrganizationAccess(organizationId, req.auth!);
-    const input = createWorkspaceSchema.parse(req.body);
-    const workspaceName = input.workspaceName.trim();
-    await assertWorkspaceNameAvailable(organizationId, workspaceName);
-
-    const workspace = await prisma.workspace.create({
-      data: {
-        organizationId,
-        workspaceName,
-        status: input.status,
-      },
-    });
-
-    res.status(201).json(workspace);
-  } catch (error) {
-    next(error);
-  }
-});
+}

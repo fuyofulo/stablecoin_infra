@@ -66,16 +66,16 @@ export function shouldInvalidateMatchingIndex(method: string, path: string) {
 
   return [
     /\/organizations(?:\/|$)/,
-    /\/workspaces\/[^/]+\/treasury-wallets(?:\/|$)/,
-    /\/workspaces\/[^/]+\/destinations(?:\/|$)/,
-    /\/workspaces\/[^/]+\/collection-sources(?:\/|$)/,
-    /\/workspaces\/[^/]+\/payment-orders(?:\/|$)/,
-    /\/workspaces\/[^/]+\/payment-requests(?:\/|$)/,
-    /\/workspaces\/[^/]+\/payment-runs(?:\/|$)/,
-    /\/workspaces\/[^/]+\/collections(?:\/|$)/,
-    /\/workspaces\/[^/]+\/collection-runs(?:\/|$)/,
-    /\/workspaces\/[^/]+\/transfer-requests(?:\/|$)/,
-    /\/workspaces\/[^/]+\/executions(?:\/|$)/,
-    /\/workspaces\/[^/]+\/approvals(?:\/|$)/,
+    /\/organizations\/[^/]+\/treasury-wallets(?:\/|$)/,
+    /\/organizations\/[^/]+\/destinations(?:\/|$)/,
+    /\/organizations\/[^/]+\/collection-sources(?:\/|$)/,
+    /\/organizations\/[^/]+\/payment-orders(?:\/|$)/,
+    /\/organizations\/[^/]+\/payment-requests(?:\/|$)/,
+    /\/organizations\/[^/]+\/payment-runs(?:\/|$)/,
+    /\/organizations\/[^/]+\/collections(?:\/|$)/,
+    /\/organizations\/[^/]+\/collection-runs(?:\/|$)/,
+    /\/organizations\/[^/]+\/transfer-requests(?:\/|$)/,
+    /\/organizations\/[^/]+\/executions(?:\/|$)/,
+    /\/organizations\/[^/]+\/approvals(?:\/|$)/,
   ].some((pattern) => pattern.test(path));
 }

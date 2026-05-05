@@ -38,7 +38,8 @@ import type {
   ReconciliationTimelineItem,
   ObservedTransfer,
   TreasuryWallet,
-  Workspace,
+  UserWallet,
+  Organization,
 } from './api';
 import {
   discoverSolanaWallets,
@@ -48,6 +49,7 @@ import {
   orbTransactionUrl,
   shortenAddress,
   signAndSubmitPreparedPayment,
+  signWalletVerificationMessage,
   subscribeSolanaWallets,
   type BrowserWalletOption,
 } from './domain';
@@ -81,19 +83,19 @@ import {
   Tabs,
 } from './ui-primitives';
 
-function queryKeys(workspaceId?: string, paymentOrderId?: string) {
+function queryKeys(organizationId?: string, paymentOrderId?: string) {
   return {
     session: ['session'] as const,
-    addresses: ['addresses', workspaceId] as const,
-    counterparties: ['counterparties', workspaceId] as const,
-    destinations: ['destinations', workspaceId] as const,
-    paymentRequests: ['payment-requests', workspaceId] as const,
-    paymentRuns: ['payment-runs', workspaceId] as const,
-    paymentRun: ['payment-run', workspaceId, paymentOrderId] as const,
-    paymentOrders: ['payment-orders', workspaceId] as const,
-    paymentOrder: ['payment-order', workspaceId, paymentOrderId] as const,
-    approvalPolicy: ['approval-policy', workspaceId] as const,
-    exceptions: ['exceptions', workspaceId] as const,
+    addresses: ['addresses', organizationId] as const,
+    counterparties: ['counterparties', organizationId] as const,
+    destinations: ['destinations', organizationId] as const,
+    paymentRequests: ['payment-requests', organizationId] as const,
+    paymentRuns: ['payment-runs', organizationId] as const,
+    paymentRun: ['payment-run', organizationId, paymentOrderId] as const,
+    paymentOrders: ['payment-orders', organizationId] as const,
+    paymentOrder: ['payment-order', organizationId, paymentOrderId] as const,
+    approvalPolicy: ['approval-policy', organizationId] as const,
+    exceptions: ['exceptions', organizationId] as const,
   };
 }
 
@@ -124,6 +126,7 @@ export function App() {
       <Route path="/landing" element={<LandingPageV2 />} />
       <Route path="/login" element={<LoginPage />} />
       <Route path="/register" element={<RegisterPage />} />
+      <Route path="/verify-email" element={<RequireSession sessionQuery={sessionQuery} />} />
       <Route path="/*" element={<RequireSession sessionQuery={sessionQuery} />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
@@ -136,29 +139,33 @@ function RequireSession({
   sessionQuery: ReturnType<typeof useQuery<AuthenticatedSession>>;
 }) {
   if (sessionQuery.isLoading) {
-    return <ScreenState title="Loading workspace" description="Checking your session." />;
+    return <ScreenState title="Loading organization" description="Checking your session." />;
   }
 
   if (!sessionQuery.data) {
     return <Navigate to="/login" replace />;
   }
 
+  if (!sessionQuery.data.user.emailVerifiedAt) {
+    return <VerifyEmailPage session={sessionQuery.data} />;
+  }
+
   return <AppShell session={sessionQuery.data} />;
 }
 
 function AppShell({ session }: { session: AuthenticatedSession }) {
-  const workspaces = useMemo(() => getWorkspaces(session), [session]);
+  const organizations = useMemo(() => getOrganizations(session), [session]);
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const location = useLocation();
-  const activeWorkspaceId = useMemo(() => {
-    const match = location.pathname.match(/^\/workspaces\/([^/]+)/);
+  const activeOrganizationId = useMemo(() => {
+    const match = location.pathname.match(/^\/organizations\/([^/]+)/);
     return match?.[1];
   }, [location.pathname]);
   const sidebarOrdersQuery = useQuery({
-    queryKey: queryKeys(activeWorkspaceId).paymentOrders,
-    queryFn: () => api.listPaymentOrders(activeWorkspaceId!),
-    enabled: Boolean(activeWorkspaceId),
+    queryKey: queryKeys(activeOrganizationId).paymentOrders,
+    queryFn: () => api.listPaymentOrders(activeOrganizationId!),
+    enabled: Boolean(activeOrganizationId),
     // Keeps sidebar badges (approvals / execution queue) fresh without hammering the API.
     refetchInterval: () =>
       typeof document !== 'undefined' && document.hidden ? false : 15_000,
@@ -179,9 +186,9 @@ function AppShell({ session }: { session: AuthenticatedSession }) {
     [sidebarOrdersQuery.data?.items],
   );
   const sidebarCollectionsQuery = useQuery({
-    queryKey: ['sidebar-collections', activeWorkspaceId] as const,
-    queryFn: () => api.listCollections(activeWorkspaceId!),
-    enabled: Boolean(activeWorkspaceId),
+    queryKey: ['sidebar-collections', activeOrganizationId] as const,
+    queryFn: () => api.listCollections(activeOrganizationId!),
+    enabled: Boolean(activeOrganizationId),
     refetchInterval: () =>
       typeof document !== 'undefined' && document.hidden ? false : 15_000,
   });
@@ -193,9 +200,9 @@ function AppShell({ session }: { session: AuthenticatedSession }) {
     [sidebarCollectionsQuery.data?.items],
   );
   const sidebarPayersQuery = useQuery({
-    queryKey: ['sidebar-collection-sources', activeWorkspaceId] as const,
-    queryFn: () => api.listCollectionSources(activeWorkspaceId!),
-    enabled: Boolean(activeWorkspaceId),
+    queryKey: ['sidebar-collection-sources', activeOrganizationId] as const,
+    queryFn: () => api.listCollectionSources(activeOrganizationId!),
+    enabled: Boolean(activeOrganizationId),
     refetchInterval: () =>
       typeof document !== 'undefined' && document.hidden ? false : 30_000,
   });
@@ -205,9 +212,9 @@ function AppShell({ session }: { session: AuthenticatedSession }) {
     [sidebarPayersQuery.data?.items],
   );
   const sidebarDestinationsQuery = useQuery({
-    queryKey: ['sidebar-destinations', activeWorkspaceId] as const,
-    queryFn: () => api.listDestinations(activeWorkspaceId!),
-    enabled: Boolean(activeWorkspaceId),
+    queryKey: ['sidebar-destinations', activeOrganizationId] as const,
+    queryFn: () => api.listDestinations(activeOrganizationId!),
+    enabled: Boolean(activeOrganizationId),
     refetchInterval: () =>
       typeof document !== 'undefined' && document.hidden ? false : 30_000,
   });
@@ -233,15 +240,15 @@ function AppShell({ session }: { session: AuthenticatedSession }) {
     <div className="app-shell">
       <AppSidebar
         session={session}
-        workspaceContexts={workspaces}
-        activeWorkspaceId={activeWorkspaceId}
+        organizationContexts={organizations}
+        activeOrganizationId={activeOrganizationId}
         paymentsIncompleteCount={paymentsIncompleteCount}
         collectionsOpenCount={collectionsOpenCount}
         destinationsUnreviewedCount={destinationsUnreviewedCount}
         payersUnreviewedCount={payersUnreviewedCount}
         approvalPendingCount={approvalPendingCount}
         executionQueueCount={executionQueueCount}
-        onWorkspaceSwitch={(workspaceId) => navigate(`/workspaces/${workspaceId}`)}
+        onOrganizationSwitch={(organizationId) => navigate(`/organizations/${organizationId}`)}
         onLogout={logout}
       />
       <main className="main-surface">
@@ -249,27 +256,28 @@ function AppShell({ session }: { session: AuthenticatedSession }) {
           <Route path="/" element={<HomeRedirect session={session} />} />
           <Route path="/setup" element={<SetupPage session={session} />} />
           <Route path="/profile" element={<ProfilePage session={session} />} />
-          <Route path="/workspaces/:workspaceId" element={<CommandCenterPageV2 session={session} />} />
-          <Route path="/workspaces/:workspaceId/wallets" element={<WalletsPage session={session} />} />
-          <Route path="/workspaces/:workspaceId/counterparties" element={<CounterpartiesPage session={session} />} />
-          <Route path="/workspaces/:workspaceId/destinations" element={<DestinationsPage session={session} />} />
-          <Route path="/workspaces/:workspaceId/registry" element={<AddressBookPage session={session} />} />
-          <Route path="/workspaces/:workspaceId/requests" element={<PaymentRequestsPage session={session} />} />
-          <Route path="/workspaces/:workspaceId/runs" element={<PaymentsPageV2 session={session} />} />
-          <Route path="/workspaces/:workspaceId/runs/:paymentRunId" element={<PaymentRunDetailPageV2 />} />
-          <Route path="/workspaces/:workspaceId/payments" element={<PaymentsPageV2 session={session} />} />
-          <Route path="/workspaces/:workspaceId/payments/:paymentOrderId" element={<PaymentDetailPageV2 />} />
-          <Route path="/workspaces/:workspaceId/collections" element={<CollectionsPage session={session} />} />
-          <Route path="/workspaces/:workspaceId/collections/:collectionRequestId" element={<CollectionDetailPage />} />
-          <Route path="/workspaces/:workspaceId/collection-runs/:collectionRunId" element={<CollectionRunDetailPage />} />
-          <Route path="/workspaces/:workspaceId/payers" element={<CollectionSourcesPage session={session} />} />
-          <Route path="/workspaces/:workspaceId/approvals" element={<ApprovalsPageV2 session={session} />} />
-          <Route path="/workspaces/:workspaceId/execution" element={<ExecutionPageV2 session={session} />} />
-          <Route path="/workspaces/:workspaceId/settlement" element={<SettlementPageV2 session={session} />} />
-          <Route path="/workspaces/:workspaceId/proofs" element={<ProofsPageV2 session={session} />} />
-          <Route path="/workspaces/:workspaceId/policy" element={<PolicyPage session={session} />} />
-          <Route path="/workspaces/:workspaceId/exceptions" element={<ExceptionsPage session={session} />} />
-          <Route path="/workspaces/:workspaceId/exceptions/:exceptionId" element={<ExceptionDetailPage session={session} />} />
+          <Route path="/organizations/:organizationId/wallets" element={<OrganizationWalletSetupPage session={session} />} />
+          <Route path="/organizations/:organizationId" element={<CommandCenterPageV2 session={session} />} />
+          <Route path="/organizations/:organizationId/wallets" element={<WalletsPage session={session} />} />
+          <Route path="/organizations/:organizationId/counterparties" element={<CounterpartiesPage session={session} />} />
+          <Route path="/organizations/:organizationId/destinations" element={<DestinationsPage session={session} />} />
+          <Route path="/organizations/:organizationId/registry" element={<AddressBookPage session={session} />} />
+          <Route path="/organizations/:organizationId/requests" element={<PaymentRequestsPage session={session} />} />
+          <Route path="/organizations/:organizationId/runs" element={<PaymentsPageV2 session={session} />} />
+          <Route path="/organizations/:organizationId/runs/:paymentRunId" element={<PaymentRunDetailPageV2 />} />
+          <Route path="/organizations/:organizationId/payments" element={<PaymentsPageV2 session={session} />} />
+          <Route path="/organizations/:organizationId/payments/:paymentOrderId" element={<PaymentDetailPageV2 />} />
+          <Route path="/organizations/:organizationId/collections" element={<CollectionsPage session={session} />} />
+          <Route path="/organizations/:organizationId/collections/:collectionRequestId" element={<CollectionDetailPage />} />
+          <Route path="/organizations/:organizationId/collection-runs/:collectionRunId" element={<CollectionRunDetailPage />} />
+          <Route path="/organizations/:organizationId/payers" element={<CollectionSourcesPage session={session} />} />
+          <Route path="/organizations/:organizationId/approvals" element={<ApprovalsPageV2 session={session} />} />
+          <Route path="/organizations/:organizationId/execution" element={<ExecutionPageV2 session={session} />} />
+          <Route path="/organizations/:organizationId/settlement" element={<SettlementPageV2 session={session} />} />
+          <Route path="/organizations/:organizationId/proofs" element={<ProofsPageV2 session={session} />} />
+          <Route path="/organizations/:organizationId/policy" element={<PolicyPage session={session} />} />
+          <Route path="/organizations/:organizationId/exceptions" element={<ExceptionsPage session={session} />} />
+          <Route path="/organizations/:organizationId/exceptions/:exceptionId" element={<ExceptionDetailPage session={session} />} />
         </Routes>
       </main>
     </div>
@@ -331,8 +339,12 @@ function LoginPage() {
     onSuccess: async (result) => {
       api.setSessionToken(result.sessionToken);
       queryClient.setQueryData(queryKeys().session, toAuthenticatedSession(result));
-      const firstWorkspaceId = result.organizations[0]?.workspaces[0]?.workspaceId;
-      navigate(firstWorkspaceId ? `/workspaces/${firstWorkspaceId}` : '/setup', { replace: true });
+      if (!result.user.emailVerifiedAt) {
+        navigate('/verify-email', { replace: true });
+        return;
+      }
+      const firstOrganizationId = result.organizations[0]?.organizationId;
+      navigate(firstOrganizationId ? `/organizations/${firstOrganizationId}` : '/setup', { replace: true });
     },
     onError: (nextError) => {
       setError(authErrorMessage(nextError, 'Unable to sign in.'));
@@ -415,8 +427,7 @@ function RegisterPage() {
     onSuccess: (result) => {
       api.setSessionToken(result.sessionToken);
       queryClient.setQueryData(queryKeys().session, toAuthenticatedSession(result));
-      const firstWorkspaceId = result.organizations[0]?.workspaces[0]?.workspaceId;
-      navigate(firstWorkspaceId ? `/workspaces/${firstWorkspaceId}` : '/setup', { replace: true });
+      navigate('/verify-email', { replace: true });
     },
     onError: (nextError) => {
       setError(authErrorMessage(nextError, 'Unable to create account.'));
@@ -507,105 +518,341 @@ function RegisterPage() {
   );
 }
 
+function VerifyEmailPage({ session }: { session: AuthenticatedSession }) {
+  const queryClient = useQueryClient();
+  const navigate = useNavigate();
+  const [code, setCode] = useState('');
+  const [demoCode, setDemoCode] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const verifyMutation = useMutation({
+    mutationFn: () => api.verifyEmail({ code: code.trim() }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: queryKeys().session });
+      navigate(session.organizations[0] ? `/organizations/${session.organizations[0].organizationId}/wallets` : '/setup', { replace: true });
+    },
+    onError: (err) => setError(err instanceof Error ? err.message : 'Unable to verify email.'),
+  });
+  const resendMutation = useMutation({
+    mutationFn: () => api.resendVerification(),
+    onSuccess: (result) => {
+      setDemoCode(result.devEmailVerificationCode ?? null);
+      setError(null);
+    },
+    onError: (err) => setError(err instanceof Error ? err.message : 'Unable to send verification code.'),
+  });
+
+  return (
+    <main className="login-shell">
+      <section className="login-panel">
+        <div className="panel-kicker">Verify email</div>
+        <h1 className="auth-title">Confirm your account</h1>
+        <p className="muted-copy">Enter the verification code for {session.user.email}.</p>
+        <form
+          className="login-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            setError(null);
+            verifyMutation.mutate();
+          }}
+        >
+          <label>
+            Verification code
+            <input
+              value={code}
+              onChange={(event) => setCode(event.target.value)}
+              placeholder="123456"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              required
+            />
+          </label>
+          <button className="button button-primary" disabled={verifyMutation.isPending} type="submit">
+            {verifyMutation.isPending ? 'Verifying...' : 'Verify email'}
+          </button>
+        </form>
+        <button className="button button-secondary" disabled={resendMutation.isPending} onClick={() => resendMutation.mutate()} type="button">
+          {resendMutation.isPending ? 'Sending...' : 'Send demo code'}
+        </button>
+        {demoCode ? <p className="muted-copy">Demo code: <strong>{demoCode}</strong></p> : null}
+        {error ? <p className="form-error">{error}</p> : null}
+      </section>
+    </main>
+  );
+}
+
 function HomeRedirect({ session }: { session: AuthenticatedSession }) {
-  const [first] = getWorkspaces(session);
+  const [first] = getOrganizations(session);
   if (!first) {
-    return <Navigate to="/setup" replace />;
+    const firstOrganization = session.organizations[0];
+    return <Navigate to={firstOrganization ? `/organizations/${firstOrganization.organizationId}/wallets` : '/setup'} replace />;
   }
 
-  return <Navigate to={`/workspaces/${first.workspace.workspaceId}`} replace />;
+  return <Navigate to={`/organizations/${first.organization.organizationId}`} replace />;
 }
 
 function SetupPage({ session }: { session: AuthenticatedSession }) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const { success, error: toastError } = useToast();
-  const createWorkspaceMutation = useMutation({
+  const createOrganizationMutation = useMutation({
     mutationFn: async (formData: FormData) => {
       const organizationName = String(formData.get('organizationName') ?? '').trim();
-      const existingOrganizationId = String(formData.get('existingOrganizationId') ?? '').trim();
-      const workspaceName = String(formData.get('workspaceName') ?? '').trim();
-      if (!workspaceName) {
-        throw new Error('Workspace name is required.');
+      if (!organizationName) {
+        throw new Error('Organization name is required.');
       }
-      const organization = existingOrganizationId
-        ? session.organizations.find((candidate) => candidate.organizationId === existingOrganizationId)
-        : await api.createOrganization({ organizationName });
-      if (!organization) {
-        throw new Error('Pick an existing organization or give a new organization name.');
-      }
-      const workspace = await api.createWorkspace(organization.organizationId, { workspaceName });
-      return workspace;
+      return api.createOrganization({ organizationName });
     },
-    onSuccess: async (workspace) => {
-      success('Workspace created.');
+    onSuccess: async (organization) => {
+      success('Organization created.');
       await queryClient.invalidateQueries({ queryKey: queryKeys().session });
-      navigate(`/workspaces/${workspace.workspaceId}`, { replace: true });
+      navigate(`/organizations/${organization.organizationId}/wallets`, { replace: true });
     },
-    onError: (err) => toastError(err instanceof Error ? err.message : 'Unable to create workspace.'),
+    onError: (err) => toastError(err instanceof Error ? err.message : 'Unable to create organization.'),
   });
-
-  const hasOrganizations = session.organizations.length > 0;
+  const joinOrganizationMutation = useMutation({
+    mutationFn: async (formData: FormData) => {
+      const organizationId = String(formData.get('organizationId') ?? '').trim();
+      if (!organizationId) {
+        throw new Error('Organization id is required.');
+      }
+      return api.joinOrganization(organizationId);
+    },
+    onSuccess: async (organization) => {
+      success('Organization joined.');
+      await queryClient.invalidateQueries({ queryKey: queryKeys().session });
+      navigate(`/organizations/${organization.organizationId}/wallets`, { replace: true });
+    },
+    onError: (err) => toastError(err instanceof Error ? err.message : 'Unable to join organization.'),
+  });
 
   return (
     <PageFrame
       eyebrow="Setup"
-      title={hasOrganizations ? 'New workspace' : 'Create your first workspace'}
-      description={
-        hasOrganizations
-          ? 'Add another workspace under an organization you belong to, or start a new organization.'
-          : 'An organization holds your workspaces. A workspace is where you track payments.'
-      }
+      title="Create or join an organization"
+      description="An organization is the team container for members, wallets, and future treasury controls."
     >
-      <section className="panel" style={{ maxWidth: 560 }}>
+      <div className="split-panels">
+      <section className="panel">
+        <SectionHeader title="Create organization" description="Start a new team space." />
         <form
           className="form-stack"
           onSubmit={(event) => {
             event.preventDefault();
-            createWorkspaceMutation.mutate(new FormData(event.currentTarget));
+            createOrganizationMutation.mutate(new FormData(event.currentTarget));
           }}
         >
-          {hasOrganizations ? (
-            <label className="field">
-              Organization
-              <select name="existingOrganizationId" defaultValue="">
-                <option value="">Create a new organization</option>
-                {session.organizations.map((organization) => (
-                  <option key={organization.organizationId} value={organization.organizationId}>
-                    {organization.organizationName}
-                  </option>
-                ))}
-              </select>
-            </label>
-          ) : null}
           <label className="field">
-            New organization name
+            Organization name
             <input
               name="organizationName"
-              placeholder="Acme Treasury"
+              placeholder="Decimal Labs"
               autoComplete="organization"
             />
           </label>
+          <button
+            className="button button-primary"
+            disabled={createOrganizationMutation.isPending}
+            type="submit"
+            aria-busy={createOrganizationMutation.isPending}
+          >
+            {createOrganizationMutation.isPending ? 'Creating...' : 'Create organization'}
+          </button>
+        </form>
+      </section>
+      <section className="panel">
+        <SectionHeader title="Join organization" description="Use an organization id from a teammate." />
+        <form
+          className="form-stack"
+          onSubmit={(event) => {
+            event.preventDefault();
+            joinOrganizationMutation.mutate(new FormData(event.currentTarget));
+          }}
+        >
           <label className="field">
-            Workspace name
+            Organization id
             <input
-              name="workspaceName"
-              placeholder="Main stablecoin desk"
+              name="organizationId"
+              placeholder="00000000-0000-0000-0000-000000000000"
               required
               autoComplete="off"
             />
           </label>
           <button
-            className="button button-primary"
-            disabled={createWorkspaceMutation.isPending}
+            className="button button-secondary"
+            disabled={joinOrganizationMutation.isPending}
             type="submit"
-            aria-busy={createWorkspaceMutation.isPending}
+            aria-busy={joinOrganizationMutation.isPending}
           >
-            {createWorkspaceMutation.isPending ? 'Creating…' : 'Create workspace'}
+            {joinOrganizationMutation.isPending ? 'Joining...' : 'Join organization'}
           </button>
         </form>
       </section>
+      </div>
     </PageFrame>
+  );
+}
+
+function OrganizationWalletSetupPage({ session }: { session: AuthenticatedSession }) {
+  const { organizationId } = useParams<{ organizationId: string }>();
+  const organization = session.organizations.find((candidate) => candidate.organizationId === organizationId);
+  const queryClient = useQueryClient();
+  const navigate = useNavigate();
+  const { success, error: toastError } = useToast();
+  const walletsQuery = useQuery({
+    queryKey: ['user-wallets'] as const,
+    queryFn: () => api.listUserWallets(),
+  });
+  const [browserWallets, setBrowserWallets] = useState<BrowserWalletOption[]>(() => discoverSolanaWallets());
+  const [selectedWalletId, setSelectedWalletId] = useState('');
+
+  useEffect(() => subscribeSolanaWallets(setBrowserWallets), []);
+
+  const connectExternalMutation = useMutation({
+    mutationFn: async () => {
+      const selected = browserWallets.find((wallet) => wallet.id === selectedWalletId);
+      if (!selected) {
+        throw new Error('Select a wallet first.');
+      }
+      if (!selected.address) {
+        throw new Error('Connect this wallet in the browser extension, then refresh the wallet list.');
+      }
+      const challenge = await api.createWalletChallenge({ walletAddress: selected.address });
+      const signed = await signWalletVerificationMessage(challenge.message, selected.id);
+      return api.connectExternalWallet({
+        walletAddress: signed.walletAddress,
+        nonce: challenge.nonce,
+        signedMessageBase64: signed.signedMessageBase64,
+        signatureBase64: signed.signatureBase64,
+        provider: selected.name,
+      });
+    },
+    onSuccess: async () => {
+      success('Wallet connected.');
+      await queryClient.invalidateQueries({ queryKey: ['user-wallets'] });
+    },
+    onError: (err) => toastError(err instanceof Error ? err.message : 'Unable to connect wallet.'),
+  });
+  const embeddedMutation = useMutation({
+    mutationFn: (formData: FormData) => {
+      const walletAddress = getFormString(formData, 'walletAddress');
+      const providerWalletId = getOptionalFormString(formData, 'providerWalletId');
+      const label = getOptionalFormString(formData, 'label');
+      if (!walletAddress) {
+        throw new Error('Wallet address is required.');
+      }
+      return api.registerEmbeddedWallet({
+        walletAddress,
+        provider: 'privy',
+        providerWalletId: providerWalletId || undefined,
+        label: label || undefined,
+      });
+    },
+    onSuccess: async () => {
+      success('Embedded wallet registered.');
+      await queryClient.invalidateQueries({ queryKey: ['user-wallets'] });
+    },
+    onError: (err) => toastError(err instanceof Error ? err.message : 'Unable to register embedded wallet.'),
+  });
+
+  if (!organizationId || !organization) {
+    return <ScreenState title="Organization unavailable" description="Create or join an organization first." />;
+  }
+
+  const wallets = walletsQuery.data?.items ?? [];
+
+  return (
+    <PageFrame
+      eyebrow={organization.organizationName}
+      title="Add your signing wallet"
+      description="This is your personal member wallet. Treasury setup comes next."
+    >
+      <div className="metric-strip metric-strip-three">
+        <Metric label="Organization" value={organization.organizationName} />
+        <Metric label="Member wallets" value={String(wallets.length)} />
+        <Metric label="Next" value="Treasury setup" />
+      </div>
+      <div className="split-panels">
+        <section className="panel">
+          <SectionHeader title="Connect browser wallet" description="Use Phantom, Solflare, Backpack, or another Solana wallet." />
+          <div className="form-stack">
+            <label className="field">
+              Browser wallet
+              <select value={selectedWalletId} onChange={(event) => setSelectedWalletId(event.target.value)}>
+                <option value="">Select wallet</option>
+                {browserWallets.map((wallet) => (
+                  <option key={wallet.id} value={wallet.id} disabled={!wallet.ready || !wallet.address}>
+                    {wallet.name}{wallet.address ? ` // ${shortenAddress(wallet.address)}` : ' // unlock first'}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button
+              className="button button-primary"
+              disabled={connectExternalMutation.isPending || !selectedWalletId}
+              onClick={() => connectExternalMutation.mutate()}
+              type="button"
+            >
+              {connectExternalMutation.isPending ? 'Connecting...' : 'Connect wallet'}
+            </button>
+          </div>
+        </section>
+        <section className="panel">
+          <SectionHeader title="Register embedded wallet" description="Privy will create this in the real embedded-wallet flow." />
+          <form
+            className="form-stack"
+            onSubmit={(event) => {
+              event.preventDefault();
+              embeddedMutation.mutate(new FormData(event.currentTarget));
+            }}
+          >
+            <label className="field">
+              Wallet address
+              <input name="walletAddress" placeholder="Solana wallet address" autoComplete="off" />
+            </label>
+            <label className="field">
+              Privy wallet id
+              <input name="providerWalletId" placeholder="Optional" autoComplete="off" />
+            </label>
+            <label className="field">
+              Label
+              <input name="label" placeholder="Fuyo signing wallet" autoComplete="off" />
+            </label>
+            <button className="button button-secondary" disabled={embeddedMutation.isPending} type="submit">
+              {embeddedMutation.isPending ? 'Registering...' : 'Register embedded wallet'}
+            </button>
+          </form>
+        </section>
+      </div>
+      <section className="panel panel-spaced">
+        <SectionHeader title="Your wallets" description="These wallets can later become Squads members or solo signers." />
+        <WalletList wallets={wallets} />
+        <div style={{ marginTop: 16 }}>
+          <button className="button button-primary" type="button" onClick={() => navigate('/profile')}>
+            Continue
+          </button>
+        </div>
+      </section>
+    </PageFrame>
+  );
+}
+
+function WalletList({ wallets }: { wallets: UserWallet[] }) {
+  if (!wallets.length) {
+    return <EmptyPanel title="No wallets yet" description="Connect a browser wallet or register an embedded wallet." />;
+  }
+
+  return (
+    <div className="simple-list">
+      {wallets.map((wallet) => (
+        <div className="simple-list-row" key={wallet.userWalletId}>
+          <div>
+            <strong>{wallet.label ?? wallet.provider ?? wallet.walletType}</strong>
+            <span>{shortenAddress(wallet.walletAddress)} // {wallet.walletType}</span>
+          </div>
+          <span className="status-pill status-pill-ok">{wallet.verifiedAt ? 'verified' : 'pending'}</span>
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -613,39 +860,16 @@ function ProfilePage({ session }: { session: AuthenticatedSession }) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const { success, error: toastError } = useToast();
-  const createWorkspaceMutation = useMutation({
-    mutationFn: async (formData: FormData) => {
-      const organizationId = getFormString(formData, 'organizationId');
-      const workspaceName = getFormString(formData, 'workspaceName');
-      if (!organizationId) throw new Error('Select an organization.');
-      if (!workspaceName) throw new Error('Workspace name is required.');
-      return api.createWorkspace(organizationId, { workspaceName });
-    },
-    onSuccess: async (workspace) => {
-      success('Workspace created.');
-      await queryClient.invalidateQueries({ queryKey: queryKeys().session });
-      navigate(`/workspaces/${workspace.workspaceId}`);
-    },
-    onError: (err) => toastError(err instanceof Error ? err.message : 'Unable to create workspace.'),
-  });
   const createOrganizationMutation = useMutation({
     mutationFn: async (formData: FormData) => {
       const organizationName = getFormString(formData, 'organizationName');
-      const firstWorkspaceName = getOptionalFormString(formData, 'firstWorkspaceName');
       if (!organizationName) throw new Error('Organization name is required.');
-      const organization = await api.createOrganization({ organizationName });
-      if (firstWorkspaceName) {
-        const workspace = await api.createWorkspace(organization.organizationId, { workspaceName: firstWorkspaceName });
-        return { organization, workspace };
-      }
-      return { organization, workspace: null };
+      return api.createOrganization({ organizationName });
     },
-    onSuccess: async (result) => {
-      success(result.workspace ? 'Organization and workspace created.' : 'Organization created.');
+    onSuccess: async (organization) => {
+      success('Organization created.');
       await queryClient.invalidateQueries({ queryKey: queryKeys().session });
-      if (result.workspace) {
-        navigate(`/workspaces/${result.workspace.workspaceId}`);
-      }
+      navigate(`/organizations/${organization.organizationId}`);
     },
     onError: (err) => toastError(err instanceof Error ? err.message : 'Unable to create organization.'),
   });
@@ -654,43 +878,16 @@ function ProfilePage({ session }: { session: AuthenticatedSession }) {
     <PageFrame
       eyebrow="Account"
       title="Profile"
-      description="Manage your identity, organizations, and workspaces."
+      description="Manage your identity and organizations."
     >
       <div className="metric-strip metric-strip-three">
         <Metric label="Organizations" value={String(session.organizations.length)} />
-        <Metric label="Workspaces" value={String(getWorkspaces(session).length)} />
+        <Metric label="Active orgs" value={String(getOrganizations(session).length)} />
         <Metric label="User" value={session.user.email} />
       </div>
       <div className="split-panels">
         <section className="panel">
-          <SectionHeader title="Create workspace in existing org" description="Add another workspace under an organization you already belong to." />
-          <form
-            className="form-stack"
-            onSubmit={(event) => {
-              event.preventDefault();
-              createWorkspaceMutation.mutate(new FormData(event.currentTarget));
-            }}
-          >
-            <label className="field">
-              Organization
-              <select name="organizationId" defaultValue="">
-                <option value="" disabled>Select organization</option>
-                {session.organizations.map((org) => (
-                  <option key={org.organizationId} value={org.organizationId}>{org.organizationName}</option>
-                ))}
-              </select>
-            </label>
-            <label className="field">
-              Workspace name
-              <input name="workspaceName" placeholder="Treasury Ops APAC" />
-            </label>
-            <button className="button button-primary" disabled={createWorkspaceMutation.isPending} type="submit">
-              {createWorkspaceMutation.isPending ? 'Creating…' : 'Create workspace'}
-            </button>
-          </form>
-        </section>
-        <section className="panel">
-          <SectionHeader title="Create organization" description="Create a new organization and optionally seed its first workspace." />
+          <SectionHeader title="Create organization" description="Create a new company or treasury entity." />
           <form
             className="form-stack"
             onSubmit={(event) => {
@@ -702,10 +899,6 @@ function ProfilePage({ session }: { session: AuthenticatedSession }) {
               Organization name
               <input name="organizationName" placeholder="Acme Treasury Group" />
             </label>
-            <label className="field">
-              First workspace (optional)
-              <input name="firstWorkspaceName" placeholder="Main desk" />
-            </label>
             <button className="button button-primary" disabled={createOrganizationMutation.isPending} type="submit">
               {createOrganizationMutation.isPending ? 'Creating…' : 'Create organization'}
             </button>
@@ -713,12 +906,12 @@ function ProfilePage({ session }: { session: AuthenticatedSession }) {
         </section>
       </div>
       <section className="panel panel-spaced">
-        <SectionHeader title="Your organizations" description="Organizations and workspaces you're a member of." />
+        <SectionHeader title="Your organizations" description="Organizations you're a member of." />
         <SimpleList
           items={session.organizations.map((org) => ({
             id: org.organizationId,
             title: org.organizationName,
-            meta: `${org.workspaces.length} workspace${org.workspaces.length === 1 ? '' : 's'}`,
+            meta: org.role,
           }))}
           empty="You don't belong to any organization yet."
         />
@@ -728,29 +921,29 @@ function ProfilePage({ session }: { session: AuthenticatedSession }) {
 }
 
 function CommandCenterPage({ session }: { session: AuthenticatedSession }) {
-  const { workspaceId } = useParams<{ workspaceId: string }>();
-  const workspace = findWorkspace(session, workspaceId);
+  const { organizationId } = useParams<{ organizationId: string }>();
+  const organization = findOrganization(session, organizationId);
   const paymentOrdersQuery = useQuery({
-    queryKey: queryKeys(workspaceId).paymentOrders,
-    queryFn: () => api.listPaymentOrders(workspaceId!),
-    enabled: Boolean(workspaceId),
+    queryKey: queryKeys(organizationId).paymentOrders,
+    queryFn: () => api.listPaymentOrders(organizationId!),
+    enabled: Boolean(organizationId),
     refetchInterval: 5_000,
   });
   const paymentRunsQuery = useQuery({
-    queryKey: queryKeys(workspaceId).paymentRuns,
-    queryFn: () => api.listPaymentRuns(workspaceId!),
-    enabled: Boolean(workspaceId),
+    queryKey: queryKeys(organizationId).paymentRuns,
+    queryFn: () => api.listPaymentRuns(organizationId!),
+    enabled: Boolean(organizationId),
     refetchInterval: 5_000,
   });
   const exceptionsQuery = useQuery({
-    queryKey: queryKeys(workspaceId).exceptions,
-    queryFn: () => api.listExceptions(workspaceId!),
-    enabled: Boolean(workspaceId),
+    queryKey: queryKeys(organizationId).exceptions,
+    queryFn: () => api.listExceptions(organizationId!),
+    enabled: Boolean(organizationId),
     refetchInterval: 5_000,
   });
 
-  if (!workspaceId || !workspace) {
-    return <ScreenState title="Workspace unavailable" description="Choose a workspace from the sidebar or create one in setup." />;
+  if (!organizationId || !organization) {
+    return <ScreenState title="Organization unavailable" description="Choose a organization from the sidebar or create one in setup." />;
   }
 
   const orders = paymentOrdersQuery.data?.items ?? [];
@@ -773,12 +966,12 @@ function CommandCenterPage({ session }: { session: AuthenticatedSession }) {
   return (
     <PageFrame
       eyebrow="Command Center"
-      title={workspace.workspaceName}
+      title={organization.organizationName}
       description="Daily payment work across intake, approval, execution, settlement, exceptions, and proof."
       action={
         <div className="action-cluster">
-          <Link className="button button-secondary" to={`/workspaces/${workspaceId}/requests`}>New request</Link>
-          <Link className="button button-primary" to={`/workspaces/${workspaceId}/runs`}>Import CSV batch</Link>
+          <Link className="button button-secondary" to={`/organizations/${organizationId}/requests`}>New request</Link>
+          <Link className="button button-primary" to={`/organizations/${organizationId}/runs`}>Import CSV batch</Link>
         </div>
       }
     >
@@ -792,7 +985,7 @@ function CommandCenterPage({ session }: { session: AuthenticatedSession }) {
         <section className="panel">
           <SectionHeader title="Today's focus" description="Priority-ranked work based on state risk, amount, and age." />
           <ActionPaymentTable
-            workspaceId={workspaceId}
+            organizationId={organizationId}
             paymentOrders={priorityRows}
             actionHeader="Do now"
             emptyTitle="No priority work"
@@ -800,7 +993,7 @@ function CommandCenterPage({ session }: { session: AuthenticatedSession }) {
             reasonHeader="Why now"
             renderReason={(order) => commandPriorityReason(order)}
             renderAction={(order) => (
-              <Link className="button button-secondary button-small" to={`/workspaces/${workspaceId}/payments/${order.paymentOrderId}`}>
+              <Link className="button button-secondary button-small" to={`/organizations/${organizationId}/payments/${order.paymentOrderId}`}>
                 {executionActionLabel(order)}
               </Link>
             )}
@@ -819,22 +1012,22 @@ function CommandCenterPage({ session }: { session: AuthenticatedSession }) {
             ]}
           />
           <div className="action-cluster" style={{ marginTop: 12 }}>
-            <Link className="button button-secondary" to={`/workspaces/${workspaceId}/approvals`}>Open approvals</Link>
-            <Link className="button button-secondary" to={`/workspaces/${workspaceId}/execution`}>Open execution</Link>
-            <Link className="button button-secondary" to={`/workspaces/${workspaceId}/exceptions`}>Open exceptions</Link>
+            <Link className="button button-secondary" to={`/organizations/${organizationId}/approvals`}>Open approvals</Link>
+            <Link className="button button-secondary" to={`/organizations/${organizationId}/execution`}>Open execution</Link>
+            <Link className="button button-secondary" to={`/organizations/${organizationId}/exceptions`}>Open exceptions</Link>
           </div>
         </section>
       </div>
       <section className="panel panel-spaced">
         <SectionHeader title="Recent payment runs" description="Batch imports and execution packets." />
-        <PaymentRunsTable workspaceId={workspaceId} runs={runs.slice(0, 8)} />
+        <PaymentRunsTable organizationId={organizationId} runs={runs.slice(0, 8)} />
       </section>
     </PageFrame>
   );
 }
 
 function PaymentsPage({ session }: { session: AuthenticatedSession }) {
-  const { workspaceId } = useParams<{ workspaceId: string }>();
+  const { organizationId } = useParams<{ organizationId: string }>();
   const queryClient = useQueryClient();
   const [message, setMessage] = useState<string | null>(null);
   const [importOpen, setImportOpen] = useState(false);
@@ -843,33 +1036,33 @@ function PaymentsPage({ session }: { session: AuthenticatedSession }) {
   const [csvText, setCsvText] = useState('');
   const [runName, setRunName] = useState('');
   const [sourceTreasuryWalletId, setSourceTreasuryWalletId] = useState('');
-  const workspace = findWorkspace(session, workspaceId);
+  const organization = findOrganization(session, organizationId);
   const paymentOrdersQuery = useQuery({
-    queryKey: queryKeys(workspaceId).paymentOrders,
-    queryFn: () => api.listPaymentOrders(workspaceId!),
-    enabled: Boolean(workspaceId),
+    queryKey: queryKeys(organizationId).paymentOrders,
+    queryFn: () => api.listPaymentOrders(organizationId!),
+    enabled: Boolean(organizationId),
   });
   const paymentRunsQuery = useQuery({
-    queryKey: queryKeys(workspaceId).paymentRuns,
-    queryFn: () => api.listPaymentRuns(workspaceId!),
-    enabled: Boolean(workspaceId),
+    queryKey: queryKeys(organizationId).paymentRuns,
+    queryFn: () => api.listPaymentRuns(organizationId!),
+    enabled: Boolean(organizationId),
   });
   const addressesQuery = useQuery({
-    queryKey: queryKeys(workspaceId).addresses,
-    queryFn: () => api.listTreasuryWallets(workspaceId!),
-    enabled: Boolean(workspaceId),
+    queryKey: queryKeys(organizationId).addresses,
+    queryFn: () => api.listTreasuryWallets(organizationId!),
+    enabled: Boolean(organizationId),
   });
   const destinationsQuery = useQuery({
-    queryKey: queryKeys(workspaceId).destinations,
-    queryFn: () => api.listDestinations(workspaceId!),
-    enabled: Boolean(workspaceId),
+    queryKey: queryKeys(organizationId).destinations,
+    queryFn: () => api.listDestinations(organizationId!),
+    enabled: Boolean(organizationId),
   });
   const csvPreview = useMemo(() => parseCsvPreview(csvText, 15), [csvText]);
   const importMutation = useMutation({
     mutationFn: async () => {
       const csv = csvText.trim();
       if (!csv) throw new Error('CSV is required.');
-      return api.importPaymentRunCsv(workspaceId!, {
+      return api.importPaymentRunCsv(organizationId!, {
         csv,
         runName: runName.trim() || undefined,
         sourceTreasuryWalletId: sourceTreasuryWalletId || undefined,
@@ -883,9 +1076,9 @@ function PaymentsPage({ session }: { session: AuthenticatedSession }) {
       setRunName('');
       setImportOpen(false);
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: queryKeys(workspaceId).paymentRuns }),
-        queryClient.invalidateQueries({ queryKey: queryKeys(workspaceId).paymentRequests }),
-        queryClient.invalidateQueries({ queryKey: queryKeys(workspaceId).paymentOrders }),
+        queryClient.invalidateQueries({ queryKey: queryKeys(organizationId).paymentRuns }),
+        queryClient.invalidateQueries({ queryKey: queryKeys(organizationId).paymentRequests }),
+        queryClient.invalidateQueries({ queryKey: queryKeys(organizationId).paymentOrders }),
       ]);
     },
     onError: (error) => setMessage(error instanceof Error ? error.message : 'Unable to import CSV.'),
@@ -898,7 +1091,7 @@ function PaymentsPage({ session }: { session: AuthenticatedSession }) {
       if (!destinationId || !amount || !reason) {
         throw new Error('Destination, amount, and reason are required.');
       }
-      return api.createPaymentRequest(workspaceId!, {
+      return api.createPaymentRequest(organizationId!, {
         destinationId,
         amountRaw: usdcToRaw(amount),
         reason,
@@ -913,15 +1106,15 @@ function PaymentsPage({ session }: { session: AuthenticatedSession }) {
       setMessage('Payment request created.');
       setRequestModalOpen(false);
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: queryKeys(workspaceId).paymentRequests }),
-        queryClient.invalidateQueries({ queryKey: queryKeys(workspaceId).paymentOrders }),
+        queryClient.invalidateQueries({ queryKey: queryKeys(organizationId).paymentRequests }),
+        queryClient.invalidateQueries({ queryKey: queryKeys(organizationId).paymentOrders }),
       ]);
     },
     onError: (error) => setMessage(error instanceof Error ? error.message : 'Unable to create request.'),
   });
 
-  if (!workspaceId || !workspace) {
-    return <ScreenState title="Workspace unavailable" description="Choose a workspace from the sidebar." />;
+  if (!organizationId || !organization) {
+    return <ScreenState title="Organization unavailable" description="Choose a organization from the sidebar." />;
   }
 
   const paymentOrders = paymentOrdersQuery.data?.items ?? [];
@@ -946,7 +1139,7 @@ function PaymentsPage({ session }: { session: AuthenticatedSession }) {
       stateLabel: displayPaymentStatus(order.derivedState),
       tone: statusToneForPayment(order.derivedState),
       createdAt: order.createdAt,
-      to: `/workspaces/${workspaceId}/payments/${order.paymentOrderId}`,
+      to: `/organizations/${organizationId}/payments/${order.paymentOrderId}`,
     })),
     ...paymentRuns.map((run) => ({
       kind: 'run' as const,
@@ -958,7 +1151,7 @@ function PaymentsPage({ session }: { session: AuthenticatedSession }) {
       stateLabel: displayRunStatus(run.derivedState),
       tone: statusToneForPayment(run.derivedState),
       createdAt: run.createdAt,
-      to: `/workspaces/${workspaceId}/runs/${run.paymentRunId}`,
+      to: `/organizations/${organizationId}/runs/${run.paymentRunId}`,
     })),
   ].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
@@ -1147,30 +1340,30 @@ function PaymentsPage({ session }: { session: AuthenticatedSession }) {
 }
 
 function PaymentRequestsPage({ session }: { session: AuthenticatedSession }) {
-  const { workspaceId } = useParams<{ workspaceId: string }>();
+  const { organizationId } = useParams<{ organizationId: string }>();
   const queryClient = useQueryClient();
   const [message, setMessage] = useState<string | null>(null);
   const [requestModalOpen, setRequestModalOpen] = useState(false);
-  const workspace = findWorkspace(session, workspaceId);
+  const organization = findOrganization(session, organizationId);
   const requestsQuery = useQuery({
-    queryKey: queryKeys(workspaceId).paymentRequests,
-    queryFn: () => api.listPaymentRequests(workspaceId!),
-    enabled: Boolean(workspaceId),
+    queryKey: queryKeys(organizationId).paymentRequests,
+    queryFn: () => api.listPaymentRequests(organizationId!),
+    enabled: Boolean(organizationId),
   });
   const ordersQuery = useQuery({
-    queryKey: queryKeys(workspaceId).paymentOrders,
-    queryFn: () => api.listPaymentOrders(workspaceId!),
-    enabled: Boolean(workspaceId),
+    queryKey: queryKeys(organizationId).paymentOrders,
+    queryFn: () => api.listPaymentOrders(organizationId!),
+    enabled: Boolean(organizationId),
   });
   const destinationsQuery = useQuery({
-    queryKey: queryKeys(workspaceId).destinations,
-    queryFn: () => api.listDestinations(workspaceId!),
-    enabled: Boolean(workspaceId),
+    queryKey: queryKeys(organizationId).destinations,
+    queryFn: () => api.listDestinations(organizationId!),
+    enabled: Boolean(organizationId),
   });
   const addressesQuery = useQuery({
-    queryKey: queryKeys(workspaceId).addresses,
-    queryFn: () => api.listTreasuryWallets(workspaceId!),
-    enabled: Boolean(workspaceId),
+    queryKey: queryKeys(organizationId).addresses,
+    queryFn: () => api.listTreasuryWallets(organizationId!),
+    enabled: Boolean(organizationId),
   });
   const createRequestMutation = useMutation({
     mutationFn: async (formData: FormData) => {
@@ -1180,7 +1373,7 @@ function PaymentRequestsPage({ session }: { session: AuthenticatedSession }) {
       if (!destinationId || !amount || !reason) {
         throw new Error('Destination, amount, and reason are required.');
       }
-      return api.createPaymentRequest(workspaceId!, {
+      return api.createPaymentRequest(organizationId!, {
         destinationId,
         amountRaw: usdcToRaw(amount),
         reason,
@@ -1195,15 +1388,15 @@ function PaymentRequestsPage({ session }: { session: AuthenticatedSession }) {
       setMessage('Payment request created.');
       setRequestModalOpen(false);
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: queryKeys(workspaceId).paymentRequests }),
-        queryClient.invalidateQueries({ queryKey: queryKeys(workspaceId).paymentOrders }),
+        queryClient.invalidateQueries({ queryKey: queryKeys(organizationId).paymentRequests }),
+        queryClient.invalidateQueries({ queryKey: queryKeys(organizationId).paymentOrders }),
       ]);
     },
     onError: (error) => setMessage(error instanceof Error ? error.message : 'Unable to create request.'),
   });
 
-  if (!workspaceId || !workspace) {
-    return <ScreenState title="Workspace unavailable" description="Choose a workspace from the sidebar." />;
+  if (!organizationId || !organization) {
+    return <ScreenState title="Organization unavailable" description="Choose a organization from the sidebar." />;
   }
 
   const requests = requestsQuery.data?.items ?? [];
@@ -1219,13 +1412,13 @@ function PaymentRequestsPage({ session }: { session: AuthenticatedSession }) {
       action={(
         <div className="action-cluster">
           <button className="button button-primary" type="button" onClick={() => setRequestModalOpen(true)}>+ New payment request</button>
-          <Link className="button button-secondary" to={`/workspaces/${workspaceId}/runs`}>Import CSV batch</Link>
+          <Link className="button button-secondary" to={`/organizations/${organizationId}/runs`}>Import CSV batch</Link>
         </div>
       )}
     >
       <section className="panel">
         <SectionHeader title={`Requests [${requests.length}]`} description="Manual requests and imported rows become controlled payment orders." />
-        <PaymentRequestsTable workspaceId={workspaceId} requests={requests} ordersByRequest={ordersByRequest} />
+        <PaymentRequestsTable organizationId={organizationId} requests={requests} ordersByRequest={ordersByRequest} />
       </section>
       {message ? <div className="notice panel-spaced">{message}</div> : null}
       <Modal open={requestModalOpen} onClose={() => setRequestModalOpen(false)} title="New payment request">
@@ -1284,7 +1477,7 @@ function PaymentRequestsPage({ session }: { session: AuthenticatedSession }) {
 }
 
 function PaymentRunsPage({ session }: { session: AuthenticatedSession }) {
-  const { workspaceId } = useParams<{ workspaceId: string }>();
+  const { organizationId } = useParams<{ organizationId: string }>();
   const queryClient = useQueryClient();
   const [message, setMessage] = useState<string | null>(null);
   const [importOpen, setImportOpen] = useState(false);
@@ -1292,17 +1485,17 @@ function PaymentRunsPage({ session }: { session: AuthenticatedSession }) {
   const [csvText, setCsvText] = useState('');
   const [runName, setRunName] = useState('');
   const [sourceTreasuryWalletId, setSourceTreasuryWalletId] = useState('');
-  const workspace = findWorkspace(session, workspaceId);
+  const organization = findOrganization(session, organizationId);
   const runsQuery = useQuery({
-    queryKey: queryKeys(workspaceId).paymentRuns,
-    queryFn: () => api.listPaymentRuns(workspaceId!),
-    enabled: Boolean(workspaceId),
+    queryKey: queryKeys(organizationId).paymentRuns,
+    queryFn: () => api.listPaymentRuns(organizationId!),
+    enabled: Boolean(organizationId),
     refetchInterval: 5_000,
   });
   const addressesQuery = useQuery({
-    queryKey: queryKeys(workspaceId).addresses,
-    queryFn: () => api.listTreasuryWallets(workspaceId!),
-    enabled: Boolean(workspaceId),
+    queryKey: queryKeys(organizationId).addresses,
+    queryFn: () => api.listTreasuryWallets(organizationId!),
+    enabled: Boolean(organizationId),
   });
   const csvPreview = useMemo(() => parseCsvPreview(csvText, 15), [csvText]);
   const duplicateRunName = useMemo(() => {
@@ -1315,7 +1508,7 @@ function PaymentRunsPage({ session }: { session: AuthenticatedSession }) {
       const csv = csvText.trim();
       if (!csv) throw new Error('CSV is required.');
       if (duplicateRunName) throw new Error(`Run name "${runName.trim()}" already exists. Choose a unique run name.`);
-      return api.importPaymentRunCsv(workspaceId!, {
+      return api.importPaymentRunCsv(organizationId!, {
         csv,
         runName: runName.trim() || undefined,
         sourceTreasuryWalletId: sourceTreasuryWalletId || undefined,
@@ -1329,16 +1522,16 @@ function PaymentRunsPage({ session }: { session: AuthenticatedSession }) {
       setRunName('');
       setImportOpen(false);
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: queryKeys(workspaceId).paymentRuns }),
-        queryClient.invalidateQueries({ queryKey: queryKeys(workspaceId).paymentRequests }),
-        queryClient.invalidateQueries({ queryKey: queryKeys(workspaceId).paymentOrders }),
+        queryClient.invalidateQueries({ queryKey: queryKeys(organizationId).paymentRuns }),
+        queryClient.invalidateQueries({ queryKey: queryKeys(organizationId).paymentRequests }),
+        queryClient.invalidateQueries({ queryKey: queryKeys(organizationId).paymentOrders }),
       ]);
     },
     onError: (error) => setMessage(error instanceof Error ? error.message : 'Unable to import CSV.'),
   });
 
-  if (!workspaceId || !workspace) {
-    return <ScreenState title="Workspace unavailable" description="Choose a workspace from the sidebar." />;
+  if (!organizationId || !organization) {
+    return <ScreenState title="Organization unavailable" description="Choose a organization from the sidebar." />;
   }
 
   const runs = runsQuery.data?.items ?? [];
@@ -1466,7 +1659,7 @@ function PaymentRunsPage({ session }: { session: AuthenticatedSession }) {
 
       <section className="panel">
         <SectionHeader title={`Payment runs [${runs.length}]`} description="Each run is a durable page with its own execution and proof packet." />
-        <PaymentRunsTable workspaceId={workspaceId} runs={runs} />
+        <PaymentRunsTable organizationId={organizationId} runs={runs} />
       </section>
       {message ? <div className="notice panel-spaced">{message}</div> : null}
     </PageFrame>
@@ -1474,7 +1667,7 @@ function PaymentRunsPage({ session }: { session: AuthenticatedSession }) {
 }
 
 function PaymentRunDetailPage({ session }: { session: AuthenticatedSession }) {
-  const { workspaceId, paymentRunId } = useParams<{ workspaceId: string; paymentRunId: string }>();
+  const { organizationId, paymentRunId } = useParams<{ organizationId: string; paymentRunId: string }>();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [prepared, setPrepared] = useState<PaymentRunExecutionPreparation | null>(null);
@@ -1498,17 +1691,17 @@ function PaymentRunDetailPage({ session }: { session: AuthenticatedSession }) {
   useEffect(() => {
     setPrepared(null);
   }, [selectedSourceAddressId]);
-  const workspace = findWorkspace(session, workspaceId);
+  const organization = findOrganization(session, organizationId);
   const addressesQuery = useQuery({
-    queryKey: queryKeys(workspaceId).addresses,
-    queryFn: () => api.listTreasuryWallets(workspaceId!),
-    enabled: Boolean(workspaceId),
+    queryKey: queryKeys(organizationId).addresses,
+    queryFn: () => api.listTreasuryWallets(organizationId!),
+    enabled: Boolean(organizationId),
     refetchInterval: 15_000,
   });
   const runQuery = useQuery({
-    queryKey: queryKeys(workspaceId, paymentRunId).paymentRun,
-    queryFn: () => api.getPaymentRunDetail(workspaceId!, paymentRunId!),
-    enabled: Boolean(workspaceId && paymentRunId),
+    queryKey: queryKeys(organizationId, paymentRunId).paymentRun,
+    queryFn: () => api.getPaymentRunDetail(organizationId!, paymentRunId!),
+    enabled: Boolean(organizationId && paymentRunId),
     refetchInterval: (query) => {
       if (typeof document !== 'undefined' && document.hidden) return false;
       const state = query.state.data?.derivedState;
@@ -1523,25 +1716,25 @@ function PaymentRunDetailPage({ session }: { session: AuthenticatedSession }) {
     || sourceAddresses[0]?.treasuryWalletId
     || '';
   const prepareMutation = useMutation({
-    mutationFn: (sourceTreasuryWalletId: string) => api.preparePaymentRunExecution(workspaceId!, paymentRunId!, {
+    mutationFn: (sourceTreasuryWalletId: string) => api.preparePaymentRunExecution(organizationId!, paymentRunId!, {
       sourceTreasuryWalletId,
     }),
     onSuccess: async (result) => {
       setPrepared(result);
       setMessage('Batch execution packet prepared.');
-      await queryClient.invalidateQueries({ queryKey: queryKeys(workspaceId, paymentRunId).paymentRun });
+      await queryClient.invalidateQueries({ queryKey: queryKeys(organizationId, paymentRunId).paymentRun });
     },
     onError: (error) => setMessage(error instanceof Error ? error.message : 'Unable to prepare run.'),
   });
   const attachMutation = useMutation({
-    mutationFn: (signature: string) => api.attachPaymentRunSignature(workspaceId!, paymentRunId!, {
+    mutationFn: (signature: string) => api.attachPaymentRunSignature(organizationId!, paymentRunId!, {
       submittedSignature: signature,
       submittedAt: new Date().toISOString(),
     }),
     onSuccess: async () => {
       setManualSignature('');
       setMessage('Batch signature attached.');
-      await queryClient.invalidateQueries({ queryKey: queryKeys(workspaceId, paymentRunId).paymentRun });
+      await queryClient.invalidateQueries({ queryKey: queryKeys(organizationId, paymentRunId).paymentRun });
     },
     onError: (error) => setMessage(error instanceof Error ? error.message : 'Unable to attach signature.'),
   });
@@ -1558,7 +1751,7 @@ function PaymentRunDetailPage({ session }: { session: AuthenticatedSession }) {
         || preparation.paymentRun.sourceTreasuryWalletId !== effectiveSourceAddressId
         || preparation.executionPacket.signerWallet !== sourceAddressRow.address;
       if (sourceMismatch) {
-        preparation = await api.preparePaymentRunExecution(workspaceId!, paymentRunId!, {
+        preparation = await api.preparePaymentRunExecution(organizationId!, paymentRunId!, {
           sourceTreasuryWalletId: effectiveSourceAddressId,
         });
         setPrepared(preparation);
@@ -1567,7 +1760,7 @@ function PaymentRunDetailPage({ session }: { session: AuthenticatedSession }) {
         throw new Error('Batch execution preparation is missing. Try Prepare packet only, then execute again.');
       }
       const signature = await signAndSubmitPreparedPayment(preparation.executionPacket, selectedWalletId);
-      await api.attachPaymentRunSignature(workspaceId!, paymentRunId!, {
+      await api.attachPaymentRunSignature(organizationId!, paymentRunId!, {
         submittedSignature: signature,
         submittedAt: new Date().toISOString(),
       });
@@ -1578,27 +1771,27 @@ function PaymentRunDetailPage({ session }: { session: AuthenticatedSession }) {
       setManualSignature('');
       setExecutionModalOpen(false);
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: queryKeys(workspaceId, paymentRunId).paymentRun }),
-        queryClient.invalidateQueries({ queryKey: queryKeys(workspaceId).paymentOrders }),
+        queryClient.invalidateQueries({ queryKey: queryKeys(organizationId, paymentRunId).paymentRun }),
+        queryClient.invalidateQueries({ queryKey: queryKeys(organizationId).paymentOrders }),
       ]);
     },
     onError: (error) => setMessage(error instanceof Error ? error.message : 'Unable to sign and submit batch.'),
   });
   const proofMutation = useMutation({
-    mutationFn: () => api.getPaymentRunProof(workspaceId!, paymentRunId!),
+    mutationFn: () => api.getPaymentRunProof(organizationId!, paymentRunId!),
     onSuccess: (proof) => downloadJson(`payment-run-proof-${paymentRunId}.json`, proof),
     onError: (error) => setMessage(error instanceof Error ? error.message : 'Unable to export run proof.'),
   });
   const orderProofMutation = useMutation({
-    mutationFn: (orderId: string) => api.getPaymentOrderProof(workspaceId!, orderId),
+    mutationFn: (orderId: string) => api.getPaymentOrderProof(organizationId!, orderId),
     onSuccess: (proof, orderId) => downloadJson(`payment-proof-${orderId}.json`, proof),
     onError: (error) => setMessage(error instanceof Error ? error.message : 'Unable to export payment proof.'),
   });
   const deleteRunMutation = useMutation({
-    mutationFn: () => api.deletePaymentRun(workspaceId!, paymentRunId!),
+    mutationFn: () => api.deletePaymentRun(organizationId!, paymentRunId!),
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: queryKeys(workspaceId).paymentRuns });
-      navigate(`/workspaces/${workspaceId}/runs`);
+      await queryClient.invalidateQueries({ queryKey: queryKeys(organizationId).paymentRuns });
+      navigate(`/organizations/${organizationId}/runs`);
     },
     onError: (error) => setMessage(error instanceof Error ? error.message : 'Unable to delete payment run.'),
   });
@@ -1607,18 +1800,18 @@ function PaymentRunDetailPage({ session }: { session: AuthenticatedSession }) {
       const orders = runQuery.data?.paymentOrders ?? [];
       const drafts = orders.filter((order) => order.derivedState === 'draft');
       const draftResults = await Promise.allSettled(
-        drafts.map((order) => api.submitPaymentOrder(workspaceId!, order.paymentOrderId)),
+        drafts.map((order) => api.submitPaymentOrder(organizationId!, order.paymentOrderId)),
       );
       const routedDrafts = draftResults.filter((result) => result.status === 'fulfilled').length;
       const draftFailures = drafts.length - routedDrafts;
-      const refreshedRun = await api.getPaymentRunDetail(workspaceId!, paymentRunId!);
+      const refreshedRun = await api.getPaymentRunDetail(organizationId!, paymentRunId!);
       const pending = (refreshedRun.paymentOrders ?? []).filter(
         (order) => order.derivedState === 'pending_approval' && Boolean(order.transferRequestId),
       );
       if (!pending.length) return { routedDrafts, approved: 0, failed: draftFailures };
       const results = await Promise.allSettled(
         pending.map((order) =>
-          api.createApprovalDecision(workspaceId!, order.transferRequestId!, { action: 'approve' }),
+          api.createApprovalDecision(organizationId!, order.transferRequestId!, { action: 'approve' }),
         ),
       );
       const approved = results.filter((result) => result.status === 'fulfilled').length;
@@ -1631,14 +1824,14 @@ function PaymentRunDetailPage({ session }: { session: AuthenticatedSession }) {
           : `Advanced ${routedDrafts + approved} payment(s) through approvals.`,
       );
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: queryKeys(workspaceId, paymentRunId).paymentRun }),
-        queryClient.invalidateQueries({ queryKey: queryKeys(workspaceId).paymentOrders }),
+        queryClient.invalidateQueries({ queryKey: queryKeys(organizationId, paymentRunId).paymentRun }),
+        queryClient.invalidateQueries({ queryKey: queryKeys(organizationId).paymentOrders }),
       ]);
     },
     onError: (error) => setMessage(error instanceof Error ? error.message : 'Unable to approve pending payments.'),
   });
 
-  if (!workspaceId || !paymentRunId || !workspace) {
+  if (!organizationId || !paymentRunId || !organization) {
     return <ScreenState title="Run unavailable" description="Choose a payment run from the runs page." />;
   }
   if (runQuery.isLoading) {
@@ -1751,7 +1944,7 @@ function PaymentRunDetailPage({ session }: { session: AuthenticatedSession }) {
       <section className="panel" id="run-payments">
         <SectionHeader title="Run payments" description="Rows reconcile independently even when execution is prepared as one batch packet." />
         <RunPaymentsTable
-          workspaceId={workspaceId}
+          organizationId={organizationId}
           paymentOrders={runOrders}
           onExportProof={(order) => orderProofMutation.mutate(order.paymentOrderId)}
           exportPending={orderProofMutation.isPending}
@@ -2013,40 +2206,40 @@ function PaymentRunDetailPage({ session }: { session: AuthenticatedSession }) {
 }
 
 function ApprovalsPage({ session }: { session: AuthenticatedSession }) {
-  const { workspaceId } = useParams<{ workspaceId: string }>();
+  const { organizationId } = useParams<{ organizationId: string }>();
   const location = useLocation();
   const queryClient = useQueryClient();
   const [message, setMessage] = useState<string | null>(null);
-  const workspace = findWorkspace(session, workspaceId);
+  const organization = findOrganization(session, organizationId);
   const runIdFilter = useMemo(() => {
     const params = new URLSearchParams(location.search);
     return params.get('runId');
   }, [location.search]);
 
   const ordersQuery = useQuery({
-    queryKey: queryKeys(workspaceId).paymentOrders,
-    queryFn: () => api.listPaymentOrders(workspaceId!),
-    enabled: Boolean(workspaceId),
+    queryKey: queryKeys(organizationId).paymentOrders,
+    queryFn: () => api.listPaymentOrders(organizationId!),
+    enabled: Boolean(organizationId),
     refetchInterval: 5_000,
   });
   const runQuery = useQuery({
-    queryKey: ['payment-run', workspaceId, runIdFilter] as const,
-    queryFn: () => api.getPaymentRunDetail(workspaceId!, runIdFilter!),
-    enabled: Boolean(workspaceId && runIdFilter),
+    queryKey: ['payment-run', organizationId, runIdFilter] as const,
+    queryFn: () => api.getPaymentRunDetail(organizationId!, runIdFilter!),
+    enabled: Boolean(organizationId && runIdFilter),
   });
   const approvalMutation = useMutation({
     mutationFn: ({ order, action }: { order: PaymentOrder; action: 'approve' | 'reject' }) => {
       if (!order.transferRequestId) throw new Error('This payment has no linked approval request yet.');
-      return api.createApprovalDecision(workspaceId!, order.transferRequestId, { action });
+      return api.createApprovalDecision(organizationId!, order.transferRequestId, { action });
     },
     onSuccess: async () => {
       setMessage('Approval decision recorded.');
-      await queryClient.invalidateQueries({ queryKey: queryKeys(workspaceId).paymentOrders });
+      await queryClient.invalidateQueries({ queryKey: queryKeys(organizationId).paymentOrders });
     },
     onError: (error) => setMessage(error instanceof Error ? error.message : 'Unable to record approval decision.'),
   });
 
-  if (!workspaceId || !workspace) return <ScreenState title="Workspace unavailable" description="Choose a workspace from the sidebar." />;
+  if (!organizationId || !organization) return <ScreenState title="Organization unavailable" description="Choose a organization from the sidebar." />;
   const allOrders = ordersQuery.data?.items ?? [];
   const scopedOrders = runIdFilter
     ? allOrders.filter((o) => o.paymentRunId === runIdFilter)
@@ -2098,14 +2291,14 @@ function ApprovalsPage({ session }: { session: AuthenticatedSession }) {
       </div>
       <div style={{ display: 'flex', gap: 8 }}>
         <Link
-          to={`/workspaces/${workspaceId}/runs/${runIdFilter}`}
+          to={`/organizations/${organizationId}/runs/${runIdFilter}`}
           className="rd-btn rd-btn-secondary"
           style={{ textDecoration: 'none' }}
         >
           ← Back to run
         </Link>
         <Link
-          to={`/workspaces/${workspaceId}/approvals`}
+          to={`/organizations/${organizationId}/approvals`}
           className="rd-btn rd-btn-ghost"
           style={{ textDecoration: 'none' }}
         >
@@ -2128,7 +2321,7 @@ function ApprovalsPage({ session }: { session: AuthenticatedSession }) {
       <section className="panel">
         <SectionHeader title={`Pending approvals [${pending.length}]`} description="Payments blocked by policy or destination trust until a human decision is recorded." />
         <ApprovalsTable
-          workspaceId={workspaceId}
+          organizationId={organizationId}
           paymentOrders={pending}
           onApprove={(order) => approvalMutation.mutate({ order, action: 'approve' })}
           onReject={(order) => approvalMutation.mutate({ order, action: 'reject' })}
@@ -2136,19 +2329,19 @@ function ApprovalsPage({ session }: { session: AuthenticatedSession }) {
       </section>
       <section className="panel panel-spaced">
         <SectionHeader title={`Approval history [${history.length}]`} description="Resolved approval decisions only." />
-        <ApprovalHistoryTable workspaceId={workspaceId} paymentOrders={history} />
+        <ApprovalHistoryTable organizationId={organizationId} paymentOrders={history} />
       </section>
     </PageFrame>
   );
 }
 
 function ApprovalsTable({
-  workspaceId,
+  organizationId,
   paymentOrders,
   onApprove,
   onReject,
 }: {
-  workspaceId: string;
+  organizationId: string;
   paymentOrders: PaymentOrder[];
   onApprove: (order: PaymentOrder) => void;
   onReject: (order: PaymentOrder) => void;
@@ -2168,7 +2361,7 @@ function ApprovalsTable({
       {paymentOrders.map((order) => (
         <div className="data-table-row data-table-row-approvals" key={order.paymentOrderId}>
           <span>
-            <Link to={`/workspaces/${workspaceId}/payments/${order.paymentOrderId}#approval`}>
+            <Link to={`/organizations/${organizationId}/payments/${order.paymentOrderId}#approval`}>
               <strong>{order.destination.label}</strong>
             </Link>
             <small>{shortenAddress(order.paymentOrderId, 8, 6)}</small>
@@ -2203,10 +2396,10 @@ function ApprovalsTable({
 }
 
 function ApprovalHistoryTable({
-  workspaceId,
+  organizationId,
   paymentOrders,
 }: {
-  workspaceId: string;
+  organizationId: string;
   paymentOrders: PaymentOrder[];
 }) {
   if (!paymentOrders.length) {
@@ -2240,7 +2433,7 @@ function ApprovalHistoryTable({
         return (
           <div className="data-table-row data-table-row-approval-history" key={order.paymentOrderId}>
             <span>
-              <Link to={`/workspaces/${workspaceId}/payments/${order.paymentOrderId}#approval`}>
+              <Link to={`/organizations/${organizationId}/payments/${order.paymentOrderId}#approval`}>
                 <strong>{order.destination.label}</strong>
               </Link>
               <small>{shortenAddress(order.paymentOrderId, 8, 6)}</small>
@@ -2258,12 +2451,12 @@ function ApprovalHistoryTable({
 }
 
 function ExecutionPage({ session }: { session: AuthenticatedSession }) {
-  const { workspaceId } = useParams<{ workspaceId: string }>();
-  const workspace = findWorkspace(session, workspaceId);
+  const { organizationId } = useParams<{ organizationId: string }>();
+  const organization = findOrganization(session, organizationId);
   const ordersQuery = useQuery({
-    queryKey: queryKeys(workspaceId).paymentOrders,
-    queryFn: () => api.listPaymentOrders(workspaceId!),
-    enabled: Boolean(workspaceId),
+    queryKey: queryKeys(organizationId).paymentOrders,
+    queryFn: () => api.listPaymentOrders(organizationId!),
+    enabled: Boolean(organizationId),
     refetchInterval: 5_000,
   });
   const inQueue = useMemo(
@@ -2296,7 +2489,7 @@ function ExecutionPage({ session }: { session: AuthenticatedSession }) {
     [allOrders],
   );
 
-  if (!workspaceId || !workspace) return <ScreenState title="Workspace unavailable" description="Choose a workspace from the sidebar." />;
+  if (!organizationId || !organization) return <ScreenState title="Organization unavailable" description="Choose a organization from the sidebar." />;
 
   return (
     <PageFrame
@@ -2320,7 +2513,7 @@ function ExecutionPage({ session }: { session: AuthenticatedSession }) {
             <section className="panel panel-spaced" key={bucket}>
               <SectionHeader title={executionBucketTitle(bucket)} description={`${rows.length} payment(s)`} />
               <ActionPaymentTable
-                workspaceId={workspaceId}
+                organizationId={organizationId}
                 paymentOrders={rows}
                 actionHeader="Open"
                 emptyTitle="No payments"
@@ -2328,7 +2521,7 @@ function ExecutionPage({ session }: { session: AuthenticatedSession }) {
                 reasonHeader="Why now"
                 renderReason={(order) => executionReasonLine(order)}
                 renderAction={(order) => (
-                  <Link className="button button-secondary button-small" to={`/workspaces/${workspaceId}/payments/${order.paymentOrderId}#execution`}>
+                  <Link className="button button-secondary button-small" to={`/organizations/${organizationId}/payments/${order.paymentOrderId}#execution`}>
                     {executionActionLabel(order)}
                   </Link>
                 )}
@@ -2340,7 +2533,7 @@ function ExecutionPage({ session }: { session: AuthenticatedSession }) {
       <section className="panel panel-spaced">
         <SectionHeader title={`Recent executed [${executedHistory.length}]`} description="Most recent payments that already have execution signatures." />
         <ActionPaymentTable
-          workspaceId={workspaceId}
+          organizationId={organizationId}
           paymentOrders={executedHistory}
           actionHeader="Open"
           emptyTitle="No executed payments yet"
@@ -2352,7 +2545,7 @@ function ExecutionPage({ session }: { session: AuthenticatedSession }) {
               : 'N/A'
           }
           renderAction={(order) => (
-            <Link className="button button-secondary button-small" to={`/workspaces/${workspaceId}/payments/${order.paymentOrderId}#execution`}>
+            <Link className="button button-secondary button-small" to={`/organizations/${organizationId}/payments/${order.paymentOrderId}#execution`}>
               Open payment
             </Link>
           )}
@@ -2363,28 +2556,28 @@ function ExecutionPage({ session }: { session: AuthenticatedSession }) {
 }
 
 function SettlementPage({ session }: { session: AuthenticatedSession }) {
-  const { workspaceId } = useParams<{ workspaceId: string }>();
-  const workspace = findWorkspace(session, workspaceId);
+  const { organizationId } = useParams<{ organizationId: string }>();
+  const organization = findOrganization(session, organizationId);
   const [settlementTab, setSettlementTab] = useState<'reconciliation' | 'raw'>('reconciliation');
   const reconciliationQuery = useQuery({
-    queryKey: ['settlement-reconciliation', workspaceId],
-    queryFn: () => api.listReconciliation(workspaceId!),
-    enabled: Boolean(workspaceId),
+    queryKey: ['settlement-reconciliation', organizationId],
+    queryFn: () => api.listReconciliation(organizationId!),
+    enabled: Boolean(organizationId),
     refetchInterval: 5_000,
   });
   const transfersQuery = useQuery({
-    queryKey: ['observed-transfers', workspaceId],
-    queryFn: () => api.listTransfers(workspaceId!),
-    enabled: Boolean(workspaceId),
+    queryKey: ['observed-transfers', organizationId],
+    queryFn: () => api.listTransfers(organizationId!),
+    enabled: Boolean(organizationId),
     refetchInterval: 5_000,
   });
   const exceptionsQuery = useQuery({
-    queryKey: queryKeys(workspaceId).exceptions,
-    queryFn: () => api.listExceptions(workspaceId!),
-    enabled: Boolean(workspaceId),
+    queryKey: queryKeys(organizationId).exceptions,
+    queryFn: () => api.listExceptions(organizationId!),
+    enabled: Boolean(organizationId),
     refetchInterval: 5_000,
   });
-  if (!workspaceId || !workspace) return <ScreenState title="Workspace unavailable" description="Choose a workspace from the sidebar." />;
+  if (!organizationId || !organization) return <ScreenState title="Organization unavailable" description="Choose a organization from the sidebar." />;
   const reconciliationRows = reconciliationQuery.data?.items ?? [];
   const observedTransfers = transfersQuery.data?.items ?? [];
   const openExceptions = (exceptionsQuery.data?.items ?? []).filter((item) => item.status !== 'dismissed');
@@ -2416,7 +2609,7 @@ function SettlementPage({ session }: { session: AuthenticatedSession }) {
       {settlementTab === 'reconciliation' ? (
         <section className="panel">
           <SectionHeader title="Payment reconciliation" description={`What the matcher attached to each transfer request. Reconciliation exceptions: ${reconciliationExceptionCount}.`} />
-          <SettlementReconciliationTable workspaceId={workspaceId} rows={reconciliationRows} />
+          <SettlementReconciliationTable organizationId={organizationId} rows={reconciliationRows} />
         </section>
       ) : (
         <section className="panel">
@@ -2429,10 +2622,10 @@ function SettlementPage({ session }: { session: AuthenticatedSession }) {
 }
 
 function SettlementReconciliationTable({
-  workspaceId,
+  organizationId,
   rows,
 }: {
-  workspaceId: string;
+  organizationId: string;
   rows: ReconciliationRow[];
 }) {
   if (!rows.length) return <EmptyState title="No reconciliation rows yet" description="Rows will appear after payment requests are submitted." />;
@@ -2445,7 +2638,7 @@ function SettlementReconciliationTable({
         <div className="data-table-row data-table-row-settlement-recon" key={row.transferRequestId}>
           <span>
             {row.paymentOrderId ? (
-              <Link to={`/workspaces/${workspaceId}/payments/${row.paymentOrderId}`}>
+              <Link to={`/organizations/${organizationId}/payments/${row.paymentOrderId}`}>
                 <strong>{row.destination?.label ?? row.destination?.walletAddress ?? 'Destination'}</strong>
               </Link>
             ) : (
@@ -2489,26 +2682,26 @@ function ObservedTransfersTable({ rows }: { rows: ObservedTransfer[] }) {
 }
 
 function ProofsPage({ session }: { session: AuthenticatedSession }) {
-  const { workspaceId } = useParams<{ workspaceId: string }>();
+  const { organizationId } = useParams<{ organizationId: string }>();
   const [message, setMessage] = useState<string | null>(null);
   const [preview, setPreview] = useState<{ title: string; data: Record<string, unknown> } | null>(null);
   const [proofTab, setProofTab] = useState<'needs_review' | 'ready' | 'exported'>('needs_review');
-  const workspace = findWorkspace(session, workspaceId);
+  const organization = findOrganization(session, organizationId);
   const ordersQuery = useQuery({
-    queryKey: queryKeys(workspaceId).paymentOrders,
-    queryFn: () => api.listPaymentOrders(workspaceId!),
-    enabled: Boolean(workspaceId),
+    queryKey: queryKeys(organizationId).paymentOrders,
+    queryFn: () => api.listPaymentOrders(organizationId!),
+    enabled: Boolean(organizationId),
     refetchInterval: 5_000,
   });
   const runsQuery = useQuery({
-    queryKey: queryKeys(workspaceId).paymentRuns,
-    queryFn: () => api.listPaymentRuns(workspaceId!),
-    enabled: Boolean(workspaceId),
+    queryKey: queryKeys(organizationId).paymentRuns,
+    queryFn: () => api.listPaymentRuns(organizationId!),
+    enabled: Boolean(organizationId),
     refetchInterval: 5_000,
   });
   const proofMutation = useMutation({
     mutationFn: ({ kind, id }: { kind: 'order' | 'run'; id: string }) => (
-      kind === 'order' ? api.getPaymentOrderProof(workspaceId!, id) : api.getPaymentRunProof(workspaceId!, id)
+      kind === 'order' ? api.getPaymentOrderProof(organizationId!, id) : api.getPaymentRunProof(organizationId!, id)
     ),
     onSuccess: (proof, variables) => downloadJson(`${variables.kind}-proof-${variables.id}.json`, proof),
     onError: (error) => setMessage(error instanceof Error ? error.message : 'Unable to export proof.'),
@@ -2516,14 +2709,14 @@ function ProofsPage({ session }: { session: AuthenticatedSession }) {
   const proofPreviewMutation = useMutation({
     mutationFn: async ({ kind, id, title }: { kind: 'order' | 'run'; id: string; title: string }) => {
       const packet =
-        kind === 'order' ? await api.getPaymentOrderProof(workspaceId!, id) : await api.getPaymentRunProof(workspaceId!, id);
+        kind === 'order' ? await api.getPaymentOrderProof(organizationId!, id) : await api.getPaymentRunProof(organizationId!, id);
       return { title, data: JSON.parse(JSON.stringify(packet)) as Record<string, unknown> };
     },
     onSuccess: (result) => setPreview(result),
     onError: (error) => setMessage(error instanceof Error ? error.message : 'Unable to load proof preview.'),
   });
 
-  if (!workspaceId || !workspace) return <ScreenState title="Workspace unavailable" description="Choose a workspace from the sidebar." />;
+  if (!organizationId || !organization) return <ScreenState title="Organization unavailable" description="Choose a organization from the sidebar." />;
   const allOrders = ordersQuery.data?.items ?? [];
   const proofNeedsReview = allOrders.filter((order) => ['partially_settled', 'exception', 'execution_recorded'].includes(order.derivedState));
   const proofReadyOrders = allOrders.filter((order) => ['settled', 'closed'].includes(order.derivedState));
@@ -2558,7 +2751,7 @@ function ProofsPage({ session }: { session: AuthenticatedSession }) {
           <>
             <SectionHeader title={`Payments needing review [${proofNeedsReview.length}]`} description="Resolve settlement or exception context before final proof export." />
             <ActionPaymentTable
-              workspaceId={workspaceId}
+              organizationId={organizationId}
               paymentOrders={proofNeedsReview}
               actionHeader="Action"
               emptyTitle="No payments need proof review"
@@ -2566,7 +2759,7 @@ function ProofsPage({ session }: { session: AuthenticatedSession }) {
               reasonHeader="Readiness"
               renderReason={(order) => proofReadinessLine(order)}
               renderAction={(order) => (
-                <Link className="button button-secondary button-small" to={`/workspaces/${workspaceId}/payments/${order.paymentOrderId}`}>
+                <Link className="button button-secondary button-small" to={`/organizations/${organizationId}/payments/${order.paymentOrderId}`}>
                   Open payment
                 </Link>
               )}
@@ -2574,7 +2767,7 @@ function ProofsPage({ session }: { session: AuthenticatedSession }) {
             <section className="panel panel-spaced">
               <SectionHeader title={`Runs needing review [${runNeedsReview.length}]`} />
               <PaymentRunProofTable
-                workspaceId={workspaceId}
+                organizationId={organizationId}
                 runs={runNeedsReview}
                 onExport={(run) => proofMutation.mutate({ kind: 'run', id: run.paymentRunId })}
                 onPreview={(run) =>
@@ -2589,7 +2782,7 @@ function ProofsPage({ session }: { session: AuthenticatedSession }) {
           <>
             <SectionHeader title={`Payment proofs ready [${proofReadyOrders.length}]`} description="Preview or export completed proofs for audit handoff." />
             <ActionPaymentTable
-              workspaceId={workspaceId}
+              organizationId={organizationId}
               paymentOrders={proofReadyOrders}
               actionHeader="Proof"
               emptyTitle="No proof-ready payments"
@@ -2621,7 +2814,7 @@ function ProofsPage({ session }: { session: AuthenticatedSession }) {
             <section className="panel panel-spaced">
               <SectionHeader title={`Run proofs ready [${runReady.length}]`} />
               <PaymentRunProofTable
-                workspaceId={workspaceId}
+                organizationId={organizationId}
                 runs={runReady}
                 onExport={(run) => proofMutation.mutate({ kind: 'run', id: run.paymentRunId })}
                 onPreview={(run) =>
@@ -2636,7 +2829,7 @@ function ProofsPage({ session }: { session: AuthenticatedSession }) {
           <>
             <SectionHeader title={`Exported payment proofs [${exportedLikeOrders.length}]`} description="Records in closed state for completed evidence trails." />
             <ActionPaymentTable
-              workspaceId={workspaceId}
+              organizationId={organizationId}
               paymentOrders={exportedLikeOrders}
               actionHeader="Open"
               emptyTitle="No exported payment proofs"
@@ -2644,7 +2837,7 @@ function ProofsPage({ session }: { session: AuthenticatedSession }) {
               reasonHeader="Readiness"
               renderReason={(order) => proofReadinessLine(order)}
               renderAction={(order) => (
-                <Link className="button button-secondary button-small" to={`/workspaces/${workspaceId}/payments/${order.paymentOrderId}`}>
+                <Link className="button button-secondary button-small" to={`/organizations/${organizationId}/payments/${order.paymentOrderId}`}>
                   Open payment
                 </Link>
               )}
@@ -2652,7 +2845,7 @@ function ProofsPage({ session }: { session: AuthenticatedSession }) {
             <section className="panel panel-spaced">
               <SectionHeader title={`Exported run proofs [${runExported.length}]`} />
               <PaymentRunProofTable
-                workspaceId={workspaceId}
+                organizationId={organizationId}
                 runs={runExported}
                 onExport={(run) => proofMutation.mutate({ kind: 'run', id: run.paymentRunId })}
                 onPreview={(run) =>
@@ -2669,37 +2862,37 @@ function ProofsPage({ session }: { session: AuthenticatedSession }) {
 }
 
 function AddressBookPage({ session }: { session: AuthenticatedSession }) {
-  const { workspaceId } = useParams<{ workspaceId: string }>();
+  const { organizationId } = useParams<{ organizationId: string }>();
   const queryClient = useQueryClient();
   const { success, error: toastError } = useToast();
-  const workspace = findWorkspace(session, workspaceId);
+  const organization = findOrganization(session, organizationId);
   const walletsQuery = useQuery({
-    queryKey: queryKeys(workspaceId).addresses,
-    queryFn: () => api.listTreasuryWallets(workspaceId!),
-    enabled: Boolean(workspaceId),
+    queryKey: queryKeys(organizationId).addresses,
+    queryFn: () => api.listTreasuryWallets(organizationId!),
+    enabled: Boolean(organizationId),
   });
   const counterpartiesQuery = useQuery({
-    queryKey: queryKeys(workspaceId).counterparties,
-    queryFn: () => api.listCounterparties(workspaceId!),
-    enabled: Boolean(workspaceId),
+    queryKey: queryKeys(organizationId).counterparties,
+    queryFn: () => api.listCounterparties(organizationId!),
+    enabled: Boolean(organizationId),
   });
   const destinationsQuery = useQuery({
-    queryKey: queryKeys(workspaceId).destinations,
-    queryFn: () => api.listDestinations(workspaceId!),
-    enabled: Boolean(workspaceId),
+    queryKey: queryKeys(organizationId).destinations,
+    queryFn: () => api.listDestinations(organizationId!),
+    enabled: Boolean(organizationId),
   });
 
   async function invalidateRegistry() {
     await Promise.all([
-      queryClient.invalidateQueries({ queryKey: queryKeys(workspaceId).addresses }),
-      queryClient.invalidateQueries({ queryKey: queryKeys(workspaceId).counterparties }),
-      queryClient.invalidateQueries({ queryKey: queryKeys(workspaceId).destinations }),
+      queryClient.invalidateQueries({ queryKey: queryKeys(organizationId).addresses }),
+      queryClient.invalidateQueries({ queryKey: queryKeys(organizationId).counterparties }),
+      queryClient.invalidateQueries({ queryKey: queryKeys(organizationId).destinations }),
     ]);
   }
 
   const createTreasuryWalletMutation = useMutation({
     mutationFn: async (formData: FormData) => {
-      return api.createTreasuryWallet(workspaceId!, {
+      return api.createTreasuryWallet(organizationId!, {
         displayName: getOptionalFormString(formData, 'displayName') ?? undefined,
         address: getFormString(formData, 'address'),
         notes: getOptionalFormString(formData, 'notes') ?? undefined,
@@ -2713,7 +2906,7 @@ function AddressBookPage({ session }: { session: AuthenticatedSession }) {
   });
   const createCounterpartyMutation = useMutation({
     mutationFn: async (formData: FormData) => {
-      return api.createCounterparty(workspaceId!, {
+      return api.createCounterparty(organizationId!, {
         displayName: getFormString(formData, 'displayName'),
         category: getOptionalFormString(formData, 'category') ?? undefined,
       });
@@ -2726,7 +2919,7 @@ function AddressBookPage({ session }: { session: AuthenticatedSession }) {
   });
   const createDestinationMutation = useMutation({
     mutationFn: async (formData: FormData) => {
-      return api.createDestination(workspaceId!, {
+      return api.createDestination(organizationId!, {
         walletAddress: getFormString(formData, 'walletAddress'),
         counterpartyId: getOptionalFormString(formData, 'counterpartyId') ?? undefined,
         label: getFormString(formData, 'label'),
@@ -2746,8 +2939,8 @@ function AddressBookPage({ session }: { session: AuthenticatedSession }) {
   const [addDestinationOpen, setAddDestinationOpen] = useState(false);
   const [addCounterpartyOpen, setAddCounterpartyOpen] = useState(false);
 
-  if (!workspaceId || !workspace) {
-    return <ScreenState title="Workspace unavailable" description="Choose a workspace from the sidebar." />;
+  if (!organizationId || !organization) {
+    return <ScreenState title="Organization unavailable" description="Choose a organization from the sidebar." />;
   }
 
   const wallets = walletsQuery.data?.items ?? [];
@@ -2933,31 +3126,31 @@ function AddressBookPage({ session }: { session: AuthenticatedSession }) {
 }
 
 function PolicyPage({ session }: { session: AuthenticatedSession }) {
-  const { workspaceId } = useParams<{ workspaceId: string }>();
+  const { organizationId } = useParams<{ organizationId: string }>();
   const queryClient = useQueryClient();
   const [message, setMessage] = useState<string | null>(null);
   const [editOpen, setEditOpen] = useState(false);
-  const workspace = findWorkspace(session, workspaceId);
+  const organization = findOrganization(session, organizationId);
   const policyQuery = useQuery({
-    queryKey: queryKeys(workspaceId).approvalPolicy,
-    queryFn: () => api.getApprovalPolicy(workspaceId!),
-    enabled: Boolean(workspaceId),
+    queryKey: queryKeys(organizationId).approvalPolicy,
+    queryFn: () => api.getApprovalPolicy(organizationId!),
+    enabled: Boolean(organizationId),
   });
   const ordersQuery = useQuery({
-    queryKey: queryKeys(workspaceId).paymentOrders,
-    queryFn: () => api.listPaymentOrders(workspaceId!),
-    enabled: Boolean(workspaceId),
+    queryKey: queryKeys(organizationId).paymentOrders,
+    queryFn: () => api.listPaymentOrders(organizationId!),
+    enabled: Boolean(organizationId),
     refetchInterval: 5_000,
   });
   const destinationsQuery = useQuery({
-    queryKey: queryKeys(workspaceId).destinations,
-    queryFn: () => api.listDestinations(workspaceId!),
-    enabled: Boolean(workspaceId),
+    queryKey: queryKeys(organizationId).destinations,
+    queryFn: () => api.listDestinations(organizationId!),
+    enabled: Boolean(organizationId),
     refetchInterval: 10_000,
   });
   const updateMutation = useMutation({
     mutationFn: async (formData: FormData) => {
-      return api.updateApprovalPolicy(workspaceId!, {
+      return api.updateApprovalPolicy(organizationId!, {
         policyName: getOptionalFormString(formData, 'policyName') ?? undefined,
         isActive: formData.get('isActive') === 'on',
         ruleJson: {
@@ -2972,12 +3165,12 @@ function PolicyPage({ session }: { session: AuthenticatedSession }) {
     onSuccess: async () => {
       setMessage('Approval policy updated.');
       setEditOpen(false);
-      await queryClient.invalidateQueries({ queryKey: queryKeys(workspaceId).approvalPolicy });
+      await queryClient.invalidateQueries({ queryKey: queryKeys(organizationId).approvalPolicy });
     },
     onError: (error) => setMessage(error instanceof Error ? error.message : 'Unable to update policy.'),
   });
 
-  if (!workspaceId || !workspace) return <ScreenState title="Workspace unavailable" description="Choose a workspace from the sidebar." />;
+  if (!organizationId || !organization) return <ScreenState title="Organization unavailable" description="Choose a organization from the sidebar." />;
   const policy = policyQuery.data;
   if (!policy) return <ScreenState title="Loading policy" description="Fetching approval rules." />;
   const orders = ordersQuery.data?.items ?? [];
@@ -3121,7 +3314,7 @@ function PolicyPage({ session }: { session: AuthenticatedSession }) {
 }
 
 function ExceptionsPage({ session }: { session: AuthenticatedSession }) {
-  const { workspaceId } = useParams<{ workspaceId: string }>();
+  const { organizationId } = useParams<{ organizationId: string }>();
   const queryClient = useQueryClient();
   const [message, setMessage] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<'all' | string>('all');
@@ -3130,17 +3323,17 @@ function ExceptionsPage({ session }: { session: AuthenticatedSession }) {
   const [resolveModal, setResolveModal] = useState<{ exceptionId: string; title: string } | null>(null);
   const [resolveAction, setResolveAction] = useState<'reviewed' | 'expected' | 'dismissed'>('reviewed');
   const [resolveNote, setResolveNote] = useState('');
-  const workspace = findWorkspace(session, workspaceId);
+  const organization = findOrganization(session, organizationId);
   const exceptionsQuery = useQuery({
-    queryKey: queryKeys(workspaceId).exceptions,
-    queryFn: () => api.listExceptions(workspaceId!),
-    enabled: Boolean(workspaceId),
+    queryKey: queryKeys(organizationId).exceptions,
+    queryFn: () => api.listExceptions(organizationId!),
+    enabled: Boolean(organizationId),
     refetchInterval: 5_000,
   });
   const ordersForExceptionsQuery = useQuery({
-    queryKey: queryKeys(workspaceId).paymentOrders,
-    queryFn: () => api.listPaymentOrders(workspaceId!),
-    enabled: Boolean(workspaceId),
+    queryKey: queryKeys(organizationId).paymentOrders,
+    queryFn: () => api.listPaymentOrders(organizationId!),
+    enabled: Boolean(organizationId),
   });
   const payByTransfer = useMemo(() => {
     const m = new Map<string, PaymentOrder>();
@@ -3151,16 +3344,16 @@ function ExceptionsPage({ session }: { session: AuthenticatedSession }) {
   }, [ordersForExceptionsQuery.data?.items]);
   const actionMutation = useMutation({
     mutationFn: ({ exceptionId, action, note }: { exceptionId: string; action: 'reviewed' | 'expected' | 'dismissed' | 'reopen'; note?: string }) => (
-      api.applyExceptionAction(workspaceId!, exceptionId, { action, note })
+      api.applyExceptionAction(organizationId!, exceptionId, { action, note })
     ),
     onSuccess: async () => {
       setMessage('Exception updated.');
-      await queryClient.invalidateQueries({ queryKey: queryKeys(workspaceId).exceptions });
+      await queryClient.invalidateQueries({ queryKey: queryKeys(organizationId).exceptions });
     },
     onError: (error) => setMessage(error instanceof Error ? error.message : 'Unable to update exception.'),
   });
 
-  if (!workspaceId || !workspace) return <ScreenState title="Workspace unavailable" description="Choose a workspace from the sidebar." />;
+  if (!organizationId || !organization) return <ScreenState title="Organization unavailable" description="Choose a organization from the sidebar." />;
   const exceptions = exceptionsQuery.data?.items ?? [];
   const statuses = Array.from(new Set(exceptions.map((exception) => exception.status))).sort();
   const severities = Array.from(new Set(exceptions.map((exception) => exception.severity))).sort();
@@ -3219,7 +3412,7 @@ function ExceptionsPage({ session }: { session: AuthenticatedSession }) {
         </div>
       </section>
       <ExceptionsTable
-        workspaceId={workspaceId}
+        organizationId={organizationId}
         exceptions={filteredExceptions}
         paymentByTransferId={payByTransfer}
         onAction={(exceptionId, action) => actionMutation.mutate({ exceptionId, action })}
@@ -3281,23 +3474,23 @@ function ExceptionsPage({ session }: { session: AuthenticatedSession }) {
 }
 
 function ExceptionDetailPage({ session }: { session: AuthenticatedSession }) {
-  const { workspaceId, exceptionId } = useParams<{ workspaceId: string; exceptionId: string }>();
+  const { organizationId, exceptionId } = useParams<{ organizationId: string; exceptionId: string }>();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const [message, setMessage] = useState<string | null>(null);
   const [noteBody, setNoteBody] = useState('');
-  const workspace = findWorkspace(session, workspaceId);
+  const organization = findOrganization(session, organizationId);
 
   const exceptionQuery = useQuery({
-    queryKey: ['workspace-exception', workspaceId, exceptionId] as const,
-    queryFn: () => api.getWorkspaceException(workspaceId!, exceptionId!),
-    enabled: Boolean(workspaceId && exceptionId),
+    queryKey: ['organization-exception', organizationId, exceptionId] as const,
+    queryFn: () => api.getOrganizationException(organizationId!, exceptionId!),
+    enabled: Boolean(organizationId && exceptionId),
     refetchInterval: 5_000,
   });
   const ordersQuery = useQuery({
-    queryKey: queryKeys(workspaceId).paymentOrders,
-    queryFn: () => api.listPaymentOrders(workspaceId!),
-    enabled: Boolean(workspaceId),
+    queryKey: queryKeys(organizationId).paymentOrders,
+    queryFn: () => api.listPaymentOrders(organizationId!),
+    enabled: Boolean(organizationId),
   });
 
   const linkedOrder = useMemo(() => {
@@ -3308,21 +3501,21 @@ function ExceptionDetailPage({ session }: { session: AuthenticatedSession }) {
 
   const actionMutation = useMutation({
     mutationFn: ({ action, note }: { action: 'reviewed' | 'expected' | 'dismissed' | 'reopen'; note?: string }) =>
-      api.applyExceptionAction(workspaceId!, exceptionId!, { action, note }),
+      api.applyExceptionAction(organizationId!, exceptionId!, { action, note }),
     onSuccess: async () => {
       setMessage('Exception updated.');
-      await queryClient.invalidateQueries({ queryKey: ['workspace-exception', workspaceId, exceptionId] as const });
-      await queryClient.invalidateQueries({ queryKey: queryKeys(workspaceId).exceptions });
+      await queryClient.invalidateQueries({ queryKey: ['organization-exception', organizationId, exceptionId] as const });
+      await queryClient.invalidateQueries({ queryKey: queryKeys(organizationId).exceptions });
     },
     onError: (error) => setMessage(error instanceof Error ? error.message : 'Unable to update exception.'),
   });
 
   const noteMutation = useMutation({
-    mutationFn: (body: string) => api.addExceptionNote(workspaceId!, exceptionId!, { body }),
+    mutationFn: (body: string) => api.addExceptionNote(organizationId!, exceptionId!, { body }),
     onSuccess: async () => {
       setNoteBody('');
       setMessage('Note added.');
-      await queryClient.invalidateQueries({ queryKey: ['workspace-exception', workspaceId, exceptionId] as const });
+      await queryClient.invalidateQueries({ queryKey: ['organization-exception', organizationId, exceptionId] as const });
     },
     onError: (error) => setMessage(error instanceof Error ? error.message : 'Unable to add note.'),
   });
@@ -3330,14 +3523,14 @@ function ExceptionDetailPage({ session }: { session: AuthenticatedSession }) {
   const proofMutation = useMutation({
     mutationFn: () => {
       if (!linkedOrder) throw new Error('Link a payment before exporting proof.');
-      return api.getPaymentOrderProof(workspaceId!, linkedOrder.paymentOrderId);
+      return api.getPaymentOrderProof(organizationId!, linkedOrder.paymentOrderId);
     },
     onSuccess: (proof) => downloadJson(`payment-proof-${linkedOrder?.paymentOrderId}.json`, proof),
     onError: (error) => setMessage(error instanceof Error ? error.message : 'Unable to export proof.'),
   });
 
-  if (!workspaceId || !exceptionId || !workspace) {
-    return <ScreenState title="Exception unavailable" description="Choose a workspace from the sidebar." />;
+  if (!organizationId || !exceptionId || !organization) {
+    return <ScreenState title="Exception unavailable" description="Choose a organization from the sidebar." />;
   }
   if (exceptionQuery.isLoading) {
     return <ScreenState title="Loading exception" description="Fetching exception details." />;
@@ -3356,11 +3549,11 @@ function ExceptionDetailPage({ session }: { session: AuthenticatedSession }) {
       description={ex.explanation}
       action={
         <div className="action-cluster">
-          <button className="button button-secondary" type="button" onClick={() => navigate(`/workspaces/${workspaceId}/exceptions`)}>
+          <button className="button button-secondary" type="button" onClick={() => navigate(`/organizations/${organizationId}/exceptions`)}>
             Back to list
           </button>
           {linkedOrder ? (
-            <Link className="button button-secondary" to={`/workspaces/${workspaceId}/payments/${linkedOrder.paymentOrderId}`}>
+            <Link className="button button-secondary" to={`/organizations/${organizationId}/payments/${linkedOrder.paymentOrderId}`}>
               Open payment
             </Link>
           ) : null}
@@ -3449,7 +3642,7 @@ function ExceptionDetailPage({ session }: { session: AuthenticatedSession }) {
 }
 
 function PaymentDetailPage({ session }: { session: AuthenticatedSession }) {
-  const { workspaceId, paymentOrderId } = useParams<{ workspaceId: string; paymentOrderId: string }>();
+  const { organizationId, paymentOrderId } = useParams<{ organizationId: string; paymentOrderId: string }>();
   const location = useLocation();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -3472,50 +3665,50 @@ function PaymentDetailPage({ session }: { session: AuthenticatedSession }) {
     setPreparedPacket(null);
   }, [selectedSourceAddressId]);
 
-  const workspace = findWorkspace(session, workspaceId);
+  const organization = findOrganization(session, organizationId);
   const paymentOrderQuery = useQuery({
-    queryKey: queryKeys(workspaceId, paymentOrderId).paymentOrder,
-    queryFn: () => api.getPaymentOrderDetail(workspaceId!, paymentOrderId!),
-    enabled: Boolean(workspaceId && paymentOrderId),
+    queryKey: queryKeys(organizationId, paymentOrderId).paymentOrder,
+    queryFn: () => api.getPaymentOrderDetail(organizationId!, paymentOrderId!),
+    enabled: Boolean(organizationId && paymentOrderId),
     refetchInterval: 4_000,
   });
   const addressesQuery = useQuery({
-    queryKey: queryKeys(workspaceId).addresses,
-    queryFn: () => api.listTreasuryWallets(workspaceId!),
-    enabled: Boolean(workspaceId),
+    queryKey: queryKeys(organizationId).addresses,
+    queryFn: () => api.listTreasuryWallets(organizationId!),
+    enabled: Boolean(organizationId),
   });
 
   const prepareMutation = useMutation({
-    mutationFn: (sourceTreasuryWalletId: string) => api.preparePaymentOrderExecution(workspaceId!, paymentOrderId!, {
+    mutationFn: (sourceTreasuryWalletId: string) => api.preparePaymentOrderExecution(organizationId!, paymentOrderId!, {
       sourceTreasuryWalletId,
     }),
     onSuccess: async (result) => {
       setPreparedPacket(result.executionPacket);
       setActionMessage('Payment packet prepared.');
-      await queryClient.invalidateQueries({ queryKey: queryKeys(workspaceId, paymentOrderId).paymentOrder });
+      await queryClient.invalidateQueries({ queryKey: queryKeys(organizationId, paymentOrderId).paymentOrder });
     },
     onError: (error) => setActionMessage(error instanceof Error ? error.message : 'Failed to prepare payment.'),
   });
 
   const attachSignatureMutation = useMutation({
-    mutationFn: (submittedSignature: string) => api.attachPaymentOrderSignature(workspaceId!, paymentOrderId!, {
+    mutationFn: (submittedSignature: string) => api.attachPaymentOrderSignature(organizationId!, paymentOrderId!, {
       submittedSignature,
       submittedAt: new Date().toISOString(),
     }),
     onSuccess: async () => {
       setActionMessage('Execution signature attached.');
       setManualSignature('');
-      await queryClient.invalidateQueries({ queryKey: queryKeys(workspaceId, paymentOrderId).paymentOrder });
+      await queryClient.invalidateQueries({ queryKey: queryKeys(organizationId, paymentOrderId).paymentOrder });
     },
     onError: (error) => setActionMessage(error instanceof Error ? error.message : 'Failed to attach signature.'),
   });
   const submitMutation = useMutation({
-    mutationFn: () => api.submitPaymentOrder(workspaceId!, paymentOrderId!),
+    mutationFn: () => api.submitPaymentOrder(organizationId!, paymentOrderId!),
     onSuccess: async () => {
       setActionMessage('Payment submitted for approval.');
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: queryKeys(workspaceId, paymentOrderId).paymentOrder }),
-        queryClient.invalidateQueries({ queryKey: queryKeys(workspaceId).paymentOrders }),
+        queryClient.invalidateQueries({ queryKey: queryKeys(organizationId, paymentOrderId).paymentOrder }),
+        queryClient.invalidateQueries({ queryKey: queryKeys(organizationId).paymentOrders }),
       ]);
     },
     onError: (error) => setActionMessage(error instanceof Error ? error.message : 'Failed to submit payment.'),
@@ -3524,13 +3717,13 @@ function PaymentDetailPage({ session }: { session: AuthenticatedSession }) {
     mutationFn: () => {
       const transferRequestId = paymentOrderQuery.data?.transferRequestId;
       if (!transferRequestId) throw new Error('Approval request is not available yet for this payment.');
-      return api.createApprovalDecision(workspaceId!, transferRequestId, { action: 'approve' });
+      return api.createApprovalDecision(organizationId!, transferRequestId, { action: 'approve' });
     },
     onSuccess: async () => {
       setActionMessage('Payment approved and moved to execution.');
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: queryKeys(workspaceId, paymentOrderId).paymentOrder }),
-        queryClient.invalidateQueries({ queryKey: queryKeys(workspaceId).paymentOrders }),
+        queryClient.invalidateQueries({ queryKey: queryKeys(organizationId, paymentOrderId).paymentOrder }),
+        queryClient.invalidateQueries({ queryKey: queryKeys(organizationId).paymentOrders }),
       ]);
     },
     onError: (error) => setActionMessage(error instanceof Error ? error.message : 'Failed to approve payment.'),
@@ -3552,14 +3745,14 @@ function PaymentDetailPage({ session }: { session: AuthenticatedSession }) {
 
       let packet = preparedPacket ?? getPreparedPacket(paymentOrderQuery.data);
       if (!packet || packet.signerWallet !== sourceAddressRow.address) {
-        const prepared = await api.preparePaymentOrderExecution(workspaceId!, paymentOrderId!, {
+        const prepared = await api.preparePaymentOrderExecution(organizationId!, paymentOrderId!, {
           sourceTreasuryWalletId,
         });
         packet = prepared.executionPacket;
         setPreparedPacket(packet);
       }
       const signature = await signAndSubmitPreparedPayment(packet, selectedWalletId);
-      await api.attachPaymentOrderSignature(workspaceId!, paymentOrderId!, {
+      await api.attachPaymentOrderSignature(organizationId!, paymentOrderId!, {
         submittedSignature: signature,
         submittedAt: new Date().toISOString(),
       });
@@ -3568,26 +3761,26 @@ function PaymentDetailPage({ session }: { session: AuthenticatedSession }) {
     onSuccess: async (signature) => {
       setActionMessage(`Executed ${shortenAddress(signature, 8, 8)}.`);
       setExecutionModalOpen(false);
-      await queryClient.invalidateQueries({ queryKey: queryKeys(workspaceId, paymentOrderId).paymentOrder });
+      await queryClient.invalidateQueries({ queryKey: queryKeys(organizationId, paymentOrderId).paymentOrder });
     },
     onError: (error) => setActionMessage(error instanceof Error ? error.message : 'Failed to sign and submit payment.'),
   });
 
   const proofMutation = useMutation({
-    mutationFn: () => api.getPaymentOrderProof(workspaceId!, paymentOrderId!),
+    mutationFn: () => api.getPaymentOrderProof(organizationId!, paymentOrderId!),
     onSuccess: (proof) => {
       downloadJson(`payment-proof-${paymentOrderId}.json`, proof);
     },
     onError: (error) => setActionMessage(error instanceof Error ? error.message : 'Failed to export proof.'),
   });
   const deletePaymentMutation = useMutation({
-    mutationFn: () => api.cancelPaymentOrder(workspaceId!, paymentOrderId!),
+    mutationFn: () => api.cancelPaymentOrder(organizationId!, paymentOrderId!),
     onSuccess: async () => {
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: queryKeys(workspaceId).paymentOrders }),
-        queryClient.invalidateQueries({ queryKey: queryKeys(workspaceId).paymentRuns }),
+        queryClient.invalidateQueries({ queryKey: queryKeys(organizationId).paymentOrders }),
+        queryClient.invalidateQueries({ queryKey: queryKeys(organizationId).paymentRuns }),
       ]);
-      navigate(`/workspaces/${workspaceId}/payments`);
+      navigate(`/organizations/${organizationId}/payments`);
     },
     onError: (error) => setActionMessage(error instanceof Error ? error.message : 'Failed to delete payment.'),
   });
@@ -3599,7 +3792,7 @@ function PaymentDetailPage({ session }: { session: AuthenticatedSession }) {
       document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     });
   }, [location.hash, paymentOrderId, paymentOrderQuery.data?.paymentOrderId]);
-  if (!workspaceId || !paymentOrderId || !workspace) {
+  if (!organizationId || !paymentOrderId || !organization) {
     return <ScreenState title="Payment unavailable" description="Choose a payment from the queue." />;
   }
 
@@ -3916,10 +4109,10 @@ function PaymentDetailPage({ session }: { session: AuthenticatedSession }) {
 }
 
 function PaymentTable({
-  workspaceId,
+  organizationId,
   paymentOrders,
 }: {
-  workspaceId: string;
+  organizationId: string;
   paymentOrders: PaymentOrder[];
 }) {
   if (!paymentOrders.length) {
@@ -3939,7 +4132,7 @@ function PaymentTable({
         <span>Status</span>
       </div>
       {paymentOrders.map((order) => (
-        <Link className="data-table-row data-table-link data-table-row-payments-ext" key={order.paymentOrderId} to={`/workspaces/${workspaceId}/payments/${order.paymentOrderId}`}>
+        <Link className="data-table-row data-table-link data-table-row-payments-ext" key={order.paymentOrderId} to={`/organizations/${organizationId}/payments/${order.paymentOrderId}`}>
           <span>
             <strong>{order.destination.label}</strong>
             <small>{shortenAddress(order.paymentOrderId, 8, 6)}</small>
@@ -4003,12 +4196,12 @@ function UnifiedPaymentsTable({
 }
 
 function RunPaymentsTable({
-  workspaceId,
+  organizationId,
   paymentOrders,
   onExportProof,
   exportPending,
 }: {
-  workspaceId: string;
+  organizationId: string;
   paymentOrders: PaymentOrder[];
   onExportProof: (order: PaymentOrder) => void;
   exportPending?: boolean;
@@ -4031,7 +4224,7 @@ function RunPaymentsTable({
       {paymentOrders.map((order) => (
         <div className="data-table-row data-table-row-run-payments-ext" key={order.paymentOrderId}>
           <span>
-            <Link to={`/workspaces/${workspaceId}/payments/${order.paymentOrderId}`}>
+            <Link to={`/organizations/${organizationId}/payments/${order.paymentOrderId}`}>
               <strong>{order.destination.label}</strong>
             </Link>
             <small>{shortenAddress(order.paymentOrderId, 8, 6)}</small>
@@ -4057,7 +4250,7 @@ function RunPaymentsTable({
 }
 
 function ActionPaymentTable({
-  workspaceId,
+  organizationId,
   paymentOrders,
   actionHeader,
   emptyTitle,
@@ -4066,7 +4259,7 @@ function ActionPaymentTable({
   renderReason,
   renderAction,
 }: {
-  workspaceId: string;
+  organizationId: string;
   paymentOrders: PaymentOrder[];
   actionHeader: string;
   emptyTitle: string;
@@ -4085,7 +4278,7 @@ function ActionPaymentTable({
       </div>
       {paymentOrders.map((order) => (
         <div className={`data-table-row ${reasonHeader ? 'data-table-row-actions-reason' : 'data-table-row-actions'}`} key={order.paymentOrderId}>
-          <Link to={`/workspaces/${workspaceId}/payments/${order.paymentOrderId}`}>
+          <Link to={`/organizations/${organizationId}/payments/${order.paymentOrderId}`}>
             <strong>{order.destination.label}</strong>
             <small>{shortenAddress(order.paymentOrderId, 8, 6)}</small>
           </Link>
@@ -4102,11 +4295,11 @@ function ActionPaymentTable({
 }
 
 function PaymentRequestsTable({
-  workspaceId,
+  organizationId,
   requests,
   ordersByRequest,
 }: {
-  workspaceId: string;
+  organizationId: string;
   requests: PaymentRequest[];
   ordersByRequest: Map<string | null, PaymentOrder>;
 }) {
@@ -4141,7 +4334,7 @@ function PaymentRequestsTable({
         );
         if (order) {
           return (
-            <Link className="data-table-row data-table-link data-table-row-requests" key={request.paymentRequestId} to={`/workspaces/${workspaceId}/payments/${order.paymentOrderId}`}>
+            <Link className="data-table-row data-table-link data-table-row-requests" key={request.paymentRequestId} to={`/organizations/${organizationId}/payments/${order.paymentOrderId}`}>
               {content}
             </Link>
           );
@@ -4152,7 +4345,7 @@ function PaymentRequestsTable({
   );
 }
 
-function PaymentRunsTable({ workspaceId, runs }: { workspaceId: string; runs: PaymentRun[] }) {
+function PaymentRunsTable({ organizationId, runs }: { organizationId: string; runs: PaymentRun[] }) {
   if (!runs.length) {
     return <EmptyState title="No payment runs yet" description="Import a CSV batch to create a run." />;
   }
@@ -4169,7 +4362,7 @@ function PaymentRunsTable({ workspaceId, runs }: { workspaceId: string; runs: Pa
         <span>Created</span>
       </div>
       {runs.map((run) => (
-        <Link className="data-table-row data-table-link data-table-row-runs-ext" key={run.paymentRunId} to={`/workspaces/${workspaceId}/runs/${run.paymentRunId}`}>
+        <Link className="data-table-row data-table-link data-table-row-runs-ext" key={run.paymentRunId} to={`/organizations/${organizationId}/runs/${run.paymentRunId}`}>
           <span>
             <strong className="run-table-name">{run.runName}</strong>
           </span>
@@ -4189,13 +4382,13 @@ function PaymentRunsTable({ workspaceId, runs }: { workspaceId: string; runs: Pa
 }
 
 function PaymentRunProofTable({
-  workspaceId,
+  organizationId,
   runs,
   onExport,
   onPreview,
   previewPending,
 }: {
-  workspaceId: string;
+  organizationId: string;
   runs: PaymentRun[];
   onExport: (run: PaymentRun) => void;
   onPreview?: (run: PaymentRun) => void;
@@ -4209,7 +4402,7 @@ function PaymentRunProofTable({
       </div>
       {runs.map((run) => (
         <div className="data-table-row data-table-row-runs" key={run.paymentRunId}>
-          <Link to={`/workspaces/${workspaceId}/runs/${run.paymentRunId}`}><strong>{run.runName}</strong><small>{shortenAddress(run.paymentRunId, 8, 6)}</small></Link>
+          <Link to={`/organizations/${organizationId}/runs/${run.paymentRunId}`}><strong>{run.runName}</strong><small>{shortenAddress(run.paymentRunId, 8, 6)}</small></Link>
           <span>{run.totals.orderCount}</span>
           <span>{formatRawUsdcCompact(run.totals.totalAmountRaw)} USDC</span>
           <span>{run.totals.readyCount}/{run.totals.orderCount}</span>
@@ -4325,13 +4518,13 @@ function CounterpartiesTable({ counterparties, destinations }: { counterparties:
 }
 
 function ExceptionsTable({
-  workspaceId,
+  organizationId,
   exceptions,
   paymentByTransferId,
   onAction,
   onResolve,
 }: {
-  workspaceId: string;
+  organizationId: string;
   exceptions: ExceptionItem[];
   paymentByTransferId: Map<string, PaymentOrder>;
   onAction: (exceptionId: string, action: 'reviewed' | 'expected' | 'dismissed' | 'reopen') => void;
@@ -4358,7 +4551,7 @@ function ExceptionsTable({
               <StatusBadge tone={toneForGenericState(exception.severity)}>{exception.severity}</StatusBadge>
             </span>
             <span>
-              <Link to={`/workspaces/${workspaceId}/exceptions/${exception.exceptionId}`}>
+              <Link to={`/organizations/${organizationId}/exceptions/${exception.exceptionId}`}>
                 <strong>{recipientLabel}</strong>
               </Link>
               <small>{humanizeExceptionReason(exception.reasonCode)}</small>
@@ -4371,7 +4564,7 @@ function ExceptionsTable({
             <span>{exception.assignedToUser?.email ?? 'Unassigned'}</span>
             <span><StatusBadge tone={toneForGenericState(exception.status)}>{exception.status}</StatusBadge></span>
             <span className="table-actions">
-              <Link className="button button-secondary button-small" to={`/workspaces/${workspaceId}/exceptions/${exception.exceptionId}`}>
+              <Link className="button button-secondary button-small" to={`/organizations/${organizationId}/exceptions/${exception.exceptionId}`}>
                 Open
               </Link>
               <button className="button button-primary button-small" onClick={() => onResolve(exception)} type="button">
@@ -4891,19 +5084,22 @@ function StatusBadge({ tone, state, children }: { tone?: 'success' | 'warning' |
   return <span className={`status-badge status-${resolved}`}>{children}</span>;
 }
 
-function getWorkspaces(session: AuthenticatedSession) {
-  return session.organizations.flatMap((organization) => (
-    organization.workspaces.map((workspace) => ({ organization, workspace }))
-  ));
+function getOrganizations(session: AuthenticatedSession) {
+  return session.organizations.map((organization) => ({ organization }));
 }
 
-function findWorkspace(session: AuthenticatedSession, workspaceId?: string): Workspace | null {
-  if (!workspaceId) return null;
-  for (const organization of session.organizations) {
-    const workspace = organization.workspaces.find((candidate) => candidate.workspaceId === workspaceId);
-    if (workspace) return workspace;
-  }
-  return null;
+function findOrganization(session: AuthenticatedSession, organizationId?: string): Organization | null {
+  if (!organizationId) return null;
+  const organization = session.organizations.find((candidate) => candidate.organizationId === organizationId);
+  return organization
+    ? {
+        organizationId: organization.organizationId,
+        organizationName: organization.organizationName,
+        status: organization.status,
+        createdAt: '',
+        updatedAt: '',
+      }
+    : null;
 }
 
 function isActionableOrder(order: PaymentOrder) {

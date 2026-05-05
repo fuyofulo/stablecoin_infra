@@ -125,7 +125,7 @@ const FEATURES: Feature[] = [
   {
     id: 'policy',
     title: 'Policy before signature.',
-    desc: 'Set rules once. Trusted destinations auto-clear, unknown ones wait for a human. Configure thresholds, trust, and internal-vs-external routing per workspace.',
+    desc: 'Set rules once. Trusted destinations auto-clear, unknown ones wait for a human. Configure thresholds, trust, and internal-vs-external routing per organization.',
     Visual: PolicyVisual,
   },
   {

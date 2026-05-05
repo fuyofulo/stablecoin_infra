@@ -37,20 +37,20 @@ internalRouter.use((req, res, next) => {
   next();
 });
 
-internalRouter.get('/internal/workspaces', async (_req, res, next) => {
+internalRouter.get('/internal/organizations', async (_req, res, next) => {
   try {
-    const items = await prisma.workspace.findMany({
+    const items = await prisma.organization.findMany({
       orderBy: { createdAt: 'desc' },
       select: {
-        workspaceId: true,
-        workspaceName: true,
+        organizationId: true,
+        organizationName: true,
       },
     });
 
     res.json({
-      items: items.map((workspace) => ({
-        workspaceId: workspace.workspaceId,
-        workspaceName: workspace.workspaceName,
+      items: items.map((organization) => ({
+        organizationId: organization.organizationId,
+        organizationName: organization.organizationName,
       })),
     });
   } catch (error) {
@@ -58,9 +58,9 @@ internalRouter.get('/internal/workspaces', async (_req, res, next) => {
   }
 });
 
-internalRouter.get('/internal/workspaces/:workspaceId/matching-context', async (req, res, next) => {
+internalRouter.get('/internal/organizations/:organizationId/matching-context', async (req, res, next) => {
   try {
-    res.json(await buildWorkspaceMatchingSnapshot(req.params.workspaceId));
+    res.json(await buildOrganizationMatchingSnapshot(req.params.organizationId));
   } catch (error) {
     next(error);
   }
@@ -68,19 +68,19 @@ internalRouter.get('/internal/workspaces/:workspaceId/matching-context', async (
 
 internalRouter.get('/internal/matching-index', async (_req, res, next) => {
   try {
-    const workspaces = await prisma.workspace.findMany({
+    const organizations = await prisma.organization.findMany({
       orderBy: { createdAt: 'desc' },
-      select: { workspaceId: true },
+      select: { organizationId: true },
     });
 
     const snapshots = await Promise.all(
-      workspaces.map(async (workspace) => buildWorkspaceMatchingSnapshot(workspace.workspaceId)),
+      organizations.map((organization) => buildOrganizationMatchingSnapshot(organization.organizationId)),
     );
 
     res.json({
       version: getMatchingIndexVersion(),
       generatedAt: new Date().toISOString(),
-      workspaces: snapshots,
+      organizations: snapshots,
     });
   } catch (error) {
     next(error);
@@ -92,18 +92,18 @@ internalRouter.get('/internal/matching-index/events', (req, res) => {
   req.on('close', unsubscribe);
 });
 
-async function buildWorkspaceMatchingSnapshot(workspaceId: string) {
-  const [workspace, treasuryWallets, transferRequests] = await prisma.$transaction([
-    prisma.workspace.findUniqueOrThrow({
-      where: { workspaceId },
+async function buildOrganizationMatchingSnapshot(organizationId: string) {
+  const [organization, treasuryWallets, transferRequests] = await prisma.$transaction([
+    prisma.organization.findUniqueOrThrow({
+      where: { organizationId },
     }),
     prisma.treasuryWallet.findMany({
-      where: { workspaceId, isActive: true },
+      where: { organizationId, isActive: true },
       orderBy: { createdAt: 'desc' },
     }),
     prisma.transferRequest.findMany({
       where: {
-        workspaceId,
+        organizationId,
         asset: 'usdc',
         status: {
           in: [...ACTIVE_MATCHING_REQUEST_STATUSES],
@@ -131,14 +131,14 @@ async function buildWorkspaceMatchingSnapshot(workspaceId: string) {
   ]);
 
   const serializedTreasuryWallets = treasuryWallets.map((wallet) => ({
-    workspaceId: wallet.workspaceId,
+    organizationId: wallet.organizationId,
     treasuryWalletId: wallet.treasuryWalletId,
     address: wallet.address,
     usdcAtaAddress: wallet.usdcAtaAddress,
   }));
   const serializedMatches = transferRequests.map((request) => ({
     transferRequestId: request.transferRequestId,
-    workspaceId: request.workspaceId,
+    organizationId: request.organizationId,
     paymentOrderId: request.paymentOrderId,
     sourceTreasuryWalletId: request.sourceTreasuryWalletId,
     collectionRequestId: request.collectionRequest?.collectionRequestId ?? null,
@@ -187,7 +187,7 @@ async function buildWorkspaceMatchingSnapshot(workspaceId: string) {
   }));
 
   return {
-    workspace,
+    organization,
     treasuryWallets: serializedTreasuryWallets,
     matches: serializedMatches,
     addresses: serializedTreasuryWallets,

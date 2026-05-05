@@ -84,7 +84,7 @@ function usdcToRaw(value: string): string {
 }
 
 export function PaymentsPage({ session }: { session: AuthenticatedSession }) {
-  const { workspaceId } = useParams<{ workspaceId: string }>();
+  const { organizationId } = useParams<{ organizationId: string }>();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { success, error: toastError } = useToast();
@@ -95,34 +95,34 @@ export function PaymentsPage({ session }: { session: AuthenticatedSession }) {
   const [filter, setFilter] = useState<'all' | 'active' | 'settled' | 'needs_review'>('all');
 
   const paymentOrdersQuery = useQuery({
-    queryKey: ['payment-orders', workspaceId] as const,
-    queryFn: () => api.listPaymentOrders(workspaceId!),
-    enabled: Boolean(workspaceId),
+    queryKey: ['payment-orders', organizationId] as const,
+    queryFn: () => api.listPaymentOrders(organizationId!),
+    enabled: Boolean(organizationId),
     refetchInterval: 10_000,
   });
   const paymentRunsQuery = useQuery({
-    queryKey: ['payment-runs', workspaceId] as const,
-    queryFn: () => api.listPaymentRuns(workspaceId!),
-    enabled: Boolean(workspaceId),
+    queryKey: ['payment-runs', organizationId] as const,
+    queryFn: () => api.listPaymentRuns(organizationId!),
+    enabled: Boolean(organizationId),
     refetchInterval: 10_000,
   });
   const addressesQuery = useQuery({
-    queryKey: ['addresses', workspaceId] as const,
-    queryFn: () => api.listTreasuryWallets(workspaceId!),
-    enabled: Boolean(workspaceId),
+    queryKey: ['addresses', organizationId] as const,
+    queryFn: () => api.listTreasuryWallets(organizationId!),
+    enabled: Boolean(organizationId),
   });
   const destinationsQuery = useQuery({
-    queryKey: ['destinations', workspaceId] as const,
-    queryFn: () => api.listDestinations(workspaceId!),
-    enabled: Boolean(workspaceId),
+    queryKey: ['destinations', organizationId] as const,
+    queryFn: () => api.listDestinations(organizationId!),
+    enabled: Boolean(organizationId),
   });
 
-  if (!workspaceId) {
+  if (!organizationId) {
     return (
       <main className="page-frame">
         <div className="rd-state">
-          <h2 className="rd-state-title">Workspace unavailable</h2>
-          <p className="rd-state-body">Pick a workspace from the sidebar.</p>
+          <h2 className="rd-state-title">Organization unavailable</h2>
+          <p className="rd-state-body">Pick a organization from the sidebar.</p>
         </div>
       </main>
     );
@@ -152,7 +152,7 @@ export function PaymentsPage({ session }: { session: AuthenticatedSession }) {
         tone: statusToneForPayment(o.derivedState),
         origin: 'single',
         createdAt: o.createdAt,
-        to: `/workspaces/${workspaceId}/payments/${o.paymentOrderId}`,
+        to: `/organizations/${organizationId}/payments/${o.paymentOrderId}`,
       })),
       ...runs.map<UnifiedRow>((r) => ({
         kind: 'run',
@@ -168,11 +168,11 @@ export function PaymentsPage({ session }: { session: AuthenticatedSession }) {
         origin: 'run',
         originLabel: `Batch · ${r.totals.orderCount} rows`,
         createdAt: r.createdAt,
-        to: `/workspaces/${workspaceId}/runs/${r.paymentRunId}`,
+        to: `/organizations/${organizationId}/runs/${r.paymentRunId}`,
       })),
     ];
     return list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-  }, [standaloneOrders, runs, workspaceId]);
+  }, [standaloneOrders, runs, organizationId]);
 
   const filteredRows = useMemo(() => {
     let out = rows;
@@ -213,7 +213,7 @@ export function PaymentsPage({ session }: { session: AuthenticatedSession }) {
           <p className="eyebrow">Payments</p>
           <h1>All payments</h1>
           <p>
-            Every single payment and batch payout in this workspace. Create one, import many, and follow
+            Every single payment and batch payout in this organization. Create one, import many, and follow
             each from intent to proof.
           </p>
         </div>
@@ -392,14 +392,14 @@ export function PaymentsPage({ session }: { session: AuthenticatedSession }) {
 
       {createOpen ? (
         <CreatePaymentDialog
-          workspaceId={workspaceId}
+          organizationId={organizationId}
           destinations={destinations}
           addresses={addresses}
           onClose={() => setCreateOpen(false)}
           onSuccess={async () => {
             setCreateOpen(false);
             success('Payment created and submitted for approval.');
-            await queryClient.invalidateQueries({ queryKey: ['payment-orders', workspaceId] });
+            await queryClient.invalidateQueries({ queryKey: ['payment-orders', organizationId] });
           }}
           onError={(message) => toastError(message)}
         />
@@ -407,14 +407,14 @@ export function PaymentsPage({ session }: { session: AuthenticatedSession }) {
 
       {importOpen ? (
         <ImportCsvDialog
-          workspaceId={workspaceId}
+          organizationId={organizationId}
           addresses={addresses}
           onClose={() => setImportOpen(false)}
           onSuccess={async (name, rows) => {
             setImportOpen(false);
             success(`Imported "${name}" with ${rows} rows. Submitted for approval.`);
-            await queryClient.invalidateQueries({ queryKey: ['payment-runs', workspaceId] });
-            await queryClient.invalidateQueries({ queryKey: ['payment-orders', workspaceId] });
+            await queryClient.invalidateQueries({ queryKey: ['payment-runs', organizationId] });
+            await queryClient.invalidateQueries({ queryKey: ['payment-orders', organizationId] });
           }}
           onError={(message) => toastError(message)}
         />
@@ -424,14 +424,14 @@ export function PaymentsPage({ session }: { session: AuthenticatedSession }) {
 }
 
 function CreatePaymentDialog(props: {
-  workspaceId: string;
+  organizationId: string;
   destinations: Destination[];
   addresses: TreasuryWallet[];
   onClose: () => void;
   onSuccess: () => void;
   onError: (message: string) => void;
 }) {
-  const { workspaceId, destinations, addresses, onClose, onSuccess, onError } = props;
+  const { organizationId, destinations, addresses, onClose, onSuccess, onError } = props;
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key === 'Escape') onClose();
@@ -448,7 +448,7 @@ function CreatePaymentDialog(props: {
       if (!destinationId || !amount || !reason) {
         throw new Error('Destination, amount, and reason are required.');
       }
-      return api.createPaymentRequest(workspaceId, {
+      return api.createPaymentRequest(organizationId, {
         destinationId,
         amountRaw: usdcToRaw(amount),
         reason,
@@ -567,13 +567,13 @@ function CreatePaymentDialog(props: {
 }
 
 function ImportCsvDialog(props: {
-  workspaceId: string;
+  organizationId: string;
   addresses: TreasuryWallet[];
   onClose: () => void;
   onSuccess: (runName: string, rowCount: number) => void;
   onError: (message: string) => void;
 }) {
-  const { workspaceId, addresses, onClose, onSuccess, onError } = props;
+  const { organizationId, addresses, onClose, onSuccess, onError } = props;
   const [step, setStep] = useState<'edit' | 'preview'>('edit');
   const [csvText, setCsvText] = useState('');
   const [runName, setRunName] = useState('');
@@ -593,7 +593,7 @@ function ImportCsvDialog(props: {
     mutationFn: async () => {
       const csv = csvText.trim();
       if (!csv) throw new Error('Paste at least one CSV row.');
-      const result = await api.importPaymentRunCsv(workspaceId, {
+      const result = await api.importPaymentRunCsv(organizationId, {
         csv,
         runName: runName.trim() || undefined,
         sourceTreasuryWalletId: sourceAddressId || undefined,

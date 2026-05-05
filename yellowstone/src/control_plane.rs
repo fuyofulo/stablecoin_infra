@@ -29,7 +29,7 @@ impl ControlPlaneClient {
         }
     }
 
-    pub async fn fetch_registry(&self) -> Result<WorkspaceRegistry, reqwest::Error> {
+    pub async fn fetch_registry(&self) -> Result<OrganizationRegistry, reqwest::Error> {
         let url = format!("{}/internal/matching-index", self.base_url);
         let index = self
             .with_internal_auth(self.client.get(url).timeout(Duration::from_secs(3)))
@@ -39,7 +39,7 @@ impl ControlPlaneClient {
             .json::<MatchingIndexResponse>()
             .await?;
 
-        Ok(WorkspaceRegistry::new(index.version, index.workspaces))
+        Ok(OrganizationRegistry::new(index.version, index.organizations))
     }
 
     async fn connect_matching_index_event_stream(
@@ -61,20 +61,20 @@ impl ControlPlaneClient {
     }
 }
 
-pub struct WorkspaceRegistryCache {
+pub struct OrganizationRegistryCache {
     client: ControlPlaneClient,
     last_refresh_at: Option<Instant>,
     last_refresh_error_log_at: Option<Instant>,
-    registry: WorkspaceRegistry,
+    registry: OrganizationRegistry,
 }
 
-impl WorkspaceRegistryCache {
+impl OrganizationRegistryCache {
     pub fn new(client: ControlPlaneClient) -> Self {
         Self {
             client,
             last_refresh_at: None,
             last_refresh_error_log_at: None,
-            registry: WorkspaceRegistry::default(),
+            registry: OrganizationRegistry::default(),
         }
     }
 
@@ -111,7 +111,7 @@ impl WorkspaceRegistryCache {
         should_log
     }
 
-    pub fn registry(&self) -> &WorkspaceRegistry {
+    pub fn registry(&self) -> &OrganizationRegistry {
         &self.registry
     }
 
@@ -121,8 +121,8 @@ impl WorkspaceRegistryCache {
 }
 
 #[cfg(test)]
-impl WorkspaceRegistryCache {
-    pub fn with_registry(registry: WorkspaceRegistry) -> Self {
+impl OrganizationRegistryCache {
+    pub fn with_registry(registry: OrganizationRegistry) -> Self {
         Self {
             client: ControlPlaneClient::new("http://127.0.0.1:0".to_string(), None),
             last_refresh_at: Some(Instant::now()),
@@ -133,24 +133,24 @@ impl WorkspaceRegistryCache {
 }
 
 #[derive(Clone, Default)]
-pub struct WorkspaceRegistry {
+pub struct OrganizationRegistry {
     version: u64,
-    workspace_matches_by_destination: HashMap<String, Vec<WorkspacePaymentMatch>>,
+    organization_matches_by_destination: HashMap<String, Vec<OrganizationPaymentMatch>>,
     watched_addresses: HashSet<String>,
     submitted_signatures: HashSet<String>,
-    pending_requests_by_workspace_wallet:
-        HashMap<String, HashMap<String, Vec<WorkspaceTransferRequestMatch>>>,
+    pending_requests_by_organization_wallet:
+        HashMap<String, HashMap<String, Vec<OrganizationTransferRequestMatch>>>,
 }
 
-impl WorkspaceRegistry {
-    fn new(version: u64, raw_snapshots: Vec<WorkspaceMatchingSnapshot>) -> Self {
-        let mut workspace_matches_by_destination: HashMap<String, Vec<WorkspacePaymentMatch>> =
+impl OrganizationRegistry {
+    fn new(version: u64, raw_snapshots: Vec<OrganizationMatchingSnapshot>) -> Self {
+        let mut organization_matches_by_destination: HashMap<String, Vec<OrganizationPaymentMatch>> =
             HashMap::new();
         let mut watched_addresses = HashSet::new();
         let mut submitted_signatures = HashSet::new();
-        let mut pending_requests_by_workspace_wallet: HashMap<
+        let mut pending_requests_by_organization_wallet: HashMap<
             String,
-            HashMap<String, Vec<WorkspaceTransferRequestMatch>>,
+            HashMap<String, Vec<OrganizationTransferRequestMatch>>,
         > = HashMap::new();
 
         for raw_snapshot in raw_snapshots {
@@ -171,18 +171,18 @@ impl WorkspaceRegistry {
                     submitted_signatures.insert(submitted_signature);
                 }
 
-                let matched = WorkspacePaymentMatch {
-                    workspace_id: raw_snapshot.workspace.workspace_id.clone(),
+                let matched = OrganizationPaymentMatch {
+                    organization_id: raw_snapshot.organization.organization_id.clone(),
                     #[cfg(test)]
                     wallet_address: destination_wallet_address.clone(),
                 };
 
-                workspace_matches_by_destination
+                organization_matches_by_destination
                     .entry(destination_wallet_address.clone())
                     .or_default()
                     .push(matched);
 
-                let request_match = WorkspaceTransferRequestMatch {
+                let request_match = OrganizationTransferRequestMatch {
                     transfer_request_id: request.transfer_request_id.clone(),
                     amount_raw: request.amount_raw.parse().unwrap_or_default(),
                     requested_at: request.requested_at,
@@ -193,13 +193,13 @@ impl WorkspaceRegistry {
                         .as_ref()
                         .and_then(|execution| execution.submitted_signature.clone()),
                     #[cfg(test)]
-                    workspace_id: raw_snapshot.workspace.workspace_id.clone(),
+                    organization_id: raw_snapshot.organization.organization_id.clone(),
                     #[cfg(test)]
                     destination_wallet_address: destination_wallet_address.clone(),
                 };
 
-                pending_requests_by_workspace_wallet
-                    .entry(raw_snapshot.workspace.workspace_id.clone())
+                pending_requests_by_organization_wallet
+                    .entry(raw_snapshot.organization.organization_id.clone())
                     .or_default()
                     .entry(destination_wallet_address)
                     .or_default()
@@ -209,10 +209,10 @@ impl WorkspaceRegistry {
 
         Self {
             version,
-            workspace_matches_by_destination,
+            organization_matches_by_destination,
             watched_addresses,
             submitted_signatures,
-            pending_requests_by_workspace_wallet,
+            pending_requests_by_organization_wallet,
         }
     }
 
@@ -231,28 +231,28 @@ impl WorkspaceRegistry {
     pub fn matches_for_destination_wallet(
         &self,
         address: &str,
-    ) -> Option<&[WorkspacePaymentMatch]> {
-        self.workspace_matches_by_destination
+    ) -> Option<&[OrganizationPaymentMatch]> {
+        self.organization_matches_by_destination
             .get(address)
             .map(Vec::as_slice)
     }
 
     pub fn pending_requests_for_destination_wallet(
         &self,
-        workspace_id: &str,
+        organization_id: &str,
         destination_wallet_address: &str,
-    ) -> Option<&[WorkspaceTransferRequestMatch]> {
-        self.pending_requests_by_workspace_wallet
-            .get(workspace_id)
+    ) -> Option<&[OrganizationTransferRequestMatch]> {
+        self.pending_requests_by_organization_wallet
+            .get(organization_id)
             .and_then(|requests| requests.get(destination_wallet_address))
             .map(Vec::as_slice)
     }
 }
 
 #[cfg(test)]
-impl WorkspaceRegistry {
-    pub fn from_matches(matches: Vec<WorkspacePaymentMatch>) -> Self {
-        let mut workspace_matches_by_destination: HashMap<String, Vec<WorkspacePaymentMatch>> =
+impl OrganizationRegistry {
+    pub fn from_matches(matches: Vec<OrganizationPaymentMatch>) -> Self {
+        let mut organization_matches_by_destination: HashMap<String, Vec<OrganizationPaymentMatch>> =
             HashMap::new();
         let mut watched_addresses = HashSet::new();
 
@@ -261,7 +261,7 @@ impl WorkspaceRegistry {
             let wallet_address = matched.wallet_address.clone();
             #[cfg(test)]
             watched_addresses.insert(wallet_address.clone());
-            workspace_matches_by_destination
+            organization_matches_by_destination
                 .entry(wallet_address)
                 .or_default()
                 .push(matched);
@@ -269,22 +269,22 @@ impl WorkspaceRegistry {
 
         Self {
             version: 1,
-            workspace_matches_by_destination,
+            organization_matches_by_destination,
             watched_addresses,
             submitted_signatures: HashSet::new(),
-            pending_requests_by_workspace_wallet: HashMap::new(),
+            pending_requests_by_organization_wallet: HashMap::new(),
         }
     }
 
     pub fn with_transfer_requests(
-        matches: Vec<WorkspacePaymentMatch>,
-        transfer_requests: Vec<WorkspaceTransferRequestMatch>,
+        matches: Vec<OrganizationPaymentMatch>,
+        transfer_requests: Vec<OrganizationTransferRequestMatch>,
     ) -> Self {
         let mut registry = Self::from_matches(matches);
 
         for request in transfer_requests {
             #[cfg(test)]
-            let workspace_id = request.workspace_id.clone();
+            let organization_id = request.organization_id.clone();
             #[cfg(test)]
             let destination_wallet_address = request.destination_wallet_address.clone();
             #[cfg(test)]
@@ -297,8 +297,8 @@ impl WorkspaceRegistry {
                     .insert(submitted_signature.clone());
             }
             registry
-                .pending_requests_by_workspace_wallet
-                .entry(workspace_id)
+                .pending_requests_by_organization_wallet
+                .entry(organization_id)
                 .or_default()
                 .entry(destination_wallet_address)
                 .or_default()
@@ -310,14 +310,14 @@ impl WorkspaceRegistry {
 }
 
 #[derive(Clone)]
-pub struct WorkspacePaymentMatch {
-    pub workspace_id: String,
+pub struct OrganizationPaymentMatch {
+    pub organization_id: String,
     #[cfg(test)]
     pub wallet_address: String,
 }
 
 #[derive(Clone)]
-pub struct WorkspaceTransferRequestMatch {
+pub struct OrganizationTransferRequestMatch {
     pub transfer_request_id: String,
     pub amount_raw: i128,
     pub requested_at: DateTime<Utc>,
@@ -325,12 +325,12 @@ pub struct WorkspaceTransferRequestMatch {
     pub expected_source_wallet_address: Option<String>,
     pub submitted_signature: Option<String>,
     #[cfg(test)]
-    pub workspace_id: String,
+    pub organization_id: String,
     #[cfg(test)]
     pub destination_wallet_address: String,
 }
 
-pub async fn run_matching_index_event_listener(registry_cache: Arc<Mutex<WorkspaceRegistryCache>>) {
+pub async fn run_matching_index_event_listener(registry_cache: Arc<Mutex<OrganizationRegistryCache>>) {
     let mut reconnect_backoff = Duration::from_secs(1);
 
     loop {
@@ -406,21 +406,21 @@ pub async fn run_matching_index_event_listener(registry_cache: Arc<Mutex<Workspa
 #[derive(Deserialize)]
 struct MatchingIndexResponse {
     version: u64,
-    workspaces: Vec<WorkspaceMatchingSnapshot>,
+    organizations: Vec<OrganizationMatchingSnapshot>,
 }
 
 #[derive(Deserialize)]
-struct WorkspaceMatchingSnapshot {
-    workspace: WorkspaceView,
+struct OrganizationMatchingSnapshot {
+    organization: OrganizationView,
     #[serde(rename = "treasuryWallets")]
     treasury_wallets: Vec<TreasuryWalletView>,
     matches: Vec<TransferRequestDetails>,
 }
 
 #[derive(Deserialize)]
-struct WorkspaceView {
-    #[serde(rename = "workspaceId")]
-    workspace_id: String,
+struct OrganizationView {
+    #[serde(rename = "organizationId")]
+    organization_id: String,
 }
 
 #[derive(Deserialize)]
@@ -465,11 +465,11 @@ mod tests {
 
     #[test]
     fn registry_indexes_wallets_and_pending_requests() {
-        let registry = WorkspaceRegistry::new(
+        let registry = OrganizationRegistry::new(
             42,
-            vec![WorkspaceMatchingSnapshot {
-                workspace: WorkspaceView {
-                    workspace_id: "workspace-1".to_string(),
+            vec![OrganizationMatchingSnapshot {
+                organization: OrganizationView {
+                    organization_id: "organization-1".to_string(),
                 },
                 treasury_wallets: vec![TreasuryWalletView {
                     address: "SourceWallet111".to_string(),
@@ -495,10 +495,10 @@ mod tests {
             .matches_for_destination_wallet("Wallet111")
             .expect("wallet should be indexed");
         assert_eq!(wallet_matches.len(), 1);
-        assert_eq!(wallet_matches[0].workspace_id, "workspace-1");
+        assert_eq!(wallet_matches[0].organization_id, "organization-1");
 
         let pending_by_wallet = registry
-            .pending_requests_for_destination_wallet("workspace-1", "Wallet111")
+            .pending_requests_for_destination_wallet("organization-1", "Wallet111")
             .expect("pending request should also be indexed by wallet");
         assert_eq!(pending_by_wallet.len(), 1);
         assert_eq!(pending_by_wallet[0].transfer_request_id, "request-1");

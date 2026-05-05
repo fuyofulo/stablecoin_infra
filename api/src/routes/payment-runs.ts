@@ -14,16 +14,16 @@ import {
 import { buildPaymentRunProofPacket } from '../payment-run-proof.js';
 import { renderPaymentRunProofMarkdown } from '../payment-proof-markdown.js';
 import { isSolanaSignatureLike } from '../solana.js';
-import { assertWorkspaceAccess, assertWorkspaceAdmin } from '../workspace-access.js';
+import { assertOrganizationAccess, assertOrganizationAdmin } from '../organization-access.js';
 import { asyncRoute, sendCreated, sendJson, sendList, unwrapItems } from '../route-helpers.js';
 
 export const paymentRunsRouter = Router();
 
-const workspaceParamsSchema = z.object({
-  workspaceId: z.string().uuid(),
+const organizationParamsSchema = z.object({
+  organizationId: z.string().uuid(),
 });
 
-const paymentRunParamsSchema = workspaceParamsSchema.extend({
+const paymentRunParamsSchema = organizationParamsSchema.extend({
   paymentRunId: z.string().uuid(),
 });
 
@@ -49,18 +49,18 @@ const attachPaymentRunSignatureSchema = z.object({
   submittedAt: z.string().datetime().optional(),
 });
 
-paymentRunsRouter.get('/workspaces/:workspaceId/payment-runs', asyncRoute(async (req, res) => {
-    const { workspaceId } = workspaceParamsSchema.parse(req.params);
-    await assertWorkspaceAccess(workspaceId, req.auth!);
-    sendList(res, unwrapItems(await listPaymentRuns(workspaceId)), { limit: 100 });
+paymentRunsRouter.get('/organizations/:organizationId/payment-runs', asyncRoute(async (req, res) => {
+    const { organizationId } = organizationParamsSchema.parse(req.params);
+    await assertOrganizationAccess(organizationId, req.auth!);
+    sendList(res, unwrapItems(await listPaymentRuns(organizationId)), { limit: 100 });
 }));
 
-paymentRunsRouter.post('/workspaces/:workspaceId/payment-runs/import-csv', asyncRoute(async (req, res) => {
-    const { workspaceId } = workspaceParamsSchema.parse(req.params);
-    await assertWorkspaceAdmin(workspaceId, req.auth!);
+paymentRunsRouter.post('/organizations/:organizationId/payment-runs/import-csv', asyncRoute(async (req, res) => {
+    const { organizationId } = organizationParamsSchema.parse(req.params);
+    await assertOrganizationAdmin(organizationId, req.auth!);
     const input = importPaymentRunCsvSchema.parse(req.body);
     sendCreated(res, await importPaymentRunFromCsv({
-      workspaceId,
+      organizationId,
       actorUserId: req.auth!.userId,
       csv: input.csv,
       runName: input.runName,
@@ -70,66 +70,66 @@ paymentRunsRouter.post('/workspaces/:workspaceId/payment-runs/import-csv', async
     }));
 }));
 
-paymentRunsRouter.post('/workspaces/:workspaceId/payment-runs/import-csv/preview', asyncRoute(async (req, res) => {
-    const { workspaceId } = workspaceParamsSchema.parse(req.params);
-    await assertWorkspaceAccess(workspaceId, req.auth!);
+paymentRunsRouter.post('/organizations/:organizationId/payment-runs/import-csv/preview', asyncRoute(async (req, res) => {
+    const { organizationId } = organizationParamsSchema.parse(req.params);
+    await assertOrganizationAccess(organizationId, req.auth!);
     const input = z.object({ csv: z.string().min(1) }).parse(req.body);
     sendJson(res, await previewPaymentRunCsv({
-      workspaceId,
+      organizationId,
       csv: input.csv,
     }));
 }));
 
-paymentRunsRouter.get('/workspaces/:workspaceId/payment-runs/:paymentRunId', asyncRoute(async (req, res) => {
-    const { workspaceId, paymentRunId } = paymentRunParamsSchema.parse(req.params);
-    await assertWorkspaceAccess(workspaceId, req.auth!);
-    sendJson(res, await getPaymentRunDetail(workspaceId, paymentRunId));
+paymentRunsRouter.get('/organizations/:organizationId/payment-runs/:paymentRunId', asyncRoute(async (req, res) => {
+    const { organizationId, paymentRunId } = paymentRunParamsSchema.parse(req.params);
+    await assertOrganizationAccess(organizationId, req.auth!);
+    sendJson(res, await getPaymentRunDetail(organizationId, paymentRunId));
 }));
 
-paymentRunsRouter.delete('/workspaces/:workspaceId/payment-runs/:paymentRunId', asyncRoute(async (req, res) => {
-    const { workspaceId, paymentRunId } = paymentRunParamsSchema.parse(req.params);
-    await assertWorkspaceAdmin(workspaceId, req.auth!);
-    sendJson(res, await deletePaymentRun(workspaceId, paymentRunId));
+paymentRunsRouter.delete('/organizations/:organizationId/payment-runs/:paymentRunId', asyncRoute(async (req, res) => {
+    const { organizationId, paymentRunId } = paymentRunParamsSchema.parse(req.params);
+    await assertOrganizationAdmin(organizationId, req.auth!);
+    sendJson(res, await deletePaymentRun(organizationId, paymentRunId));
 }));
 
-paymentRunsRouter.post('/workspaces/:workspaceId/payment-runs/:paymentRunId/cancel', asyncRoute(async (req, res) => {
-    const { workspaceId, paymentRunId } = paymentRunParamsSchema.parse(req.params);
-    await assertWorkspaceAdmin(workspaceId, req.auth!);
+paymentRunsRouter.post('/organizations/:organizationId/payment-runs/:paymentRunId/cancel', asyncRoute(async (req, res) => {
+    const { organizationId, paymentRunId } = paymentRunParamsSchema.parse(req.params);
+    await assertOrganizationAdmin(organizationId, req.auth!);
     sendJson(res, await cancelPaymentRun({
-      workspaceId,
+      organizationId,
       paymentRunId,
       actorUserId: req.auth!.userId,
     }));
 }));
 
-paymentRunsRouter.post('/workspaces/:workspaceId/payment-runs/:paymentRunId/close', asyncRoute(async (req, res) => {
-    const { workspaceId, paymentRunId } = paymentRunParamsSchema.parse(req.params);
-    await assertWorkspaceAdmin(workspaceId, req.auth!);
+paymentRunsRouter.post('/organizations/:organizationId/payment-runs/:paymentRunId/close', asyncRoute(async (req, res) => {
+    const { organizationId, paymentRunId } = paymentRunParamsSchema.parse(req.params);
+    await assertOrganizationAdmin(organizationId, req.auth!);
     sendJson(res, await closePaymentRun({
-      workspaceId,
+      organizationId,
       paymentRunId,
       actorUserId: req.auth!.userId,
     }));
 }));
 
-paymentRunsRouter.post('/workspaces/:workspaceId/payment-runs/:paymentRunId/prepare-execution', asyncRoute(async (req, res) => {
-    const { workspaceId, paymentRunId } = paymentRunParamsSchema.parse(req.params);
-    await assertWorkspaceAdmin(workspaceId, req.auth!);
+paymentRunsRouter.post('/organizations/:organizationId/payment-runs/:paymentRunId/prepare-execution', asyncRoute(async (req, res) => {
+    const { organizationId, paymentRunId } = paymentRunParamsSchema.parse(req.params);
+    await assertOrganizationAdmin(organizationId, req.auth!);
     const input = preparePaymentRunExecutionSchema.parse(req.body);
     sendCreated(res, await preparePaymentRunExecution({
-      workspaceId,
+      organizationId,
       paymentRunId,
       actorUserId: req.auth!.userId,
       sourceTreasuryWalletId: input.sourceTreasuryWalletId,
     }));
 }));
 
-paymentRunsRouter.post('/workspaces/:workspaceId/payment-runs/:paymentRunId/attach-signature', asyncRoute(async (req, res) => {
-    const { workspaceId, paymentRunId } = paymentRunParamsSchema.parse(req.params);
-    await assertWorkspaceAdmin(workspaceId, req.auth!);
+paymentRunsRouter.post('/organizations/:organizationId/payment-runs/:paymentRunId/attach-signature', asyncRoute(async (req, res) => {
+    const { organizationId, paymentRunId } = paymentRunParamsSchema.parse(req.params);
+    await assertOrganizationAdmin(organizationId, req.auth!);
     const input = attachPaymentRunSignatureSchema.parse(req.body);
     sendCreated(res, await attachPaymentRunSignature({
-      workspaceId,
+      organizationId,
       paymentRunId,
       actorUserId: req.auth!.userId,
       submittedSignature: input.submittedSignature,
@@ -137,11 +137,11 @@ paymentRunsRouter.post('/workspaces/:workspaceId/payment-runs/:paymentRunId/atta
     }));
 }));
 
-paymentRunsRouter.get('/workspaces/:workspaceId/payment-runs/:paymentRunId/proof', asyncRoute(async (req, res) => {
-    const { workspaceId, paymentRunId } = paymentRunParamsSchema.parse(req.params);
+paymentRunsRouter.get('/organizations/:organizationId/payment-runs/:paymentRunId/proof', asyncRoute(async (req, res) => {
+    const { organizationId, paymentRunId } = paymentRunParamsSchema.parse(req.params);
     const query = paymentRunProofQuerySchema.parse(req.query);
-    await assertWorkspaceAccess(workspaceId, req.auth!);
-    const proof = await buildPaymentRunProofPacket(workspaceId, paymentRunId, { detail: query.detail });
+    await assertOrganizationAccess(organizationId, req.auth!);
+    const proof = await buildPaymentRunProofPacket(organizationId, paymentRunId, { detail: query.detail });
     if (query.format === 'markdown') {
       res.setHeader('content-type', 'text/markdown; charset=utf-8');
       res.setHeader('content-disposition', `attachment; filename="payment-run-${paymentRunId}-proof.md"`);

@@ -91,8 +91,8 @@ function buildLifecycle(collection: CollectionRequest): LifecycleStage[] {
 }
 
 export function CollectionDetailPage() {
-  const { workspaceId, collectionRequestId } = useParams<{
-    workspaceId: string;
+  const { organizationId, collectionRequestId } = useParams<{
+    organizationId: string;
     collectionRequestId: string;
   }>();
   const _navigate = useNavigate();
@@ -100,9 +100,9 @@ export function CollectionDetailPage() {
   const { success, error: toastError } = useToast();
 
   const collectionQuery = useQuery({
-    queryKey: ['collection', workspaceId, collectionRequestId] as const,
-    queryFn: () => api.getCollection(workspaceId!, collectionRequestId!),
-    enabled: Boolean(workspaceId && collectionRequestId),
+    queryKey: ['collection', organizationId, collectionRequestId] as const,
+    queryFn: () => api.getCollection(organizationId!, collectionRequestId!),
+    enabled: Boolean(organizationId && collectionRequestId),
     refetchInterval: (query) => {
       if (typeof document !== 'undefined' && document.hidden) return false;
       const s = query.state.data?.derivedState;
@@ -112,9 +112,9 @@ export function CollectionDetailPage() {
   });
 
   const proofQuery = useQuery({
-    queryKey: ['collection-proof', workspaceId, collectionRequestId] as const,
-    queryFn: () => api.getCollectionProof(workspaceId!, collectionRequestId!),
-    enabled: Boolean(workspaceId && collectionRequestId),
+    queryKey: ['collection-proof', organizationId, collectionRequestId] as const,
+    queryFn: () => api.getCollectionProof(organizationId!, collectionRequestId!),
+    enabled: Boolean(organizationId && collectionRequestId),
     refetchInterval: (query) => {
       if (typeof document !== 'undefined' && document.hidden) return false;
       const status = query.state.data?.status;
@@ -124,25 +124,25 @@ export function CollectionDetailPage() {
   });
 
   const proofDownloadMutation = useMutation({
-    mutationFn: () => api.downloadCollectionProofJson(workspaceId!, collectionRequestId!),
+    mutationFn: () => api.downloadCollectionProofJson(organizationId!, collectionRequestId!),
     onError: (err) =>
       toastError(err instanceof Error ? err.message : 'Could not export collection proof.'),
   });
 
   const cancelMutation = useMutation({
-    mutationFn: () => api.cancelCollection(workspaceId!, collectionRequestId!),
+    mutationFn: () => api.cancelCollection(organizationId!, collectionRequestId!),
     onSuccess: async () => {
       success('Collection cancelled.');
       await queryClient.invalidateQueries({
-        queryKey: ['collection', workspaceId, collectionRequestId],
+        queryKey: ['collection', organizationId, collectionRequestId],
       });
-      await queryClient.invalidateQueries({ queryKey: ['collections', workspaceId] });
+      await queryClient.invalidateQueries({ queryKey: ['collections', organizationId] });
     },
     onError: (err) =>
       toastError(err instanceof Error ? err.message : 'Could not cancel collection.'),
   });
 
-  if (!workspaceId || !collectionRequestId) {
+  if (!organizationId || !collectionRequestId) {
     return (
       <main className="page-frame" data-layout="rd">
         <div className="rd-page-container">
@@ -169,7 +169,7 @@ export function CollectionDetailPage() {
     return (
       <main className="page-frame" data-layout="rd">
         <div className="rd-page-container">
-          <Link to={`/workspaces/${workspaceId}/collections`} className="rd-back">
+          <Link to={`/organizations/${organizationId}/collections`} className="rd-back">
             <span className="rd-back-arrow" aria-hidden>
               ←
             </span>
@@ -220,7 +220,7 @@ export function CollectionDetailPage() {
   return (
     <main className="page-frame" data-layout="rd">
       <div className="rd-page-container">
-        <Link to={`/workspaces/${workspaceId}/collections`} className="rd-back">
+        <Link to={`/organizations/${organizationId}/collections`} className="rd-back">
           <span className="rd-back-arrow" aria-hidden>
             ←
           </span>
@@ -303,7 +303,7 @@ export function CollectionDetailPage() {
                 {collection.collectionSource ? (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                     <Link
-                      to={`/workspaces/${workspaceId}/payers`}
+                      to={`/organizations/${organizationId}/payers`}
                       className="rd-addr-link"
                       style={{ fontSize: 13 }}
                     >
@@ -347,7 +347,7 @@ export function CollectionDetailPage() {
               <DetailEntry label="Counterparty">
                 {collection.counterparty?.displayName ? (
                   <Link
-                    to={`/workspaces/${workspaceId}/counterparties`}
+                    to={`/organizations/${organizationId}/counterparties`}
                     className="rd-addr-link"
                   >
                     <span>{collection.counterparty.displayName}</span>
@@ -390,7 +390,7 @@ export function CollectionDetailPage() {
               {collection.collectionRun ? (
                 <DetailEntry label="Batch">
                   <Link
-                    to={`/workspaces/${workspaceId}/collection-runs/${collection.collectionRun.collectionRunId}`}
+                    to={`/organizations/${organizationId}/collection-runs/${collection.collectionRun.collectionRunId}`}
                     className="rd-addr-link"
                   >
                     <span>{collection.collectionRun.runName}</span>

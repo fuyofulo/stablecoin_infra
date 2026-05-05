@@ -29,7 +29,7 @@ function groupByCounterparty(
 }
 
 export function CounterpartiesPage({ session: _session }: { session: AuthenticatedSession }) {
-  const { workspaceId } = useParams<{ workspaceId: string }>();
+  const { organizationId } = useParams<{ organizationId: string }>();
   const queryClient = useQueryClient();
   const { success, error: toastError } = useToast();
 
@@ -38,28 +38,28 @@ export function CounterpartiesPage({ session: _session }: { session: Authenticat
   const [filter, setFilter] = useState<CategoryFilter>('all');
 
   const counterpartiesQuery = useQuery({
-    queryKey: ['counterparties', workspaceId] as const,
-    queryFn: () => api.listCounterparties(workspaceId!),
-    enabled: Boolean(workspaceId),
+    queryKey: ['counterparties', organizationId] as const,
+    queryFn: () => api.listCounterparties(organizationId!),
+    enabled: Boolean(organizationId),
   });
   const destinationsQuery = useQuery({
-    queryKey: ['destinations', workspaceId] as const,
-    queryFn: () => api.listDestinations(workspaceId!),
-    enabled: Boolean(workspaceId),
+    queryKey: ['destinations', organizationId] as const,
+    queryFn: () => api.listDestinations(organizationId!),
+    enabled: Boolean(organizationId),
   });
   const payersQuery = useQuery({
-    queryKey: ['collection-sources', workspaceId] as const,
-    queryFn: () => api.listCollectionSources(workspaceId!),
-    enabled: Boolean(workspaceId),
+    queryKey: ['collection-sources', organizationId] as const,
+    queryFn: () => api.listCollectionSources(organizationId!),
+    enabled: Boolean(organizationId),
   });
 
   async function invalidate() {
-    await queryClient.invalidateQueries({ queryKey: ['counterparties', workspaceId] });
+    await queryClient.invalidateQueries({ queryKey: ['counterparties', organizationId] });
   }
 
   const createCounterpartyMutation = useMutation({
     mutationFn: (form: FormData) =>
-      api.createCounterparty(workspaceId!, {
+      api.createCounterparty(organizationId!, {
         displayName: String(form.get('displayName') ?? '').trim(),
         category: String(form.get('category') ?? '').trim() || undefined,
       }),
@@ -72,12 +72,12 @@ export function CounterpartiesPage({ session: _session }: { session: Authenticat
       toastError(err instanceof Error ? err.message : 'Unable to save counterparty.'),
   });
 
-  if (!workspaceId) {
+  if (!organizationId) {
     return (
       <main className="page-frame">
         <div className="rd-state">
-          <h2 className="rd-state-title">Workspace unavailable</h2>
-          <p className="rd-state-body">Pick a workspace from the sidebar.</p>
+          <h2 className="rd-state-title">Organization unavailable</h2>
+          <p className="rd-state-body">Pick a organization from the sidebar.</p>
         </div>
       </main>
     );

@@ -9,27 +9,27 @@ import {
   getReconciliationExplanation,
   getReconciliationRefreshPreview,
   listReconciliationQueue,
-  listWorkspaceExceptions,
+  listOrganizationExceptions,
   updateExceptionMetadata,
 } from '../reconciliation.js';
 import {
   REQUEST_STATUSES,
 } from '../transfer-request-lifecycle.js';
-import { assertWorkspaceAccess } from '../workspace-access.js';
-import { listObservedTransfersForWorkspace } from '../observed-transfers.js';
+import { assertOrganizationAccess } from '../organization-access.js';
+import { listObservedTransfersForOrganization } from '../observed-transfers.js';
 import { asyncRoute, sendCreated, sendJson, sendList } from '../route-helpers.js';
 
 export const eventsRouter = Router();
 
-const workspaceParamsSchema = z.object({
-  workspaceId: z.string().uuid(),
+const organizationParamsSchema = z.object({
+  organizationId: z.string().uuid(),
 });
 
-const transferRequestParamsSchema = workspaceParamsSchema.extend({
+const transferRequestParamsSchema = organizationParamsSchema.extend({
   transferRequestId: z.string().uuid(),
 });
 
-const exceptionParamsSchema = workspaceParamsSchema.extend({
+const exceptionParamsSchema = organizationParamsSchema.extend({
   exceptionId: z.string().uuid(),
 });
 
@@ -66,20 +66,20 @@ const exceptionMetadataSchema = z.object({
   note: z.string().trim().min(1).max(5000).optional(),
 });
 
-eventsRouter.get('/workspaces/:workspaceId/transfers', asyncRoute(async (req, res) => {
-    const { workspaceId } = workspaceParamsSchema.parse(req.params);
+eventsRouter.get('/organizations/:organizationId/transfers', asyncRoute(async (req, res) => {
+    const { organizationId } = organizationParamsSchema.parse(req.params);
     const query = listQuerySchema.parse(req.query);
-    await assertWorkspaceAccess(workspaceId, req.auth!);
-    sendList(res, await listObservedTransfersForWorkspace(workspaceId, { limit: query.limit }), { limit: query.limit });
+    await assertOrganizationAccess(organizationId, req.auth!);
+    sendList(res, await listObservedTransfersForOrganization(organizationId, { limit: query.limit }), { limit: query.limit });
 }));
 
-eventsRouter.get('/workspaces/:workspaceId/reconciliation', async (req, res, next) => {
+eventsRouter.get('/organizations/:organizationId/reconciliation', async (req, res, next) => {
   try {
-    const { workspaceId } = workspaceParamsSchema.parse(req.params);
+    const { organizationId } = organizationParamsSchema.parse(req.params);
     const query = reconciliationQueueQuerySchema.parse(req.query);
-    await assertWorkspaceAccess(workspaceId, req.auth!);
+    await assertOrganizationAccess(organizationId, req.auth!);
 
-    const items = await listReconciliationQueue(workspaceId, {
+    const items = await listReconciliationQueue(organizationId, {
       limit: query.limit,
       displayState: query.displayState,
       requestStatus: query.requestStatus,
@@ -91,13 +91,13 @@ eventsRouter.get('/workspaces/:workspaceId/reconciliation', async (req, res, nex
   }
 });
 
-eventsRouter.get('/workspaces/:workspaceId/reconciliation-queue', async (req, res, next) => {
+eventsRouter.get('/organizations/:organizationId/reconciliation-queue', async (req, res, next) => {
   try {
-    const { workspaceId } = workspaceParamsSchema.parse(req.params);
+    const { organizationId } = organizationParamsSchema.parse(req.params);
     const query = reconciliationQueueQuerySchema.parse(req.query);
-    await assertWorkspaceAccess(workspaceId, req.auth!);
+    await assertOrganizationAccess(organizationId, req.auth!);
 
-    const items = await listReconciliationQueue(workspaceId, {
+    const items = await listReconciliationQueue(organizationId, {
       limit: query.limit,
       displayState: query.displayState,
       requestStatus: query.requestStatus,
@@ -110,12 +110,12 @@ eventsRouter.get('/workspaces/:workspaceId/reconciliation-queue', async (req, re
 });
 
 eventsRouter.get(
-  '/workspaces/:workspaceId/reconciliation-queue/:transferRequestId',
+  '/organizations/:organizationId/reconciliation-queue/:transferRequestId',
   async (req, res, next) => {
     try {
-      const { workspaceId, transferRequestId } = transferRequestParamsSchema.parse(req.params);
-      await assertWorkspaceAccess(workspaceId, req.auth!);
-      const detail = await getReconciliationDetail(workspaceId, transferRequestId);
+      const { organizationId, transferRequestId } = transferRequestParamsSchema.parse(req.params);
+      await assertOrganizationAccess(organizationId, req.auth!);
+      const detail = await getReconciliationDetail(organizationId, transferRequestId);
       sendJson(res, detail);
     } catch (error) {
       next(error);
@@ -124,12 +124,12 @@ eventsRouter.get(
 );
 
 eventsRouter.get(
-  '/workspaces/:workspaceId/reconciliation-queue/:transferRequestId/explain',
+  '/organizations/:organizationId/reconciliation-queue/:transferRequestId/explain',
   async (req, res, next) => {
     try {
-      const { workspaceId, transferRequestId } = transferRequestParamsSchema.parse(req.params);
-      await assertWorkspaceAccess(workspaceId, req.auth!);
-      const explanation = await getReconciliationExplanation(workspaceId, transferRequestId);
+      const { organizationId, transferRequestId } = transferRequestParamsSchema.parse(req.params);
+      await assertOrganizationAccess(organizationId, req.auth!);
+      const explanation = await getReconciliationExplanation(organizationId, transferRequestId);
       sendJson(res, explanation);
     } catch (error) {
       next(error);
@@ -138,12 +138,12 @@ eventsRouter.get(
 );
 
 eventsRouter.post(
-  '/workspaces/:workspaceId/reconciliation-queue/:transferRequestId/refresh',
+  '/organizations/:organizationId/reconciliation-queue/:transferRequestId/refresh',
   async (req, res, next) => {
     try {
-      const { workspaceId, transferRequestId } = transferRequestParamsSchema.parse(req.params);
-      await assertWorkspaceAccess(workspaceId, req.auth!);
-      const explanation = await getReconciliationRefreshPreview(workspaceId, transferRequestId);
+      const { organizationId, transferRequestId } = transferRequestParamsSchema.parse(req.params);
+      await assertOrganizationAccess(organizationId, req.auth!);
+      const explanation = await getReconciliationRefreshPreview(organizationId, transferRequestId);
       sendJson(res, explanation);
     } catch (error) {
       next(error);
@@ -151,14 +151,14 @@ eventsRouter.post(
   },
 );
 
-eventsRouter.get('/workspaces/:workspaceId/exceptions', async (req, res, next) => {
+eventsRouter.get('/organizations/:organizationId/exceptions', async (req, res, next) => {
   try {
-    const { workspaceId } = workspaceParamsSchema.parse(req.params);
+    const { organizationId } = organizationParamsSchema.parse(req.params);
     const query = exceptionsQuerySchema.parse(req.query);
-    await assertWorkspaceAccess(workspaceId, req.auth!);
+    await assertOrganizationAccess(organizationId, req.auth!);
 
-    const items = await listWorkspaceExceptions({
-      workspaceId,
+    const items = await listOrganizationExceptions({
+      organizationId,
       limit: query.limit,
       status: query.status,
       severity: query.severity,
@@ -172,17 +172,17 @@ eventsRouter.get('/workspaces/:workspaceId/exceptions', async (req, res, next) =
   }
 });
 
-eventsRouter.patch('/workspaces/:workspaceId/exceptions/:exceptionId', async (req, res, next) => {
+eventsRouter.patch('/organizations/:organizationId/exceptions/:exceptionId', async (req, res, next) => {
   try {
-    const { workspaceId, exceptionId } = exceptionParamsSchema.parse(req.params);
+    const { organizationId, exceptionId } = exceptionParamsSchema.parse(req.params);
     const input = exceptionMetadataSchema.parse(req.body);
-    const access = await assertWorkspaceAccess(workspaceId, req.auth!);
+    const access = await assertOrganizationAccess(organizationId, req.auth!);
 
     if (input.assignedToUserId) {
       const membership = await prisma.organizationMembership.findUnique({
         where: {
           organizationId_userId: {
-            organizationId: access.workspace.organizationId,
+            organizationId: access.organization.organizationId,
             userId: input.assignedToUserId,
           },
         },
@@ -198,7 +198,7 @@ eventsRouter.patch('/workspaces/:workspaceId/exceptions/:exceptionId', async (re
     }
 
     const updated = await updateExceptionMetadata({
-      workspaceId,
+      organizationId,
       exceptionId,
       actorUserId: req.auth!.userId,
       assignedToUserId: input.assignedToUserId,
@@ -213,25 +213,25 @@ eventsRouter.patch('/workspaces/:workspaceId/exceptions/:exceptionId', async (re
   }
 });
 
-eventsRouter.get('/workspaces/:workspaceId/exceptions/:exceptionId', async (req, res, next) => {
+eventsRouter.get('/organizations/:organizationId/exceptions/:exceptionId', async (req, res, next) => {
   try {
-    const { workspaceId, exceptionId } = exceptionParamsSchema.parse(req.params);
-    await assertWorkspaceAccess(workspaceId, req.auth!);
-    const detail = await getExceptionDetail(workspaceId, exceptionId);
+    const { organizationId, exceptionId } = exceptionParamsSchema.parse(req.params);
+    await assertOrganizationAccess(organizationId, req.auth!);
+    const detail = await getExceptionDetail(organizationId, exceptionId);
     sendJson(res, detail);
   } catch (error) {
     next(error);
   }
 });
 
-eventsRouter.post('/workspaces/:workspaceId/exceptions/:exceptionId/actions', async (req, res, next) => {
+eventsRouter.post('/organizations/:organizationId/exceptions/:exceptionId/actions', async (req, res, next) => {
   try {
-    const { workspaceId, exceptionId } = exceptionParamsSchema.parse(req.params);
-    await assertWorkspaceAccess(workspaceId, req.auth!);
+    const { organizationId, exceptionId } = exceptionParamsSchema.parse(req.params);
+    await assertOrganizationAccess(organizationId, req.auth!);
     const input = exceptionActionSchema.parse(req.body);
 
     const updated = await applyExceptionAction({
-      workspaceId,
+      organizationId,
       exceptionId,
       action: input.action,
       actorUserId: req.auth!.userId,
@@ -244,14 +244,14 @@ eventsRouter.post('/workspaces/:workspaceId/exceptions/:exceptionId/actions', as
   }
 });
 
-eventsRouter.post('/workspaces/:workspaceId/exceptions/:exceptionId/notes', async (req, res, next) => {
+eventsRouter.post('/organizations/:organizationId/exceptions/:exceptionId/notes', async (req, res, next) => {
   try {
-    const { workspaceId, exceptionId } = exceptionParamsSchema.parse(req.params);
-    await assertWorkspaceAccess(workspaceId, req.auth!);
+    const { organizationId, exceptionId } = exceptionParamsSchema.parse(req.params);
+    await assertOrganizationAccess(organizationId, req.auth!);
     const input = exceptionNoteSchema.parse(req.body);
 
     const note = await addExceptionNote({
-      workspaceId,
+      organizationId,
       exceptionId,
       actorUserId: req.auth!.userId,
       body: input.body,

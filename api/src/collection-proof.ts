@@ -3,16 +3,15 @@ import { buildCanonicalDigest } from './proof-packet.js';
 import { getReconciliationExplanation } from './reconciliation.js';
 
 type CollectionRequestDetail = Awaited<ReturnType<typeof getCollectionRequestDetail>>;
-type CollectionRunDetail = Awaited<ReturnType<typeof getCollectionRunDetail>>;
 type CollectionProofDetail = 'summary' | 'compact' | 'full';
 type ProofCheckStatus = 'pass' | 'pending' | 'warn' | 'fail';
 
-export async function buildCollectionProofPacket(workspaceId: string, collectionRequestId: string) {
-  const detail = await getCollectionRequestDetail(workspaceId, collectionRequestId);
+export async function buildCollectionProofPacket(organizationId: string, collectionRequestId: string) {
+  const detail = await getCollectionRequestDetail(organizationId, collectionRequestId);
   const reconciliation = detail.reconciliationDetail;
   const match = reconciliation?.match ?? null;
   const reconciliationExplanation = detail.transferRequestId
-    ? await getReconciliationExplanation(workspaceId, detail.transferRequestId)
+    ? await getReconciliationExplanation(organizationId, detail.transferRequestId)
     : null;
   const sourceReview = deriveSourceReview(detail);
   const proofStatus = deriveCollectionProofStatus(detail.derivedState, reconciliation?.requestDisplayState ?? null);
@@ -26,7 +25,7 @@ export async function buildCollectionProofPacket(workspaceId: string, collection
   const packetBody = {
     packetType: 'stablecoin_collection_proof',
     version: 1,
-    workspaceId,
+    organizationId,
     status: proofStatus,
     readiness,
     intent: {
@@ -122,15 +121,15 @@ export async function buildCollectionProofPacket(workspaceId: string, collection
 }
 
 export async function buildCollectionRunProofPacket(
-  workspaceId: string,
+  organizationId: string,
   collectionRunId: string,
   options: { detail?: CollectionProofDetail } = {},
 ) {
   const detailLevel = options.detail ?? 'summary';
-  const detail = await getCollectionRunDetail(workspaceId, collectionRunId);
+  const detail = await getCollectionRunDetail(organizationId, collectionRunId);
   const collectionProofs = await Promise.all(
     detail.collectionRequests.map((collection) =>
-      buildCollectionProofPacket(workspaceId, collection.collectionRequestId),
+      buildCollectionProofPacket(organizationId, collection.collectionRequestId),
     ),
   );
   const proofByCollectionId = new Map(collectionProofs.map((proof) => [proof.intent.collectionRequestId, proof]));
@@ -170,7 +169,7 @@ export async function buildCollectionRunProofPacket(
       proofId: proof?.proofId ?? null,
       proofDigest: proof?.canonicalDigest ?? null,
       fullProofEndpoint: proof
-        ? `/workspaces/${workspaceId}/collections/${collection.collectionRequestId}/proof`
+        ? `/organizations/${organizationId}/collections/${collection.collectionRequestId}/proof`
         : null,
     };
   });
@@ -178,7 +177,7 @@ export async function buildCollectionRunProofPacket(
     packetType: 'stablecoin_collection_run_proof',
     version: 1,
     detailLevel,
-    workspaceId,
+    organizationId,
     collectionRunId,
     runName: detail.runName,
     status: detail.derivedState,
@@ -397,7 +396,7 @@ function buildCollectionProofRef(proof: Awaited<ReturnType<typeof buildCollectio
       severity: exception.severity,
     })),
     agentSummary: proof.agentSummary,
-    fullProofEndpoint: `/workspaces/${proof.workspaceId}/collections/${proof.intent.collectionRequestId}/proof`,
+    fullProofEndpoint: `/organizations/${proof.organizationId}/collections/${proof.intent.collectionRequestId}/proof`,
   };
 }
 

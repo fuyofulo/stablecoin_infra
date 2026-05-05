@@ -54,21 +54,21 @@ function sumSol(values: string[]): string {
 }
 
 export function WalletsPage({ session }: { session: AuthenticatedSession }) {
-  const { workspaceId } = useParams<{ workspaceId: string }>();
+  const { organizationId } = useParams<{ organizationId: string }>();
   const queryClient = useQueryClient();
   const { success, error: toastError } = useToast();
   const [addOpen, setAddOpen] = useState(false);
 
   const balancesQuery = useQuery({
-    queryKey: ['treasury-wallet-balances', workspaceId] as const,
-    queryFn: () => api.listTreasuryWalletBalances(workspaceId!),
-    enabled: Boolean(workspaceId),
+    queryKey: ['treasury-wallet-balances', organizationId] as const,
+    queryFn: () => api.listTreasuryWalletBalances(organizationId!),
+    enabled: Boolean(organizationId),
     refetchInterval: 15_000,
   });
 
   const createMutation = useMutation({
     mutationFn: (form: FormData) =>
-      api.createTreasuryWallet(workspaceId!, {
+      api.createTreasuryWallet(organizationId!, {
         address: String(form.get('address') ?? '').trim(),
         displayName: String(form.get('displayName') ?? '').trim() || undefined,
         notes: String(form.get('notes') ?? '').trim() || undefined,
@@ -76,8 +76,8 @@ export function WalletsPage({ session }: { session: AuthenticatedSession }) {
     onSuccess: async () => {
       success('Wallet saved.');
       setAddOpen(false);
-      await queryClient.invalidateQueries({ queryKey: ['treasury-wallet-balances', workspaceId] });
-      await queryClient.invalidateQueries({ queryKey: ['addresses', workspaceId] });
+      await queryClient.invalidateQueries({ queryKey: ['treasury-wallet-balances', organizationId] });
+      await queryClient.invalidateQueries({ queryKey: ['addresses', organizationId] });
     },
     onError: (err) => toastError(err instanceof Error ? err.message : 'Unable to save wallet.'),
   });
@@ -103,12 +103,12 @@ export function WalletsPage({ session }: { session: AuthenticatedSession }) {
   const fetchedAt = balancesQuery.data?.fetchedAt;
   const isInitialLoading = balancesQuery.isLoading && rows.length === 0;
 
-  if (!workspaceId) {
+  if (!organizationId) {
     return (
       <main className="page-frame">
         <div className="rd-state">
-          <h2 className="rd-state-title">Workspace unavailable</h2>
-          <p className="rd-state-body">Pick a workspace from the sidebar.</p>
+          <h2 className="rd-state-title">Organization unavailable</h2>
+          <p className="rd-state-body">Pick a organization from the sidebar.</p>
         </div>
       </main>
     );
@@ -122,8 +122,8 @@ export function WalletsPage({ session }: { session: AuthenticatedSession }) {
           <h1>Your wallets</h1>
           <p>
             {solUsdPrice === null
-              ? 'Every Solana wallet you control in this workspace. Balances refresh every 15 seconds.'
-              : `Every Solana wallet you control in this workspace · SOL @ $${formatUsd(solUsdPrice)} · refreshes every 15s.`}
+              ? 'Every Solana wallet you control in this organization. Balances refresh every 15 seconds.'
+              : `Every Solana wallet you control in this organization · SOL @ $${formatUsd(solUsdPrice)} · refreshes every 15s.`}
           </p>
         </div>
         <div className="page-actions">

@@ -15,7 +15,7 @@ function trustTone(trust: Destination['trustState']): 'success' | 'warning' | 'd
 }
 
 export function DestinationsPage({ session: _session }: { session: AuthenticatedSession }) {
-  const { workspaceId } = useParams<{ workspaceId: string }>();
+  const { organizationId } = useParams<{ organizationId: string }>();
   const queryClient = useQueryClient();
   const { success, error: toastError } = useToast();
 
@@ -25,23 +25,23 @@ export function DestinationsPage({ session: _session }: { session: Authenticated
   const [filter, setFilter] = useState<TrustFilter>('all');
 
   const destinationsQuery = useQuery({
-    queryKey: ['destinations', workspaceId] as const,
-    queryFn: () => api.listDestinations(workspaceId!),
-    enabled: Boolean(workspaceId),
+    queryKey: ['destinations', organizationId] as const,
+    queryFn: () => api.listDestinations(organizationId!),
+    enabled: Boolean(organizationId),
   });
   const counterpartiesQuery = useQuery({
-    queryKey: ['counterparties', workspaceId] as const,
-    queryFn: () => api.listCounterparties(workspaceId!),
-    enabled: Boolean(workspaceId),
+    queryKey: ['counterparties', organizationId] as const,
+    queryFn: () => api.listCounterparties(organizationId!),
+    enabled: Boolean(organizationId),
   });
 
   async function invalidate() {
-    await queryClient.invalidateQueries({ queryKey: ['destinations', workspaceId] });
+    await queryClient.invalidateQueries({ queryKey: ['destinations', organizationId] });
   }
 
   const createDestinationMutation = useMutation({
     mutationFn: (form: FormData) =>
-      api.createDestination(workspaceId!, {
+      api.createDestination(organizationId!, {
         walletAddress: String(form.get('walletAddress') ?? '').trim(),
         label: String(form.get('label') ?? '').trim(),
         counterpartyId: String(form.get('counterpartyId') ?? '').trim() || undefined,
@@ -66,7 +66,7 @@ export function DestinationsPage({ session: _session }: { session: Authenticated
         notes?: string;
         isActive?: boolean;
       };
-    }) => api.updateDestination(workspaceId!, destinationId, input),
+    }) => api.updateDestination(organizationId!, destinationId, input),
     onSuccess: async () => {
       success('Destination updated.');
       setEditDestination(null);
@@ -99,12 +99,12 @@ export function DestinationsPage({ session: _session }: { session: Authenticated
   const unreviewedCount = destinations.filter((d) => d.trustState === 'unreviewed').length;
   const blockedCount = destinations.filter((d) => d.trustState === 'blocked' || d.trustState === 'restricted').length;
 
-  if (!workspaceId) {
+  if (!organizationId) {
     return (
       <main className="page-frame">
         <div className="rd-state">
-          <h2 className="rd-state-title">Workspace unavailable</h2>
-          <p className="rd-state-body">Pick a workspace from the sidebar.</p>
+          <h2 className="rd-state-title">Organization unavailable</h2>
+          <p className="rd-state-body">Pick a organization from the sidebar.</p>
         </div>
       </main>
     );

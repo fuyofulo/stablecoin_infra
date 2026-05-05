@@ -8,6 +8,7 @@ export type UserSessionAuthContext = {
   userId: string;
   userEmail: string;
   userDisplayName: string;
+  userEmailVerifiedAt: string | null;
   actorType: 'user';
   actorId: string;
 };
@@ -56,6 +57,7 @@ export async function authenticateRequest(authorizationHeader?: string | null) {
       userId: session.userId,
       userEmail: session.user.email,
       userDisplayName: session.user.displayName,
+      userEmailVerifiedAt: session.user.emailVerifiedAt?.toISOString() ?? null,
       actorType: 'user',
       actorId: session.userId,
     } satisfies AuthContext;

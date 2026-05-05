@@ -44,10 +44,10 @@ export type UpdateDestinationInput = {
   isActive?: boolean;
 };
 
-export async function listCounterparties(workspaceId: string, options?: { limit?: number }) {
-  const workspace = await getWorkspaceOrg(workspaceId);
+export async function listCounterparties(organizationId: string, options?: { limit?: number }) {
+  const organization = await getOrganization(organizationId);
   const items = await prisma.counterparty.findMany({
-    where: { organizationId: workspace.organizationId },
+    where: { organizationId: organization.organizationId },
     orderBy: { createdAt: 'desc' },
     take: options?.limit ?? 100,
   });
@@ -55,13 +55,13 @@ export async function listCounterparties(workspaceId: string, options?: { limit?
   return { items: items.map(serializeCounterparty) };
 }
 
-export async function createCounterparty(workspaceId: string, input: CreateCounterpartyInput) {
-  const workspace = await getWorkspaceOrg(workspaceId);
-  await assertCounterpartyNameAvailable(workspace.organizationId, input.displayName);
+export async function createCounterparty(organizationId: string, input: CreateCounterpartyInput) {
+  const organization = await getOrganization(organizationId);
+  await assertCounterpartyNameAvailable(organization.organizationId, input.displayName);
 
   const counterparty = await prisma.counterparty.create({
     data: {
-      organizationId: workspace.organizationId,
+      organizationId: organization.organizationId,
       displayName: input.displayName,
       category: input.category ?? 'vendor',
       externalReference: normalizeOptionalText(input.externalReference),
@@ -73,12 +73,12 @@ export async function createCounterparty(workspaceId: string, input: CreateCount
   return serializeCounterparty(counterparty);
 }
 
-export async function updateCounterparty(workspaceId: string, counterpartyId: string, input: UpdateCounterpartyInput) {
-  const workspace = await getWorkspaceOrg(workspaceId);
+export async function updateCounterparty(organizationId: string, counterpartyId: string, input: UpdateCounterpartyInput) {
+  const organization = await getOrganization(organizationId);
   const current = await prisma.counterparty.findFirst({
     where: {
       counterpartyId,
-      organizationId: workspace.organizationId,
+      organizationId: organization.organizationId,
     },
   });
 
@@ -87,7 +87,7 @@ export async function updateCounterparty(workspaceId: string, counterpartyId: st
   }
 
   const nextDisplayName = input.displayName?.trim() || current.displayName;
-  await assertCounterpartyNameAvailable(workspace.organizationId, nextDisplayName, counterpartyId);
+  await assertCounterpartyNameAvailable(organization.organizationId, nextDisplayName, counterpartyId);
 
   const updated = await prisma.counterparty.update({
     where: { counterpartyId },
@@ -102,10 +102,10 @@ export async function updateCounterparty(workspaceId: string, counterpartyId: st
   return serializeCounterparty(updated);
 }
 
-export async function listDestinations(workspaceId: string, options?: { limit?: number; includeInternal?: boolean }) {
+export async function listDestinations(organizationId: string, options?: { limit?: number; includeInternal?: boolean }) {
   const items = await prisma.destination.findMany({
     where: {
-      workspaceId,
+      organizationId,
       ...(options?.includeInternal ? {} : { isInternal: false }),
     },
     include: {
@@ -118,20 +118,20 @@ export async function listDestinations(workspaceId: string, options?: { limit?: 
   return { items: items.map(serializeDestination) };
 }
 
-export async function createDestination(workspaceId: string, input: CreateDestinationInput) {
-  const workspace = await getWorkspaceOrg(workspaceId);
+export async function createDestination(organizationId: string, input: CreateDestinationInput) {
+  const organization = await getOrganization(organizationId);
 
   if (input.counterpartyId) {
-    await assertCounterpartyBelongsToOrg(workspace.organizationId, input.counterpartyId);
+    await assertCounterpartyBelongsToOrg(organization.organizationId, input.counterpartyId);
   }
 
-  await assertDestinationLabelAvailable(workspaceId, input.label);
-  await assertDestinationWalletAvailable(workspaceId, input.walletAddress);
+  await assertDestinationLabelAvailable(organizationId, input.label);
+  await assertDestinationWalletAvailable(organizationId, input.walletAddress);
   const tokenAccountAddress = normalizeOptionalText(input.tokenAccountAddress) ?? deriveUsdcAtaForWallet(input.walletAddress);
 
   const destination = await prisma.destination.create({
     data: {
-      workspaceId,
+      organizationId,
       counterpartyId: input.counterpartyId,
       chain: input.chain ?? SOLANA_CHAIN,
       asset: input.asset ?? USDC_ASSET,
@@ -153,24 +153,24 @@ export async function createDestination(workspaceId: string, input: CreateDestin
   return serializeDestination(destination);
 }
 
-export async function updateDestination(workspaceId: string, destinationId: string, input: UpdateDestinationInput) {
-  const [workspace, current] = await Promise.all([
-    getWorkspaceOrg(workspaceId),
+export async function updateDestination(organizationId: string, destinationId: string, input: UpdateDestinationInput) {
+  const [organization, current] = await Promise.all([
+    getOrganization(organizationId),
     prisma.destination.findFirstOrThrow({
-      where: { workspaceId, destinationId },
+      where: { organizationId, destinationId },
     }),
   ]);
 
   if (input.counterpartyId) {
-    await assertCounterpartyBelongsToOrg(workspace.organizationId, input.counterpartyId);
+    await assertCounterpartyBelongsToOrg(organization.organizationId, input.counterpartyId);
   }
 
   const nextLabel = input.label?.trim() || current.label;
-  await assertDestinationLabelAvailable(workspaceId, nextLabel, destinationId);
+  await assertDestinationLabelAvailable(organizationId, nextLabel, destinationId);
 
   const nextWalletAddress = input.walletAddress?.trim();
   if (nextWalletAddress && nextWalletAddress !== current.walletAddress) {
-    await assertDestinationWalletAvailable(workspaceId, nextWalletAddress, destinationId);
+    await assertDestinationWalletAvailable(organizationId, nextWalletAddress, destinationId);
   }
   const shouldUpdateTokenAccount = input.tokenAccountAddress !== undefined || Boolean(nextWalletAddress);
   const tokenAccountAddress = shouldUpdateTokenAccount
@@ -199,9 +199,9 @@ export async function updateDestination(workspaceId: string, destinationId: stri
   return serializeDestination(updated);
 }
 
-function getWorkspaceOrg(workspaceId: string) {
-  return prisma.workspace.findUniqueOrThrow({
-    where: { workspaceId },
+function getOrganization(organizationId: string) {
+  return prisma.organization.findUniqueOrThrow({
+    where: { organizationId },
     select: { organizationId: true },
   });
 }
@@ -242,13 +242,13 @@ async function assertCounterpartyNameAvailable(
 }
 
 async function assertDestinationLabelAvailable(
-  workspaceId: string,
+  organizationId: string,
   label: string,
   excludeDestinationId?: string,
 ) {
   const existing = await prisma.destination.findFirst({
     where: {
-      workspaceId,
+      organizationId,
       label: {
         equals: label,
         mode: 'insensitive',
@@ -259,18 +259,18 @@ async function assertDestinationLabelAvailable(
   });
 
   if (existing) {
-    throw new Error(`Destination name "${label}" already exists in this workspace`);
+    throw new Error(`Destination name "${label}" already exists in this organization`);
   }
 }
 
 async function assertDestinationWalletAvailable(
-  workspaceId: string,
+  organizationId: string,
   walletAddress: string,
   excludeDestinationId?: string,
 ) {
   const existing = await prisma.destination.findFirst({
     where: {
-      workspaceId,
+      organizationId,
       walletAddress,
       ...(excludeDestinationId ? { destinationId: { not: excludeDestinationId } } : {}),
     },
@@ -278,7 +278,7 @@ async function assertDestinationWalletAvailable(
   });
 
   if (existing) {
-    throw new Error(`Destination wallet "${walletAddress}" already exists in this workspace`);
+    throw new Error(`Destination wallet "${walletAddress}" already exists in this organization`);
   }
 }
 
@@ -301,7 +301,7 @@ function serializeDestination(destination: Destination & {
 }) {
   return {
     destinationId: destination.destinationId,
-    workspaceId: destination.workspaceId,
+    organizationId: destination.organizationId,
     counterpartyId: destination.counterpartyId,
     chain: destination.chain,
     asset: destination.asset,

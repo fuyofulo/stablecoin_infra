@@ -1,12 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Link, NavLink, useNavigate } from 'react-router';
-import type { AuthenticatedSession, OrganizationMembership, Workspace } from './api';
+import type { AuthenticatedSession, OrganizationMembership } from './api';
 import { useTour } from './Tour';
 
-type WorkspaceContext = {
+type OrganizationContext = {
   organization: OrganizationMembership;
-  workspace: Workspace;
 };
 
 function SvgIcon({ children, className }: { children: ReactNode; className?: string }) {
@@ -225,35 +224,34 @@ function useTheme(): { theme: 'light' | 'dark'; setTheme: (next: 'light' | 'dark
 
 export function AppSidebar({
   session,
-  workspaceContexts,
-  activeWorkspaceId,
+  organizationContexts,
+  activeOrganizationId,
   paymentsIncompleteCount,
   collectionsOpenCount,
   destinationsUnreviewedCount,
   payersUnreviewedCount,
   approvalPendingCount,
   executionQueueCount,
-  onWorkspaceSwitch,
+  onOrganizationSwitch,
   onLogout,
 }: {
   session: AuthenticatedSession;
-  workspaceContexts: WorkspaceContext[];
-  activeWorkspaceId?: string;
+  organizationContexts: OrganizationContext[];
+  activeOrganizationId?: string;
   paymentsIncompleteCount?: number;
   collectionsOpenCount?: number;
   destinationsUnreviewedCount?: number;
   payersUnreviewedCount?: number;
   approvalPendingCount?: number;
   executionQueueCount?: number;
-  onWorkspaceSwitch: (workspaceId: string) => void;
+  onOrganizationSwitch: (organizationId: string) => void;
   onLogout: () => void;
 }) {
   const navigate = useNavigate();
   const tour = useTour();
   const activeContext =
-    workspaceContexts.find((ctx) => ctx.workspace.workspaceId === activeWorkspaceId) ?? workspaceContexts[0];
-  const activeWorkspace = activeContext?.workspace;
-  const activeOrg = activeContext?.organization;
+    organizationContexts.find((ctx) => ctx.organization.organizationId === activeOrganizationId) ?? organizationContexts[0];
+  const activeOrganization = activeContext?.organization;
 
   const [wsMenuOpen, setWsMenuOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
@@ -261,7 +259,7 @@ export function AppSidebar({
   const userRef = useOutsideClick<HTMLDivElement>(userMenuOpen, () => setUserMenuOpen(false));
   const { theme, setTheme } = useTheme();
 
-  const base = activeWorkspace ? `/workspaces/${activeWorkspace.workspaceId}` : null;
+  const base = activeOrganization ? `/organizations/${activeOrganization.organizationId}` : null;
 
   return (
     <aside className="ax-sidebar" aria-label="Application">
@@ -274,7 +272,7 @@ export function AppSidebar({
         </div>
       </div>
 
-      {workspaceContexts.length ? (
+      {organizationContexts.length ? (
         <div className="ax-ws-switcher" ref={wsRef}>
           <button
             type="button"
@@ -284,25 +282,20 @@ export function AppSidebar({
             onClick={() => setWsMenuOpen((v) => !v)}
           >
             <span className="ax-ws-button-avatar" aria-hidden>
-              {initialsFromName(activeWorkspace?.workspaceName ?? '?')}
+              {initialsFromName(activeOrganization?.organizationName ?? '?')}
             </span>
             <span className="ax-ws-button-text">
-              <span className="ax-ws-button-org">{activeOrg?.organizationName ?? ''}</span>
-              <span className="ax-ws-button-name">{activeWorkspace?.workspaceName ?? 'Select workspace'}</span>
+              <span className="ax-ws-button-org">Organization</span>
+              <span className="ax-ws-button-name">{activeOrganization?.organizationName ?? 'Select organization'}</span>
             </span>
             {icons.chevron}
           </button>
 
           {wsMenuOpen ? (
             <div className="ax-ws-menu" role="menu">
-              {workspaceContexts
-                .reduce<{ org: OrganizationMembership; items: WorkspaceContext[] }[]>((groups, ctx) => {
-                  const existing = groups.find((g) => g.org.organizationId === ctx.organization.organizationId);
-                  if (existing) {
-                    existing.items.push(ctx);
-                  } else {
-                    groups.push({ org: ctx.organization, items: [ctx] });
-                  }
+              {organizationContexts
+                .reduce<{ org: OrganizationMembership; items: OrganizationContext[] }[]>((groups, ctx) => {
+                  groups.push({ org: ctx.organization, items: [ctx] });
                   return groups;
                 }, [])
                 .map((group) => (
@@ -310,21 +303,21 @@ export function AppSidebar({
                     <div className="ax-ws-menu-group">
                       <div className="ax-ws-menu-group-label">{group.org.organizationName}</div>
                     </div>
-                    {group.items.map(({ workspace }) => {
-                      const isActive = workspace.workspaceId === activeWorkspaceId;
+                    {group.items.map(({ organization }) => {
+                      const isActive = organization.organizationId === activeOrganizationId;
                       return (
                         <button
-                          key={workspace.workspaceId}
+                          key={organization.organizationId}
                           type="button"
                           role="menuitem"
                           className={`ax-ws-menu-item${isActive ? ' ax-ws-menu-item-active' : ''}`}
                           onClick={() => {
                             setWsMenuOpen(false);
-                            if (!isActive) onWorkspaceSwitch(workspace.workspaceId);
+                            if (!isActive) onOrganizationSwitch(organization.organizationId);
                           }}
                         >
                           <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                            {workspace.workspaceName}
+                            {organization.organizationName}
                           </span>
                           {isActive ? icons.check : null}
                         </button>
@@ -343,7 +336,7 @@ export function AppSidebar({
                 }}
               >
                 {icons.plus}
-                <span>New organization or workspace</span>
+                <span>New organization</span>
               </button>
             </div>
           ) : null}
@@ -355,14 +348,14 @@ export function AppSidebar({
               +
             </span>
             <span className="ax-ws-button-text">
-              <span className="ax-ws-button-name">Create workspace</span>
+              <span className="ax-ws-button-name">Create organization</span>
               <span className="ax-ws-button-org">Get started</span>
             </span>
           </Link>
         </div>
       )}
 
-      <nav className="ax-nav" aria-label="Workspace navigation">
+      <nav className="ax-nav" aria-label="Organization navigation">
         {base ? (
           <>
             <div className="ax-nav-group">

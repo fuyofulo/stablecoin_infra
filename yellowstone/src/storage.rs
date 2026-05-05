@@ -282,7 +282,7 @@ pub struct ObservedPaymentRow {
 #[derive(Serialize)]
 pub struct MatcherEventRow {
     pub event_id: String,
-    pub workspace_id: String,
+    pub organization_id: String,
     pub destination_address: String,
     pub transfer_request_id: Option<String>,
     pub observed_transfer_id: Option<String>,
@@ -299,7 +299,7 @@ pub struct MatcherEventRow {
 
 #[derive(Serialize)]
 pub struct RequestBookSnapshotRow {
-    pub workspace_id: String,
+    pub organization_id: String,
     pub destination_address: String,
     pub transfer_request_id: String,
     #[serde(serialize_with = "serialize_clickhouse_datetime")]
@@ -330,7 +330,7 @@ pub struct RequestBookSnapshotStateRow {
 
 #[derive(Serialize)]
 pub struct SettlementMatchRow {
-    pub workspace_id: String,
+    pub organization_id: String,
     pub transfer_request_id: String,
     pub signature: Option<String>,
     pub observed_transfer_id: Option<String>,
@@ -354,7 +354,7 @@ pub struct SettlementMatchRow {
 
 #[derive(Serialize)]
 pub struct ExceptionRow {
-    pub workspace_id: String,
+    pub organization_id: String,
     pub exception_id: String,
     pub transfer_request_id: Option<String>,
     pub signature: Option<String>,

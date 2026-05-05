@@ -6,8 +6,8 @@ Postgres is the control-plane database.
 
 It stores:
 
-- workspaces
-- watched addresses
+- organizations
+- watched treasury wallets
 - labels
 - business objects
 - mappings

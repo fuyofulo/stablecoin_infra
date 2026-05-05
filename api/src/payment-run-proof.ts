@@ -5,14 +5,14 @@ import { buildCanonicalDigest } from './proof-packet.js';
 type PaymentRunProofDetail = 'summary' | 'compact' | 'full';
 
 export async function buildPaymentRunProofPacket(
-  workspaceId: string,
+  organizationId: string,
   paymentRunId: string,
   options: { detail?: PaymentRunProofDetail } = {},
 ) {
   const detailLevel = options.detail ?? 'summary';
-  const detail = await getPaymentRunDetail(workspaceId, paymentRunId);
+  const detail = await getPaymentRunDetail(organizationId, paymentRunId);
   const orderProofs = await Promise.all(
-    detail.paymentOrders.map((order) => buildPaymentOrderProofPacket(workspaceId, order.paymentOrderId)),
+    detail.paymentOrders.map((order) => buildPaymentOrderProofPacket(organizationId, order.paymentOrderId)),
   );
   const proofByOrderId = new Map(orderProofs.map((proof) => [proof.intent.paymentOrderId, proof]));
   const readiness = deriveRunReadiness(orderProofs);
@@ -43,7 +43,7 @@ export async function buildPaymentRunProofPacket(
       proofStatus: proof?.status ?? 'in_progress',
       proofId: proof?.proofId ?? null,
       proofDigest: proof?.canonicalDigest ?? null,
-      fullProofEndpoint: proof ? `/workspaces/${workspaceId}/payment-orders/${order.paymentOrderId}/proof` : null,
+      fullProofEndpoint: proof ? `/organizations/${organizationId}/payment-orders/${order.paymentOrderId}/proof` : null,
     };
   });
   const orderProofRefs = orderProofs.map((proof) => buildOrderProofRef(proof));
@@ -51,7 +51,7 @@ export async function buildPaymentRunProofPacket(
     packetType: 'stablecoin_payment_run_proof',
     version: 1,
     detailLevel,
-    workspaceId,
+    organizationId,
     paymentRunId,
     runName: detail.runName,
     status: detail.derivedState,
@@ -123,7 +123,7 @@ function buildOrderProofRef(proof: Awaited<ReturnType<typeof buildPaymentOrderPr
       severity: exception.severity,
     })),
     agentSummary: proof.agentSummary,
-    fullProofEndpoint: `/workspaces/${proof.workspaceId}/payment-orders/${proof.intent.paymentOrderId}/proof`,
+    fullProofEndpoint: `/organizations/${proof.organizationId}/payment-orders/${proof.intent.paymentOrderId}/proof`,
   };
 }
 

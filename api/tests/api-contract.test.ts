@@ -9,7 +9,7 @@ test('API contract has stable unique endpoint IDs and covers the backend surface
   assert.equal(new Set(ids).size, ids.length);
   assert.ok(API_ENDPOINTS.length >= 50);
   assert.ok(API_ENDPOINTS.some((endpoint) => endpoint.id === 'payment_order_proof' && endpoint.query?.format));
-  assert.ok(API_ENDPOINTS.some((endpoint) => endpoint.id === 'preview_payment_run_csv' && endpoint.scope === 'workspace:read'));
+  assert.ok(API_ENDPOINTS.some((endpoint) => endpoint.id === 'preview_payment_run_csv' && endpoint.scope === 'organization:read'));
   assert.ok(API_ENDPOINTS.some((endpoint) => endpoint.id === 'internal_matching_index_events' && endpoint.auth === 'service_token'));
 });
 
@@ -17,8 +17,8 @@ test('OpenAPI spec is generated from the API contract', () => {
   const spec = buildOpenApiSpec();
   assert.equal(spec.openapi, '3.1.0');
   assert.equal(spec.info.title, 'Decimal API');
-  assert.equal(spec.paths['/workspaces/{workspaceId}/payment-orders/{paymentOrderId}/proof'].get.operationId, 'payment_order_proof');
-  assert.equal(spec.paths['/workspaces/{workspaceId}/payment-runs/import-csv/preview'].post.operationId, 'preview_payment_run_csv');
+  assert.equal(spec.paths['/organizations/{organizationId}/payment-orders/{paymentOrderId}/proof'].get.operationId, 'payment_order_proof');
+  assert.equal(spec.paths['/organizations/{organizationId}/payment-runs/import-csv/preview'].post.operationId, 'preview_payment_run_csv');
   assert.deepEqual(spec.paths['/health'].get.security, []);
 });
 
@@ -38,7 +38,7 @@ test('typed Decimal client interpolates path, query, body, and auth headers', as
 
   const response = await client.request<{ ok: boolean }>('payment_order_proof', {
     path: {
-      workspaceId: 'workspace-1',
+      organizationId: 'organization-1',
       paymentOrderId: 'order-1',
     },
     query: {
@@ -47,6 +47,6 @@ test('typed Decimal client interpolates path, query, body, and auth headers', as
   });
 
   assert.equal(response.ok, true);
-  assert.equal(calls[0].url, 'http://127.0.0.1:3100/workspaces/workspace-1/payment-orders/order-1/proof?format=markdown');
+  assert.equal(calls[0].url, 'http://127.0.0.1:3100/organizations/organization-1/payment-orders/order-1/proof?format=markdown');
   assert.equal((calls[0].init.headers as Record<string, string>).authorization, 'Bearer test-token');
 });

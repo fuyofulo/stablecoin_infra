@@ -4,7 +4,7 @@ export async function createTransferRequestEvent(
   tx: Prisma.TransactionClient,
   input: {
     transferRequestId: string;
-    workspaceId: string;
+    organizationId: string;
     eventType: string;
     actorType: 'user' | 'system' | 'worker';
     actorId?: string | null;
@@ -20,7 +20,7 @@ export async function createTransferRequestEvent(
   await tx.transferRequestEvent.create({
     data: {
       transferRequestId: input.transferRequestId,
-      workspaceId: input.workspaceId,
+      organizationId: input.organizationId,
       eventType: input.eventType,
       actorType: input.actorType,
       actorId: input.actorId ?? null,

@@ -31,7 +31,7 @@ function toneToPill(
 }
 
 export function CollectionSourcesPage({ session: _session }: { session: AuthenticatedSession }) {
-  const { workspaceId } = useParams<{ workspaceId: string }>();
+  const { organizationId } = useParams<{ organizationId: string }>();
   const queryClient = useQueryClient();
   const { success, error: toastError } = useToast();
 
@@ -41,27 +41,27 @@ export function CollectionSourcesPage({ session: _session }: { session: Authenti
   const [filter, setFilter] = useState<TrustFilter>('all');
 
   const sourcesQuery = useQuery({
-    queryKey: ['collection-sources', workspaceId] as const,
-    queryFn: () => api.listCollectionSources(workspaceId!),
-    enabled: Boolean(workspaceId),
+    queryKey: ['collection-sources', organizationId] as const,
+    queryFn: () => api.listCollectionSources(organizationId!),
+    enabled: Boolean(organizationId),
     refetchInterval: () => (typeof document !== 'undefined' && document.hidden ? false : 15_000),
   });
   const counterpartiesQuery = useQuery({
-    queryKey: ['counterparties', workspaceId] as const,
-    queryFn: () => api.listCounterparties(workspaceId!),
-    enabled: Boolean(workspaceId),
+    queryKey: ['counterparties', organizationId] as const,
+    queryFn: () => api.listCounterparties(organizationId!),
+    enabled: Boolean(organizationId),
   });
 
   async function invalidate() {
-    await queryClient.invalidateQueries({ queryKey: ['collection-sources', workspaceId] });
+    await queryClient.invalidateQueries({ queryKey: ['collection-sources', organizationId] });
   }
 
-  if (!workspaceId) {
+  if (!organizationId) {
     return (
       <main className="page-frame">
         <div className="rd-state">
-          <h2 className="rd-state-title">Workspace unavailable</h2>
-          <p className="rd-state-body">Pick a workspace from the sidebar.</p>
+          <h2 className="rd-state-title">Organization unavailable</h2>
+          <p className="rd-state-body">Pick a organization from the sidebar.</p>
         </div>
       </main>
     );
@@ -285,7 +285,7 @@ export function CollectionSourcesPage({ session: _session }: { session: Authenti
 
       {addOpen ? (
         <AddCollectionSourceDialog
-          workspaceId={workspaceId}
+          organizationId={organizationId}
           counterparties={counterparties}
           onClose={() => setAddOpen(false)}
           onSuccess={async () => {
@@ -299,7 +299,7 @@ export function CollectionSourcesPage({ session: _session }: { session: Authenti
 
       {editSource ? (
         <EditCollectionSourceDialog
-          workspaceId={workspaceId}
+          organizationId={organizationId}
           source={editSource}
           counterparties={counterparties}
           onClose={() => setEditSource(null)}
@@ -316,13 +316,13 @@ export function CollectionSourcesPage({ session: _session }: { session: Authenti
 }
 
 export function AddCollectionSourceDialog(props: {
-  workspaceId: string;
+  organizationId: string;
   counterparties: Counterparty[];
   onClose: () => void;
   onSuccess: () => void;
   onError: (message: string) => void;
 }) {
-  const { workspaceId, counterparties, onClose, onSuccess, onError } = props;
+  const { organizationId, counterparties, onClose, onSuccess, onError } = props;
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -334,7 +334,7 @@ export function AddCollectionSourceDialog(props: {
 
   const mutation = useMutation({
     mutationFn: (form: FormData) =>
-      api.createCollectionSource(workspaceId, {
+      api.createCollectionSource(organizationId, {
         label: String(form.get('label') ?? '').trim(),
         walletAddress: String(form.get('walletAddress') ?? '').trim(),
         trustState: String(form.get('trustState') ?? 'unreviewed') as CollectionSourceTrustState,
@@ -434,14 +434,14 @@ export function AddCollectionSourceDialog(props: {
 }
 
 function EditCollectionSourceDialog(props: {
-  workspaceId: string;
+  organizationId: string;
   source: CollectionSource;
   counterparties: Counterparty[];
   onClose: () => void;
   onSuccess: () => void;
   onError: (message: string) => void;
 }) {
-  const { workspaceId, source, counterparties, onClose, onSuccess, onError } = props;
+  const { organizationId, source, counterparties, onClose, onSuccess, onError } = props;
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -453,7 +453,7 @@ function EditCollectionSourceDialog(props: {
 
   const mutation = useMutation({
     mutationFn: (form: FormData) =>
-      api.updateCollectionSource(workspaceId, source.collectionSourceId, {
+      api.updateCollectionSource(organizationId, source.collectionSourceId, {
         label: String(form.get('label') ?? '').trim(),
         trustState: String(form.get('trustState') ?? source.trustState) as CollectionSourceTrustState,
         counterpartyId:

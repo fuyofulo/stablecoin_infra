@@ -12,6 +12,7 @@ import {
 } from '@wallet-standard/core';
 import {
   SolanaSignAndSendTransaction,
+  SolanaSignMessage,
   SolanaSignTransaction,
 } from '@solana/wallet-standard-features';
 import bs58 from 'bs58';
@@ -29,6 +30,7 @@ type SolanaWalletProvider = {
   isPhantom?: boolean;
   publicKey?: PublicKey | { toBase58: () => string };
   connect: () => Promise<{ publicKey: PublicKey | { toBase58: () => string } }>;
+  signMessage?: (message: Uint8Array) => Promise<{ signature: Uint8Array } | Uint8Array>;
   signAndSendTransaction?: (transaction: Transaction) => Promise<{ signature: string }>;
   signTransaction?: (transaction: Transaction) => Promise<Transaction>;
 };
@@ -58,6 +60,15 @@ type StandardSignFeature = {
       transaction: Uint8Array;
       options?: { preflightCommitment?: 'processed' | 'confirmed' | 'finalized' };
     }) => Promise<readonly { signedTransaction: Uint8Array }[]>;
+  };
+};
+
+type StandardSignMessageFeature = {
+  [SolanaSignMessage]: {
+    signMessage: (input: {
+      account: WalletAccount;
+      message: Uint8Array;
+    }) => Promise<readonly { signedMessage: Uint8Array; signature: Uint8Array; signatureType?: 'ed25519' }[]>;
   };
 };
 
@@ -192,6 +203,60 @@ export async function signAndSubmitPreparedPayment(packet: PaymentExecutionPacke
   return signAndSubmitWithInjectedWallet(packet, transaction, connection, walletOptionId);
 }
 
+export async function signWalletVerificationMessage(message: string, walletOptionId?: string) {
+  const messageBytes = new TextEncoder().encode(message);
+
+  if (walletOptionId?.startsWith('standard:')) {
+    const selected = resolveStandardWallet(walletOptionId);
+    if (!selected) {
+      throw new Error('Selected wallet is no longer available. Refresh the wallet list and try again.');
+    }
+
+    const account = await resolveStandardWalletAccount(selected.wallet, selected.accountAddress, null);
+    if (!account) {
+      throw new Error('Selected wallet did not expose a Solana account.');
+    }
+
+    const signMessageFeature = selected.wallet.features[SolanaSignMessage] as StandardSignMessageFeature[typeof SolanaSignMessage] | undefined;
+    if (!signMessageFeature) {
+      throw new Error('Selected wallet cannot sign verification messages.');
+    }
+
+    const [result] = await signMessageFeature.signMessage({
+      account,
+      message: messageBytes,
+    });
+    if (!result) {
+      throw new Error('Wallet did not return a message signature.');
+    }
+
+    return {
+      walletAddress: account.address,
+      signedMessageBase64: bytesToBase64(result.signedMessage),
+      signatureBase64: bytesToBase64(result.signature),
+    };
+  }
+
+  const provider = resolveInjectedProvider(walletOptionId);
+  if (!provider) {
+    throw new Error('No Solana wallet found. Install, unlock, or select a browser wallet and try again.');
+  }
+
+  const connected = await provider.connect();
+  const walletAddress = connected.publicKey.toBase58();
+  if (!provider.signMessage) {
+    throw new Error('Connected wallet cannot sign verification messages.');
+  }
+
+  const result = await provider.signMessage(messageBytes);
+  const signature = result instanceof Uint8Array ? result : result.signature;
+  return {
+    walletAddress,
+    signedMessageBase64: bytesToBase64(messageBytes),
+    signatureBase64: bytesToBase64(signature),
+  };
+}
+
 async function signAndSubmitWithStandardWallet(
   packet: PaymentExecutionPacket,
   transaction: Transaction,
@@ -314,7 +379,7 @@ function resolveStandardWallet(walletOptionId: string) {
   };
 }
 
-async function resolveStandardWalletAccount(wallet: Wallet, selectedAccountAddress: string | null, signerWallet: string) {
+async function resolveStandardWalletAccount(wallet: Wallet, selectedAccountAddress: string | null, signerWallet: string | null) {
   const currentAccount = wallet.accounts.find((account) => account.address === selectedAccountAddress || account.address === signerWallet);
   if (currentAccount && isSolanaAccount(currentAccount)) {
     return currentAccount;
@@ -326,7 +391,7 @@ async function resolveStandardWalletAccount(wallet: Wallet, selectedAccountAddre
   }
 
   const connected = await connectFeature.connect();
-  return connected.accounts.find((account) => account.address === selectedAccountAddress || account.address === signerWallet) ?? null;
+  return connected.accounts.find((account) => account.address === selectedAccountAddress || account.address === signerWallet || isSolanaAccount(account)) ?? null;
 }
 
 function resolveInjectedProvider(walletOptionId?: string) {
@@ -376,6 +441,14 @@ function hasStandardSigner(wallet: Wallet) {
     Object.prototype.hasOwnProperty.call(wallet.features, SolanaSignAndSendTransaction)
     || Object.prototype.hasOwnProperty.call(wallet.features, SolanaSignTransaction)
   );
+}
+
+function bytesToBase64(bytes: Uint8Array) {
+  let binary = '';
+  bytes.forEach((byte) => {
+    binary += String.fromCharCode(byte);
+  });
+  return btoa(binary);
 }
 
 function dedupeWalletOptions(options: BrowserWalletOption[]) {

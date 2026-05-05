@@ -9,7 +9,7 @@ import type {
   User,
   TreasuryWallet,
 } from '@prisma/client';
-import { buildApprovalEvaluationSummary, getOrCreateWorkspaceApprovalPolicy } from './approval-policy.js';
+import { buildApprovalEvaluationSummary, getOrCreateOrganizationApprovalPolicy } from './approval-policy.js';
 import { serializeExecutionRecord } from './execution-records.js';
 import { prisma } from './prisma.js';
 import { getReconciliationDetail } from './reconciliation.js';
@@ -24,7 +24,7 @@ export { PAYMENT_ORDER_STATES, isPaymentOrderState, type PaymentOrderState } fro
 import type { PaymentOrderState } from './payment-order-state.js';
 
 export type PaymentOrderWithRelations = PaymentOrder & {
-  workspace?: unknown;
+  organization?: unknown;
   paymentRequest: (PaymentRequest & { requestedByUser: Pick<User, 'userId' | 'email' | 'displayName'> | null }) | null;
   destination: Destination & {
     counterparty: Counterparty | null;
@@ -50,7 +50,7 @@ type PaymentActorInput = {
 
 export async function createPaymentOrder(
   args: PaymentActorInput & {
-    workspaceId: string;
+    organizationId: string;
     destinationId: string;
     sourceTreasuryWalletId?: string | null;
     amountRaw: string | bigint;
@@ -70,7 +70,7 @@ export async function createPaymentOrder(
   const [destination, sourceTreasuryWallet] = await Promise.all([
     prisma.destination.findFirst({
       where: {
-        workspaceId: args.workspaceId,
+        organizationId: args.organizationId,
         destinationId: args.destinationId,
         isActive: true,
       },
@@ -81,7 +81,7 @@ export async function createPaymentOrder(
     args.sourceTreasuryWalletId
       ? prisma.treasuryWallet.findFirst({
           where: {
-            workspaceId: args.workspaceId,
+            organizationId: args.organizationId,
             treasuryWalletId: args.sourceTreasuryWalletId,
             isActive: true,
           },
@@ -103,7 +103,7 @@ export async function createPaymentOrder(
   });
 
   await enforceDuplicatePaymentOrder({
-    workspaceId: args.workspaceId,
+    organizationId: args.organizationId,
     destinationId: destination.destinationId,
     amountRaw: args.amountRaw,
     reference: normalizeReference(args.externalReference ?? args.invoiceNumber ?? null),
@@ -112,7 +112,7 @@ export async function createPaymentOrder(
   const created = await prisma.$transaction(async (tx) => {
     const paymentOrder = await tx.paymentOrder.create({
       data: {
-        workspaceId: args.workspaceId,
+        organizationId: args.organizationId,
         paymentRequestId: args.paymentRequestId ?? null,
         paymentRunId: args.paymentRunId ?? null,
         destinationId: destination.destinationId,
@@ -134,7 +134,7 @@ export async function createPaymentOrder(
 
     await createPaymentOrderEvent(tx, {
       paymentOrderId: paymentOrder.paymentOrderId,
-      workspaceId: args.workspaceId,
+      organizationId: args.organizationId,
       eventType: 'payment_order_created',
       ...buildPaymentEventActor(args),
       beforeState: null,
@@ -154,7 +154,7 @@ export async function createPaymentOrder(
 
   if (args.submitNow) {
     return submitPaymentOrder({
-      workspaceId: args.workspaceId,
+      organizationId: args.organizationId,
       paymentOrderId: created.paymentOrderId,
       actorUserId: args.actorUserId,
       actorType: args.actorType,
@@ -162,11 +162,11 @@ export async function createPaymentOrder(
     });
   }
 
-  return getPaymentOrderDetail(args.workspaceId, created.paymentOrderId);
+  return getPaymentOrderDetail(args.organizationId, created.paymentOrderId);
 }
 
 export async function listPaymentOrders(
-  workspaceId: string,
+  organizationId: string,
   options?: {
     limit?: number;
     state?: string;
@@ -175,7 +175,7 @@ export async function listPaymentOrders(
 ) {
   const paymentOrders = await prisma.paymentOrder.findMany({
     where: {
-      workspaceId,
+      organizationId,
       ...(options?.state ? { state: options.state } : {}),
       ...(options?.paymentRunId ? { paymentRunId: options.paymentRunId } : {}),
     },
@@ -188,9 +188,9 @@ export async function listPaymentOrders(
   return { items };
 }
 
-export async function getPaymentOrderDetail(workspaceId: string, paymentOrderId: string) {
+export async function getPaymentOrderDetail(organizationId: string, paymentOrderId: string) {
   const paymentOrder = await prisma.paymentOrder.findFirstOrThrow({
-    where: { workspaceId, paymentOrderId },
+    where: { organizationId, paymentOrderId },
     include: paymentOrderIncludeWithEvents,
   });
 
@@ -199,7 +199,7 @@ export async function getPaymentOrderDetail(workspaceId: string, paymentOrderId:
 
 export async function updatePaymentOrder(
   args: PaymentActorInput & {
-    workspaceId: string;
+    organizationId: string;
     paymentOrderId: string;
     input: {
       sourceTreasuryWalletId?: string | null;
@@ -215,7 +215,7 @@ export async function updatePaymentOrder(
 ) {
   const current = await prisma.paymentOrder.findFirstOrThrow({
     where: {
-      workspaceId: args.workspaceId,
+      organizationId: args.organizationId,
       paymentOrderId: args.paymentOrderId,
     },
     include: paymentOrderInclude,
@@ -228,7 +228,7 @@ export async function updatePaymentOrder(
   const sourceTreasuryWallet = args.input.sourceTreasuryWalletId
     ? await prisma.treasuryWallet.findFirst({
         where: {
-          workspaceId: args.workspaceId,
+          organizationId: args.organizationId,
           treasuryWalletId: args.input.sourceTreasuryWalletId,
           isActive: true,
         },
@@ -254,7 +254,7 @@ export async function updatePaymentOrder(
     ?? null,
   );
   await enforceDuplicatePaymentOrder({
-    workspaceId: args.workspaceId,
+    organizationId: args.organizationId,
     destinationId: current.destinationId,
     amountRaw: current.amountRaw,
     reference: nextReference,
@@ -292,7 +292,7 @@ export async function updatePaymentOrder(
 
     await createPaymentOrderEvent(tx, {
       paymentOrderId: current.paymentOrderId,
-      workspaceId: args.workspaceId,
+      organizationId: args.organizationId,
       eventType: 'payment_order_updated',
       ...buildPaymentEventActor(args),
       beforeState: current.state,
@@ -303,25 +303,25 @@ export async function updatePaymentOrder(
     });
   });
 
-  return getPaymentOrderDetail(args.workspaceId, args.paymentOrderId);
+  return getPaymentOrderDetail(args.organizationId, args.paymentOrderId);
 }
 
 export async function submitPaymentOrder(
   args: PaymentActorInput & {
-    workspaceId: string;
+    organizationId: string;
     paymentOrderId: string;
   },
 ) {
   const current = await prisma.paymentOrder.findFirstOrThrow({
     where: {
-      workspaceId: args.workspaceId,
+      organizationId: args.organizationId,
       paymentOrderId: args.paymentOrderId,
     },
     include: paymentOrderInclude,
   });
 
   if (current.transferRequests.length) {
-    return getPaymentOrderDetail(args.workspaceId, args.paymentOrderId);
+    return getPaymentOrderDetail(args.organizationId, args.paymentOrderId);
   }
 
   if (current.state !== 'draft') {
@@ -335,7 +335,7 @@ export async function submitPaymentOrder(
   });
 
   await prisma.$transaction(async (tx) => {
-    const approvalPolicy = await getOrCreateWorkspaceApprovalPolicy(args.workspaceId, tx);
+    const approvalPolicy = await getOrCreateOrganizationApprovalPolicy(args.organizationId, tx);
     const approvalEvaluation = buildApprovalEvaluationSummary({
       policy: approvalPolicy,
       amountRaw: current.amountRaw,
@@ -350,7 +350,7 @@ export async function submitPaymentOrder(
 
     const transferRequest = await tx.transferRequest.create({
       data: {
-        workspaceId: args.workspaceId,
+        organizationId: args.organizationId,
         paymentOrderId: current.paymentOrderId,
         sourceTreasuryWalletId: current.sourceTreasuryWalletId,
         destinationId: current.destinationId,
@@ -373,7 +373,7 @@ export async function submitPaymentOrder(
 
     await createTransferRequestEvent(tx, {
       transferRequestId: transferRequest.transferRequestId,
-      workspaceId: args.workspaceId,
+      organizationId: args.organizationId,
       eventType: 'request_created',
       ...buildTransferEventActor(args),
       beforeState: null,
@@ -391,7 +391,7 @@ export async function submitPaymentOrder(
       data: {
         approvalPolicyId: approvalPolicy.approvalPolicyId,
         transferRequestId: transferRequest.transferRequestId,
-        workspaceId: args.workspaceId,
+        organizationId: args.organizationId,
         actorType: 'system',
         action: approvalEvaluation.requiresApproval ? 'routed_for_approval' : 'auto_approved',
         payloadJson: approvalEvaluation as Prisma.InputJsonValue,
@@ -400,7 +400,7 @@ export async function submitPaymentOrder(
 
     await createTransferRequestEvent(tx, {
       transferRequestId: transferRequest.transferRequestId,
-      workspaceId: args.workspaceId,
+      organizationId: args.organizationId,
       eventType: approvalEvaluation.requiresApproval ? 'approval_required' : 'approval_auto_approved',
       actorType: 'system',
       eventSource: 'system',
@@ -418,7 +418,7 @@ export async function submitPaymentOrder(
 
     await createPaymentOrderEvent(tx, {
       paymentOrderId: current.paymentOrderId,
-      workspaceId: args.workspaceId,
+      organizationId: args.organizationId,
       eventType: approvalEvaluation.requiresApproval ? 'payment_order_approval_required' : 'payment_order_auto_approved',
       actorType: 'system',
       beforeState: current.state,
@@ -428,22 +428,22 @@ export async function submitPaymentOrder(
     });
   });
 
-  return getPaymentOrderDetail(args.workspaceId, args.paymentOrderId);
+  return getPaymentOrderDetail(args.organizationId, args.paymentOrderId);
 }
 
 export async function cancelPaymentOrder(args: PaymentActorInput & {
-  workspaceId: string;
+  organizationId: string;
   paymentOrderId: string;
 }) {
   const current = await prisma.paymentOrder.findFirstOrThrow({
     where: {
-      workspaceId: args.workspaceId,
+      organizationId: args.organizationId,
       paymentOrderId: args.paymentOrderId,
     },
   });
 
   if (current.state === 'cancelled') {
-    return getPaymentOrderDetail(args.workspaceId, args.paymentOrderId);
+    return getPaymentOrderDetail(args.organizationId, args.paymentOrderId);
   }
 
   if (['settled', 'closed'].includes(current.state)) {
@@ -458,7 +458,7 @@ export async function cancelPaymentOrder(args: PaymentActorInput & {
 
     await createPaymentOrderEvent(tx, {
       paymentOrderId: current.paymentOrderId,
-      workspaceId: args.workspaceId,
+      organizationId: args.organizationId,
       eventType: 'payment_order_cancelled',
       ...buildPaymentEventActor(args),
       beforeState: current.state,
@@ -467,18 +467,18 @@ export async function cancelPaymentOrder(args: PaymentActorInput & {
     });
   });
 
-  return getPaymentOrderDetail(args.workspaceId, args.paymentOrderId);
+  return getPaymentOrderDetail(args.organizationId, args.paymentOrderId);
 }
 
 export async function createPaymentOrderExecution(args: PaymentActorInput & {
-  workspaceId: string;
+  organizationId: string;
   paymentOrderId: string;
   executionSource: string;
   externalReference?: string | null;
   metadataJson?: Prisma.InputJsonValue;
 }) {
   const current = await prisma.paymentOrder.findFirstOrThrow({
-    where: { workspaceId: args.workspaceId, paymentOrderId: args.paymentOrderId },
+    where: { organizationId: args.organizationId, paymentOrderId: args.paymentOrderId },
     include: paymentOrderInclude,
   });
   const transferRequest = getPrimaryTransferRequest(current);
@@ -495,7 +495,7 @@ export async function createPaymentOrderExecution(args: PaymentActorInput & {
     const record = await tx.executionRecord.create({
       data: {
         transferRequestId: transferRequest.transferRequestId,
-        workspaceId: args.workspaceId,
+        organizationId: args.organizationId,
         executionSource: args.executionSource,
         executorUserId: args.actorUserId ?? undefined,
         state: 'ready_for_execution',
@@ -530,7 +530,7 @@ export async function createPaymentOrderExecution(args: PaymentActorInput & {
 
     await createTransferRequestEvent(tx, {
       transferRequestId: transferRequest.transferRequestId,
-      workspaceId: args.workspaceId,
+      organizationId: args.organizationId,
       eventType: 'execution_created',
       ...buildTransferEventActor(args),
       beforeState: transferRequest.status,
@@ -545,7 +545,7 @@ export async function createPaymentOrderExecution(args: PaymentActorInput & {
 
     await createPaymentOrderEvent(tx, {
       paymentOrderId: current.paymentOrderId,
-      workspaceId: args.workspaceId,
+      organizationId: args.organizationId,
       eventType: 'payment_order_execution_created',
       ...buildPaymentEventActor(args),
       beforeState: current.state,
@@ -565,19 +565,19 @@ export async function createPaymentOrderExecution(args: PaymentActorInput & {
 }
 
 export async function preparePaymentOrderExecution(args: PaymentActorInput & {
-  workspaceId: string;
+  organizationId: string;
   paymentOrderId: string;
   sourceTreasuryWalletId?: string | null;
 }) {
   let current = await prisma.paymentOrder.findFirstOrThrow({
-    where: { workspaceId: args.workspaceId, paymentOrderId: args.paymentOrderId },
+    where: { organizationId: args.organizationId, paymentOrderId: args.paymentOrderId },
     include: paymentOrderInclude,
   });
 
   if (args.sourceTreasuryWalletId && args.sourceTreasuryWalletId !== current.sourceTreasuryWalletId) {
     const sourceTreasuryWallet = await prisma.treasuryWallet.findFirst({
       where: {
-        workspaceId: args.workspaceId,
+        organizationId: args.organizationId,
         treasuryWalletId: args.sourceTreasuryWalletId,
         isActive: true,
       },
@@ -607,7 +607,7 @@ export async function preparePaymentOrderExecution(args: PaymentActorInput & {
 
       await createPaymentOrderEvent(tx, {
         paymentOrderId: current.paymentOrderId,
-        workspaceId: args.workspaceId,
+        organizationId: args.organizationId,
         eventType: 'payment_order_source_selected',
         ...buildPaymentEventActor(args),
         beforeState: current.state,
@@ -619,7 +619,7 @@ export async function preparePaymentOrderExecution(args: PaymentActorInput & {
     });
 
     current = await prisma.paymentOrder.findFirstOrThrow({
-      where: { workspaceId: args.workspaceId, paymentOrderId: args.paymentOrderId },
+      where: { organizationId: args.organizationId, paymentOrderId: args.paymentOrderId },
       include: paymentOrderInclude,
     });
   }
@@ -630,14 +630,14 @@ export async function preparePaymentOrderExecution(args: PaymentActorInput & {
 
   if (!current.transferRequests.length && current.state === 'draft') {
     await submitPaymentOrder({
-      workspaceId: args.workspaceId,
+      organizationId: args.organizationId,
       paymentOrderId: args.paymentOrderId,
       actorUserId: args.actorUserId,
       actorType: args.actorType,
       actorId: args.actorId,
     });
     current = await prisma.paymentOrder.findFirstOrThrow({
-      where: { workspaceId: args.workspaceId, paymentOrderId: args.paymentOrderId },
+      where: { organizationId: args.organizationId, paymentOrderId: args.paymentOrderId },
       include: paymentOrderInclude,
     });
   }
@@ -665,7 +665,7 @@ export async function preparePaymentOrderExecution(args: PaymentActorInput & {
   });
 
   const reusableExecutionRecord = await findReusablePreparedExecution({
-    workspaceId: args.workspaceId,
+    organizationId: args.organizationId,
     transferRequestId: transferRequest.transferRequestId,
     executionSource: 'prepared_solana_transfer',
   });
@@ -681,7 +681,7 @@ export async function preparePaymentOrderExecution(args: PaymentActorInput & {
     return {
       executionRecord: serializeExecutionRecord(reusableExecutionRecord),
       executionPacket: reusableExecutionPacket,
-      paymentOrder: await getPaymentOrderDetail(args.workspaceId, args.paymentOrderId),
+      paymentOrder: await getPaymentOrderDetail(args.organizationId, args.paymentOrderId),
     };
   }
 
@@ -689,7 +689,7 @@ export async function preparePaymentOrderExecution(args: PaymentActorInput & {
     const record = await tx.executionRecord.create({
       data: {
         transferRequestId: transferRequest.transferRequestId,
-        workspaceId: args.workspaceId,
+        organizationId: args.organizationId,
         executionSource: 'prepared_solana_transfer',
         executorUserId: args.actorUserId ?? undefined,
         state: 'ready_for_execution',
@@ -740,7 +740,7 @@ export async function preparePaymentOrderExecution(args: PaymentActorInput & {
 
     await createTransferRequestEvent(tx, {
       transferRequestId: transferRequest.transferRequestId,
-      workspaceId: args.workspaceId,
+      organizationId: args.organizationId,
       eventType: 'execution_prepared',
       ...buildTransferEventActor(args),
       beforeState: transferRequest.status,
@@ -757,7 +757,7 @@ export async function preparePaymentOrderExecution(args: PaymentActorInput & {
 
     await createPaymentOrderEvent(tx, {
       paymentOrderId: current.paymentOrderId,
-      workspaceId: args.workspaceId,
+      organizationId: args.organizationId,
       eventType: 'payment_order_execution_prepared',
       ...buildPaymentEventActor(args),
       beforeState: current.state,
@@ -782,12 +782,12 @@ export async function preparePaymentOrderExecution(args: PaymentActorInput & {
   return {
     executionRecord: serializeExecutionRecord(executionRecord),
     executionPacket,
-    paymentOrder: await getPaymentOrderDetail(args.workspaceId, args.paymentOrderId),
+    paymentOrder: await getPaymentOrderDetail(args.organizationId, args.paymentOrderId),
   };
 }
 
 export async function attachPaymentOrderSignature(args: PaymentActorInput & {
-  workspaceId: string;
+  organizationId: string;
   paymentOrderId: string;
   submittedSignature?: string | null;
   externalReference?: string | null;
@@ -795,7 +795,7 @@ export async function attachPaymentOrderSignature(args: PaymentActorInput & {
   metadataJson?: Prisma.InputJsonValue;
 }) {
   const current = await prisma.paymentOrder.findFirstOrThrow({
-    where: { workspaceId: args.workspaceId, paymentOrderId: args.paymentOrderId },
+    where: { organizationId: args.organizationId, paymentOrderId: args.paymentOrderId },
     include: {
       ...paymentOrderInclude,
       transferRequests: {
@@ -827,7 +827,7 @@ export async function attachPaymentOrderSignature(args: PaymentActorInput & {
 
   let latestExecution = await prisma.executionRecord.findFirst({
     where: {
-      workspaceId: args.workspaceId,
+      organizationId: args.organizationId,
       transferRequestId: transferRequest.transferRequestId,
     },
     include: {
@@ -887,7 +887,7 @@ export async function attachPaymentOrderSignature(args: PaymentActorInput & {
 
     await createTransferRequestEvent(tx, {
       transferRequestId: transferRequest.transferRequestId,
-      workspaceId: args.workspaceId,
+      organizationId: args.organizationId,
       eventType: hasSubmittedSignature ? 'execution_signature_attached' : 'execution_reference_attached',
       ...buildTransferEventActor(args),
       beforeState: transferRequest.status,
@@ -902,7 +902,7 @@ export async function attachPaymentOrderSignature(args: PaymentActorInput & {
 
     await createPaymentOrderEvent(tx, {
       paymentOrderId: current.paymentOrderId,
-      workspaceId: args.workspaceId,
+      organizationId: args.organizationId,
       eventType: hasSubmittedSignature ? 'payment_order_signature_attached' : 'payment_order_execution_reference_attached',
       ...buildPaymentEventActor(args),
       beforeState: current.state,
@@ -923,7 +923,7 @@ export async function attachPaymentOrderSignature(args: PaymentActorInput & {
 
 async function createExecutionRecordForSignature(
   args: PaymentActorInput & {
-    workspaceId: string;
+    organizationId: string;
     paymentOrderId: string;
     externalReference?: string | null;
     metadataJson?: Prisma.InputJsonValue;
@@ -933,7 +933,7 @@ async function createExecutionRecordForSignature(
   return prisma.executionRecord.create({
     data: {
       transferRequestId,
-      workspaceId: args.workspaceId,
+      organizationId: args.organizationId,
       executionSource: args.externalReference ? 'external_proposal' : 'manual_signature',
       executorUserId: args.actorUserId ?? undefined,
       state: 'ready_for_execution',
@@ -958,14 +958,14 @@ async function createExecutionRecordForSignature(
 async function buildPaymentOrderReadModel(order: PaymentOrderWithRelations) {
   const primaryTransferRequest = getPrimaryTransferRequest(order);
   const reconciliationDetail = primaryTransferRequest
-    ? await getReconciliationDetail(order.workspaceId, primaryTransferRequest.transferRequestId)
+    ? await getReconciliationDetail(order.organizationId, primaryTransferRequest.transferRequestId)
     : null;
   const derivedState = derivePaymentOrderState(order, reconciliationDetail);
   const balanceWarning = deriveBalanceWarning(order);
 
   return {
     paymentOrderId: order.paymentOrderId,
-    workspaceId: order.workspaceId,
+    organizationId: order.organizationId,
     paymentRequestId: order.paymentRequestId,
     paymentRunId: order.paymentRunId,
     destinationId: order.destinationId,
@@ -1152,13 +1152,13 @@ function getPrimaryTransferRequest(order: {
 }
 
 async function findReusablePreparedExecution(args: {
-  workspaceId: string;
+  organizationId: string;
   transferRequestId: string;
   executionSource: string;
 }) {
   return prisma.executionRecord.findFirst({
     where: {
-      workspaceId: args.workspaceId,
+      organizationId: args.organizationId,
       transferRequestId: args.transferRequestId,
       executionSource: args.executionSource,
       state: 'ready_for_execution',
@@ -1265,7 +1265,7 @@ function validateSourceAndDestination(args: {
 }
 
 async function enforceDuplicatePaymentOrder(args: {
-  workspaceId: string;
+  organizationId: string;
   destinationId: string;
   amountRaw: string | bigint;
   reference: string | null;
@@ -1277,7 +1277,7 @@ async function enforceDuplicatePaymentOrder(args: {
 
   const duplicate = await prisma.paymentOrder.findFirst({
     where: {
-      workspaceId: args.workspaceId,
+      organizationId: args.organizationId,
       destinationId: args.destinationId,
       amountRaw: BigInt(args.amountRaw),
       state: {
@@ -1316,7 +1316,7 @@ async function createPaymentOrderEvent(
   client: PaymentOrderClient,
   args: {
     paymentOrderId: string;
-    workspaceId: string;
+    organizationId: string;
     eventType: string;
     actorType: 'user' | 'system' | 'worker';
     actorId?: string | null;
@@ -1331,7 +1331,7 @@ async function createPaymentOrderEvent(
   await client.paymentOrderEvent.create({
     data: {
       paymentOrderId: args.paymentOrderId,
-      workspaceId: args.workspaceId,
+      organizationId: args.organizationId,
       eventType: args.eventType,
       actorType: args.actorType,
       actorId: args.actorId ?? null,
@@ -1364,7 +1364,7 @@ function serializePaymentOrderEvent(event: PaymentOrderEvent) {
   return {
     paymentOrderEventId: event.paymentOrderEventId,
     paymentOrderId: event.paymentOrderId,
-    workspaceId: event.workspaceId,
+    organizationId: event.organizationId,
     eventType: event.eventType,
     actorType: event.actorType,
     actorId: event.actorId,
@@ -1383,7 +1383,7 @@ function serializePaymentRequestRef(
 ) {
   return {
     paymentRequestId: request.paymentRequestId,
-    workspaceId: request.workspaceId,
+    organizationId: request.organizationId,
     destinationId: request.destinationId,
     counterpartyId: request.counterpartyId,
     requestedByUserId: request.requestedByUserId,
@@ -1407,7 +1407,7 @@ function serializePaymentOrderDestination(
 ) {
   return {
     destinationId: destination.destinationId,
-    workspaceId: destination.workspaceId,
+    organizationId: destination.organizationId,
     counterpartyId: destination.counterpartyId,
     chain: destination.chain,
     asset: destination.asset,
@@ -1443,7 +1443,7 @@ function serializeCounterparty(counterparty: Counterparty) {
 function serializeTreasuryWallet(address: TreasuryWallet) {
   return {
     treasuryWalletId: address.treasuryWalletId,
-    workspaceId: address.workspaceId,
+    organizationId: address.organizationId,
     chain: address.chain,
     address: address.address,
     assetScope: address.assetScope,

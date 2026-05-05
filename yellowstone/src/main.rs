@@ -42,7 +42,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         config.control_plane_api_url,
         config.control_plane_service_token,
     );
-    let registry_cache = control_plane::WorkspaceRegistryCache::new(control_plane_client);
+    let registry_cache = control_plane::OrganizationRegistryCache::new(control_plane_client);
     let worker = yellowstone::YellowstoneWorker::new(
         config.yellowstone_endpoint,
         config.yellowstone_token,

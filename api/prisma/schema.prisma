@@ -15,36 +15,97 @@ model Organization {
   updatedAt        DateTime                 @updatedAt @map("updated_at") @db.Timestamptz(6)
   memberships      OrganizationMembership[]
   sessions         AuthSession[]
-  workspaces       Workspace[]
   counterparties   Counterparty[]
+  treasuryWallets TreasuryWallet[]
+  destinations Destination[]
+  collectionSources CollectionSource[]
+  transferRequests TransferRequest[]
+  approvalPolicy ApprovalPolicy?
+  approvalDecisions ApprovalDecision[]
+  executionRecords ExecutionRecord[]
+  transferRequestEvents TransferRequestEvent[]
+  transferRequestNotes TransferRequestNote[]
+  exceptionNotes ExceptionNote[]
+  exceptionStates ExceptionState[]
+  paymentRuns PaymentRun[]
+  paymentOrders PaymentOrder[]
+  paymentOrderEvents PaymentOrderEvent[]
+  paymentRequests PaymentRequest[]
+  collectionRuns CollectionRun[]
+  collectionRequests CollectionRequest[]
+  collectionEvents CollectionRequestEvent[]
 
   @@map("organizations")
 }
 
 model User {
-  userId                    String                   @id @default(dbgenerated("gen_random_uuid()")) @map("user_id") @db.Uuid
-  email                     String                   @unique
-  displayName               String                   @map("display_name")
-  passwordHash              String?                  @map("password_hash")
-  status                    String                   @default("active")
-  createdAt                 DateTime                 @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt                 DateTime                 @updatedAt @map("updated_at") @db.Timestamptz(6)
-  memberships               OrganizationMembership[]
-  sessions                  AuthSession[]
-  transferRequestsRequested TransferRequest[]        @relation("TransferRequestRequestedByUser")
-  transferRequestNotes      TransferRequestNote[]
-  exceptionNotes            ExceptionNote[]
-  exceptionStatesUpdated    ExceptionState[]
-  exceptionStatesAssigned   ExceptionState[]         @relation("ExceptionStateAssignee")
-  approvalDecisions         ApprovalDecision[]
-  executionRecords          ExecutionRecord[]        @relation("ExecutionRecordExecutorUser")
-  paymentOrdersCreated      PaymentOrder[]           @relation("PaymentOrderCreatedByUser")
-  paymentRequestsCreated    PaymentRequest[]         @relation("PaymentRequestRequestedByUser")
-  paymentRunsCreated        PaymentRun[]             @relation("PaymentRunCreatedByUser")
-  collectionRequestsCreated CollectionRequest[]       @relation("CollectionRequestCreatedByUser")
-  collectionRunsCreated     CollectionRun[]           @relation("CollectionRunCreatedByUser")
+  userId                     String                   @id @default(dbgenerated("gen_random_uuid()")) @map("user_id") @db.Uuid
+  email                      String                   @unique
+  displayName                String                   @map("display_name")
+  passwordHash               String?                  @map("password_hash")
+  emailVerifiedAt            DateTime?                @map("email_verified_at") @db.Timestamptz(6)
+  emailVerificationCodeHash  String?                  @map("email_verification_code_hash")
+  emailVerificationExpiresAt DateTime?                @map("email_verification_expires_at") @db.Timestamptz(6)
+  status                     String                   @default("active")
+  createdAt                  DateTime                 @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                  DateTime                 @updatedAt @map("updated_at") @db.Timestamptz(6)
+  memberships                OrganizationMembership[]
+  sessions                   AuthSession[]
+  wallets                    UserWallet[]
+  walletChallenges           WalletChallenge[]
+  transferRequestsRequested  TransferRequest[]        @relation("TransferRequestRequestedByUser")
+  transferRequestNotes       TransferRequestNote[]
+  exceptionNotes             ExceptionNote[]
+  exceptionStatesUpdated     ExceptionState[]
+  exceptionStatesAssigned    ExceptionState[]         @relation("ExceptionStateAssignee")
+  approvalDecisions          ApprovalDecision[]
+  executionRecords           ExecutionRecord[]        @relation("ExecutionRecordExecutorUser")
+  paymentOrdersCreated       PaymentOrder[]           @relation("PaymentOrderCreatedByUser")
+  paymentRequestsCreated     PaymentRequest[]         @relation("PaymentRequestRequestedByUser")
+  paymentRunsCreated         PaymentRun[]             @relation("PaymentRunCreatedByUser")
+  collectionRequestsCreated  CollectionRequest[]      @relation("CollectionRequestCreatedByUser")
+  collectionRunsCreated      CollectionRun[]          @relation("CollectionRunCreatedByUser")
 
   @@map("users")
+}
+
+model UserWallet {
+  userWalletId     String    @id @default(dbgenerated("gen_random_uuid()")) @map("user_wallet_id") @db.Uuid
+  userId           String    @map("user_id") @db.Uuid
+  chain            String    @default("solana")
+  walletAddress    String    @map("wallet_address")
+  walletType       String    @map("wallet_type")
+  provider         String?
+  providerWalletId String?   @map("provider_wallet_id")
+  label            String?
+  status           String    @default("active")
+  verifiedAt       DateTime? @map("verified_at") @db.Timestamptz(6)
+  lastUsedAt       DateTime? @map("last_used_at") @db.Timestamptz(6)
+  metadataJson     Json      @default("{}") @map("metadata_json")
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  user             User      @relation(fields: [userId], references: [userId], onDelete: Cascade)
+
+  @@unique([userId, chain, walletAddress])
+  @@index([userId, status, createdAt(sort: Desc)])
+  @@map("user_wallets")
+}
+
+model WalletChallenge {
+  walletChallengeId String    @id @default(dbgenerated("gen_random_uuid()")) @map("wallet_challenge_id") @db.Uuid
+  userId            String    @map("user_id") @db.Uuid
+  chain             String    @default("solana")
+  walletAddress     String    @map("wallet_address")
+  nonceHash         String    @unique @map("nonce_hash")
+  message           String
+  expiresAt         DateTime  @map("expires_at") @db.Timestamptz(6)
+  consumedAt        DateTime? @map("consumed_at") @db.Timestamptz(6)
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  user              User      @relation(fields: [userId], references: [userId], onDelete: Cascade)
+
+  @@index([userId, walletAddress, createdAt(sort: Desc)])
+  @@index([expiresAt])
+  @@map("wallet_challenges")
 }
 
 model OrganizationMembership {
@@ -76,36 +137,6 @@ model AuthSession {
   @@map("auth_sessions")
 }
 
-model Workspace {
-  workspaceId           String                 @id @default(dbgenerated("gen_random_uuid()")) @map("workspace_id") @db.Uuid
-  organizationId        String                 @map("organization_id") @db.Uuid
-  workspaceName         String                 @map("workspace_name")
-  status                String                 @default("active")
-  createdAt             DateTime               @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt             DateTime               @updatedAt @map("updated_at") @db.Timestamptz(6)
-  organization          Organization           @relation(fields: [organizationId], references: [organizationId], onDelete: Cascade)
-  treasuryWallets       TreasuryWallet[]
-  destinations          Destination[]
-  collectionSources     CollectionSource[]
-  transferRequests      TransferRequest[]
-  approvalPolicy        ApprovalPolicy?
-  approvalDecisions     ApprovalDecision[]
-  executionRecords      ExecutionRecord[]
-  transferRequestEvents TransferRequestEvent[]
-  transferRequestNotes  TransferRequestNote[]
-  exceptionNotes        ExceptionNote[]
-  exceptionStates       ExceptionState[]
-  paymentRuns           PaymentRun[]
-  paymentOrders         PaymentOrder[]
-  paymentOrderEvents    PaymentOrderEvent[]
-  paymentRequests       PaymentRequest[]
-  collectionRuns         CollectionRun[]
-  collectionRequests     CollectionRequest[]
-  collectionEvents       CollectionRequestEvent[]
-
-  @@map("workspaces")
-}
-
 model IdempotencyRecord {
   idempotencyRecordId String   @id @default(dbgenerated("gen_random_uuid()")) @map("idempotency_record_id") @db.Uuid
   key                 String
@@ -127,13 +158,13 @@ model IdempotencyRecord {
   @@map("idempotency_records")
 }
 
-// TreasuryWallet — wallets the workspace OWNS. The source side of every payment.
+// TreasuryWallet — wallets the organization owns. The source side of every payment.
 // Only these are monitored by the Yellowstone worker.
 // Counterparty addresses (who we pay) live on the Destination row directly and
 // are NOT tracked here.
 model TreasuryWallet {
   treasuryWalletId         String            @id @default(dbgenerated("gen_random_uuid()")) @map("treasury_wallet_id") @db.Uuid
-  workspaceId              String            @map("workspace_id") @db.Uuid
+  organizationId              String            @map("organization_id") @db.Uuid
   chain                    String
   address                  String
   assetScope               String            @default("usdc") @map("asset_scope")
@@ -146,14 +177,14 @@ model TreasuryWallet {
   propertiesJson           Json              @default("{}") @map("properties_json")
   createdAt                DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt                DateTime          @updatedAt @map("updated_at") @db.Timestamptz(6)
-  workspace                Workspace         @relation(fields: [workspaceId], references: [workspaceId], onDelete: Cascade)
+  organization           Organization         @relation(fields: [organizationId], references: [organizationId], onDelete: Cascade)
   outboundTransferRequests TransferRequest[] @relation("TransferRequestSourceWallet")
   sourcePaymentOrders      PaymentOrder[]    @relation("PaymentOrderSourceWallet")
   sourcePaymentRuns        PaymentRun[]      @relation("PaymentRunSourceWallet")
   receivingCollections     CollectionRequest[] @relation("CollectionReceivingWallet")
   receivingCollectionRuns  CollectionRun[]     @relation("CollectionRunReceivingWallet")
 
-  @@unique([workspaceId, address])
+  @@unique([organizationId, address])
   @@map("treasury_wallets")
 }
 
@@ -183,7 +214,7 @@ model Counterparty {
 model Destination {
   destinationId       String            @id @default(dbgenerated("gen_random_uuid()")) @map("destination_id") @db.Uuid
   counterpartyId      String?           @map("counterparty_id") @db.Uuid
-  workspaceId         String            @map("workspace_id") @db.Uuid
+  organizationId         String            @map("organization_id") @db.Uuid
   chain               String
   asset               String            @default("usdc")
   walletAddress       String            @map("wallet_address")
@@ -198,13 +229,13 @@ model Destination {
   createdAt           DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt           DateTime          @updatedAt @map("updated_at") @db.Timestamptz(6)
   counterparty        Counterparty?     @relation(fields: [counterpartyId], references: [counterpartyId], onDelete: SetNull)
-  workspace           Workspace         @relation(fields: [workspaceId], references: [workspaceId], onDelete: Cascade)
+  organization           Organization         @relation(fields: [organizationId], references: [organizationId], onDelete: Cascade)
   transferRequests    TransferRequest[]
   paymentOrders       PaymentOrder[]
   paymentRequests     PaymentRequest[]
 
-  @@unique([workspaceId, walletAddress])
-  @@index([workspaceId, createdAt(sort: Desc)])
+  @@unique([organizationId, walletAddress])
+  @@index([organizationId, createdAt(sort: Desc)])
   @@index([counterpartyId, createdAt(sort: Desc)])
   @@map("destinations")
 }
@@ -215,7 +246,7 @@ model Destination {
 model CollectionSource {
   collectionSourceId String              @id @default(dbgenerated("gen_random_uuid()")) @map("collection_source_id") @db.Uuid
   counterpartyId     String?             @map("counterparty_id") @db.Uuid
-  workspaceId        String              @map("workspace_id") @db.Uuid
+  organizationId        String              @map("organization_id") @db.Uuid
   chain              String              @default("solana")
   asset              String              @default("usdc")
   walletAddress      String              @map("wallet_address")
@@ -229,19 +260,19 @@ model CollectionSource {
   createdAt          DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt          DateTime            @updatedAt @map("updated_at") @db.Timestamptz(6)
   counterparty       Counterparty?       @relation(fields: [counterpartyId], references: [counterpartyId], onDelete: SetNull)
-  workspace          Workspace           @relation(fields: [workspaceId], references: [workspaceId], onDelete: Cascade)
+  organization           Organization           @relation(fields: [organizationId], references: [organizationId], onDelete: Cascade)
   collectionRequests CollectionRequest[]
 
-  @@unique([workspaceId, walletAddress])
-  @@unique([workspaceId, label])
-  @@index([workspaceId, trustState, createdAt(sort: Desc)])
+  @@unique([organizationId, walletAddress])
+  @@unique([organizationId, label])
+  @@index([organizationId, trustState, createdAt(sort: Desc)])
   @@index([counterpartyId, createdAt(sort: Desc)])
   @@map("collection_sources")
 }
 
 model TransferRequest {
   transferRequestId      String                 @id @default(dbgenerated("gen_random_uuid()")) @map("transfer_request_id") @db.Uuid
-  workspaceId            String                 @map("workspace_id") @db.Uuid
+  organizationId            String                 @map("organization_id") @db.Uuid
   paymentOrderId         String?                @map("payment_order_id") @db.Uuid
   sourceTreasuryWalletId String?                @map("source_treasury_wallet_id") @db.Uuid
   destinationId          String                 @map("destination_id") @db.Uuid
@@ -257,7 +288,7 @@ model TransferRequest {
   propertiesJson         Json                   @default("{}") @map("properties_json")
   createdAt              DateTime               @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt              DateTime               @updatedAt @map("updated_at") @db.Timestamptz(6)
-  workspace              Workspace              @relation(fields: [workspaceId], references: [workspaceId], onDelete: Cascade)
+  organization           Organization              @relation(fields: [organizationId], references: [organizationId], onDelete: Cascade)
   paymentOrder           PaymentOrder?          @relation(fields: [paymentOrderId], references: [paymentOrderId], onDelete: SetNull)
   sourceTreasuryWallet   TreasuryWallet?        @relation("TransferRequestSourceWallet", fields: [sourceTreasuryWalletId], references: [treasuryWalletId], onDelete: SetNull)
   destination            Destination            @relation(fields: [destinationId], references: [destinationId], onDelete: Restrict)
@@ -268,7 +299,7 @@ model TransferRequest {
   notes                  TransferRequestNote[]
   collectionRequest      CollectionRequest?
 
-  @@index([workspaceId, status, requestedAt(sort: Desc)])
+  @@index([organizationId, status, requestedAt(sort: Desc)])
   @@index([paymentOrderId])
   @@index([destinationId, status, requestedAt(sort: Desc)])
   @@index([sourceTreasuryWalletId, status, requestedAt(sort: Desc)])
@@ -277,7 +308,7 @@ model TransferRequest {
 
 model PaymentOrder {
   paymentOrderId            String              @id @default(dbgenerated("gen_random_uuid()")) @map("payment_order_id") @db.Uuid
-  workspaceId               String              @map("workspace_id") @db.Uuid
+  organizationId               String              @map("organization_id") @db.Uuid
   paymentRequestId          String?             @unique @map("payment_request_id") @db.Uuid
   paymentRunId              String?             @map("payment_run_id") @db.Uuid
   destinationId             String              @map("destination_id") @db.Uuid
@@ -296,7 +327,7 @@ model PaymentOrder {
   createdByUserId           String?             @map("created_by_user_id") @db.Uuid
   createdAt                 DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt                 DateTime            @updatedAt @map("updated_at") @db.Timestamptz(6)
-  workspace                 Workspace           @relation(fields: [workspaceId], references: [workspaceId], onDelete: Cascade)
+  organization           Organization           @relation(fields: [organizationId], references: [organizationId], onDelete: Cascade)
   paymentRequest            PaymentRequest?     @relation(fields: [paymentRequestId], references: [paymentRequestId], onDelete: SetNull)
   paymentRun                PaymentRun?         @relation(fields: [paymentRunId], references: [paymentRunId], onDelete: SetNull)
   destination               Destination         @relation(fields: [destinationId], references: [destinationId], onDelete: Restrict)
@@ -306,7 +337,7 @@ model PaymentOrder {
   transferRequests          TransferRequest[]
   events                    PaymentOrderEvent[]
 
-  @@index([workspaceId, state, createdAt(sort: Desc)])
+  @@index([organizationId, state, createdAt(sort: Desc)])
   @@index([paymentRequestId])
   @@index([paymentRunId, createdAt(sort: Desc)])
   @@index([destinationId, createdAt(sort: Desc)])
@@ -316,7 +347,7 @@ model PaymentOrder {
 
 model PaymentRequest {
   paymentRequestId  String        @id @default(dbgenerated("gen_random_uuid()")) @map("payment_request_id") @db.Uuid
-  workspaceId       String        @map("workspace_id") @db.Uuid
+  organizationId       String        @map("organization_id") @db.Uuid
   paymentRunId      String?       @map("payment_run_id") @db.Uuid
   destinationId     String        @map("destination_id") @db.Uuid
   counterpartyId    String?       @map("counterparty_id") @db.Uuid
@@ -330,15 +361,15 @@ model PaymentRequest {
   metadataJson      Json          @default("{}") @map("metadata_json")
   createdAt         DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt         DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
-  workspace         Workspace     @relation(fields: [workspaceId], references: [workspaceId], onDelete: Cascade)
+  organization           Organization     @relation(fields: [organizationId], references: [organizationId], onDelete: Cascade)
   paymentRun        PaymentRun?   @relation(fields: [paymentRunId], references: [paymentRunId], onDelete: SetNull)
   destination       Destination   @relation(fields: [destinationId], references: [destinationId], onDelete: Restrict)
   counterparty      Counterparty? @relation(fields: [counterpartyId], references: [counterpartyId], onDelete: SetNull)
   requestedByUser   User?         @relation("PaymentRequestRequestedByUser", fields: [requestedByUserId], references: [userId], onDelete: SetNull)
   paymentOrder      PaymentOrder?
 
-  @@unique([workspaceId, destinationId, amountRaw, externalReference])
-  @@index([workspaceId, state, createdAt(sort: Desc)])
+  @@unique([organizationId, destinationId, amountRaw, externalReference])
+  @@index([organizationId, state, createdAt(sort: Desc)])
   @@index([paymentRunId, createdAt(sort: Desc)])
   @@index([destinationId, createdAt(sort: Desc)])
   @@index([counterpartyId, createdAt(sort: Desc)])
@@ -347,7 +378,7 @@ model PaymentRequest {
 
 model PaymentRun {
   paymentRunId           String           @id @default(dbgenerated("gen_random_uuid()")) @map("payment_run_id") @db.Uuid
-  workspaceId            String           @map("workspace_id") @db.Uuid
+  organizationId            String           @map("organization_id") @db.Uuid
   sourceTreasuryWalletId String?          @map("source_treasury_wallet_id") @db.Uuid
   runName                String           @map("run_name")
   inputSource            String           @default("manual") @map("input_source")
@@ -356,20 +387,20 @@ model PaymentRun {
   createdByUserId        String?          @map("created_by_user_id") @db.Uuid
   createdAt              DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt              DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
-  workspace              Workspace        @relation(fields: [workspaceId], references: [workspaceId], onDelete: Cascade)
+  organization           Organization        @relation(fields: [organizationId], references: [organizationId], onDelete: Cascade)
   sourceTreasuryWallet   TreasuryWallet?  @relation("PaymentRunSourceWallet", fields: [sourceTreasuryWalletId], references: [treasuryWalletId], onDelete: SetNull)
   createdByUser          User?            @relation("PaymentRunCreatedByUser", fields: [createdByUserId], references: [userId], onDelete: SetNull)
   paymentRequests        PaymentRequest[]
   paymentOrders          PaymentOrder[]
 
-  @@index([workspaceId, state, createdAt(sort: Desc)])
+  @@index([organizationId, state, createdAt(sort: Desc)])
   @@index([sourceTreasuryWalletId, createdAt(sort: Desc)])
   @@map("payment_runs")
 }
 
 model CollectionRun {
   collectionRunId          String              @id @default(dbgenerated("gen_random_uuid()")) @map("collection_run_id") @db.Uuid
-  workspaceId              String              @map("workspace_id") @db.Uuid
+  organizationId              String              @map("organization_id") @db.Uuid
   receivingTreasuryWalletId String?            @map("receiving_treasury_wallet_id") @db.Uuid
   runName                  String              @map("run_name")
   inputSource              String              @default("manual") @map("input_source")
@@ -378,19 +409,19 @@ model CollectionRun {
   createdByUserId          String?             @map("created_by_user_id") @db.Uuid
   createdAt                DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt                DateTime            @updatedAt @map("updated_at") @db.Timestamptz(6)
-  workspace                Workspace           @relation(fields: [workspaceId], references: [workspaceId], onDelete: Cascade)
+  organization           Organization           @relation(fields: [organizationId], references: [organizationId], onDelete: Cascade)
   receivingTreasuryWallet  TreasuryWallet?     @relation("CollectionRunReceivingWallet", fields: [receivingTreasuryWalletId], references: [treasuryWalletId], onDelete: SetNull)
   createdByUser            User?               @relation("CollectionRunCreatedByUser", fields: [createdByUserId], references: [userId], onDelete: SetNull)
   collectionRequests       CollectionRequest[]
 
-  @@index([workspaceId, state, createdAt(sort: Desc)])
+  @@index([organizationId, state, createdAt(sort: Desc)])
   @@index([receivingTreasuryWalletId, createdAt(sort: Desc)])
   @@map("collection_runs")
 }
 
 model CollectionRequest {
   collectionRequestId       String                   @id @default(dbgenerated("gen_random_uuid()")) @map("collection_request_id") @db.Uuid
-  workspaceId               String                   @map("workspace_id") @db.Uuid
+  organizationId               String                   @map("organization_id") @db.Uuid
   collectionRunId           String?                  @map("collection_run_id") @db.Uuid
   receivingTreasuryWalletId String                   @map("receiving_treasury_wallet_id") @db.Uuid
   collectionSourceId        String?                  @map("collection_source_id") @db.Uuid
@@ -408,7 +439,7 @@ model CollectionRequest {
   createdByUserId           String?                  @map("created_by_user_id") @db.Uuid
   createdAt                 DateTime                 @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt                 DateTime                 @updatedAt @map("updated_at") @db.Timestamptz(6)
-  workspace                 Workspace                @relation(fields: [workspaceId], references: [workspaceId], onDelete: Cascade)
+  organization           Organization                @relation(fields: [organizationId], references: [organizationId], onDelete: Cascade)
   collectionRun             CollectionRun?           @relation(fields: [collectionRunId], references: [collectionRunId], onDelete: SetNull)
   receivingTreasuryWallet   TreasuryWallet           @relation("CollectionReceivingWallet", fields: [receivingTreasuryWalletId], references: [treasuryWalletId], onDelete: Restrict)
   collectionSource          CollectionSource?        @relation(fields: [collectionSourceId], references: [collectionSourceId], onDelete: SetNull)
@@ -417,8 +448,8 @@ model CollectionRequest {
   createdByUser             User?                    @relation("CollectionRequestCreatedByUser", fields: [createdByUserId], references: [userId], onDelete: SetNull)
   events                    CollectionRequestEvent[]
 
-  @@unique([workspaceId, receivingTreasuryWalletId, amountRaw, externalReference])
-  @@index([workspaceId, state, createdAt(sort: Desc)])
+  @@unique([organizationId, receivingTreasuryWalletId, amountRaw, externalReference])
+  @@index([organizationId, state, createdAt(sort: Desc)])
   @@index([collectionRunId, createdAt(sort: Desc)])
   @@index([receivingTreasuryWalletId, createdAt(sort: Desc)])
   @@index([collectionSourceId, createdAt(sort: Desc)])
@@ -429,7 +460,7 @@ model CollectionRequest {
 model CollectionRequestEvent {
   collectionRequestEventId String            @id @default(dbgenerated("gen_random_uuid()")) @map("collection_request_event_id") @db.Uuid
   collectionRequestId      String            @map("collection_request_id") @db.Uuid
-  workspaceId              String            @map("workspace_id") @db.Uuid
+  organizationId              String            @map("organization_id") @db.Uuid
   eventType                String            @map("event_type")
   actorType                String            @map("actor_type")
   actorId                  String?           @map("actor_id")
@@ -439,17 +470,17 @@ model CollectionRequestEvent {
   payloadJson              Json              @default("{}") @map("payload_json")
   createdAt                DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
   collectionRequest        CollectionRequest @relation(fields: [collectionRequestId], references: [collectionRequestId], onDelete: Cascade)
-  workspace                Workspace         @relation(fields: [workspaceId], references: [workspaceId], onDelete: Cascade)
+  organization           Organization         @relation(fields: [organizationId], references: [organizationId], onDelete: Cascade)
 
   @@index([collectionRequestId, createdAt(sort: Asc)])
-  @@index([workspaceId, createdAt(sort: Desc)])
+  @@index([organizationId, createdAt(sort: Desc)])
   @@map("collection_request_events")
 }
 
 model PaymentOrderEvent {
   paymentOrderEventId     String       @id @default(dbgenerated("gen_random_uuid()")) @map("payment_order_event_id") @db.Uuid
   paymentOrderId          String       @map("payment_order_id") @db.Uuid
-  workspaceId             String       @map("workspace_id") @db.Uuid
+  organizationId             String       @map("organization_id") @db.Uuid
   eventType               String       @map("event_type")
   actorType               String       @map("actor_type")
   actorId                 String?      @map("actor_id")
@@ -461,17 +492,17 @@ model PaymentOrderEvent {
   payloadJson             Json         @default("{}") @map("payload_json")
   createdAt               DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
   paymentOrder            PaymentOrder @relation(fields: [paymentOrderId], references: [paymentOrderId], onDelete: Cascade)
-  workspace               Workspace    @relation(fields: [workspaceId], references: [workspaceId], onDelete: Cascade)
+  organization           Organization    @relation(fields: [organizationId], references: [organizationId], onDelete: Cascade)
 
   @@index([paymentOrderId, createdAt(sort: Asc)])
-  @@index([workspaceId, createdAt(sort: Desc)])
+  @@index([organizationId, createdAt(sort: Desc)])
   @@map("payment_order_events")
 }
 
 model ExecutionRecord {
   executionRecordId  String          @id @default(dbgenerated("gen_random_uuid()")) @map("execution_record_id") @db.Uuid
   transferRequestId  String          @map("transfer_request_id") @db.Uuid
-  workspaceId        String          @map("workspace_id") @db.Uuid
+  organizationId        String          @map("organization_id") @db.Uuid
   submittedSignature String?         @map("submitted_signature")
   executionSource    String          @default("manual") @map("execution_source")
   executorUserId     String?         @map("executor_user_id") @db.Uuid
@@ -481,23 +512,23 @@ model ExecutionRecord {
   createdAt          DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt          DateTime        @updatedAt @map("updated_at") @db.Timestamptz(6)
   transferRequest    TransferRequest @relation(fields: [transferRequestId], references: [transferRequestId], onDelete: Cascade)
-  workspace          Workspace       @relation(fields: [workspaceId], references: [workspaceId], onDelete: Cascade)
+  organization           Organization       @relation(fields: [organizationId], references: [organizationId], onDelete: Cascade)
   executorUser       User?           @relation("ExecutionRecordExecutorUser", fields: [executorUserId], references: [userId], onDelete: SetNull)
 
-  @@index([workspaceId, createdAt(sort: Desc)])
+  @@index([organizationId, createdAt(sort: Desc)])
   @@index([transferRequestId, createdAt(sort: Desc)])
   @@map("execution_records")
 }
 
 model ApprovalPolicy {
   approvalPolicyId  String             @id @default(dbgenerated("gen_random_uuid()")) @map("approval_policy_id") @db.Uuid
-  workspaceId       String             @unique @map("workspace_id") @db.Uuid
+  organizationId       String             @unique @map("organization_id") @db.Uuid
   policyName        String             @map("policy_name")
   isActive          Boolean            @default(true) @map("is_active")
   ruleJson          Json               @default("{}") @map("rule_json")
   createdAt         DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt         DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
-  workspace         Workspace          @relation(fields: [workspaceId], references: [workspaceId], onDelete: Cascade)
+  organization           Organization          @relation(fields: [organizationId], references: [organizationId], onDelete: Cascade)
   approvalDecisions ApprovalDecision[]
 
   @@map("approval_policies")
@@ -507,7 +538,7 @@ model ApprovalDecision {
   approvalDecisionId String          @id @default(dbgenerated("gen_random_uuid()")) @map("approval_decision_id") @db.Uuid
   approvalPolicyId   String?         @map("approval_policy_id") @db.Uuid
   transferRequestId  String          @map("transfer_request_id") @db.Uuid
-  workspaceId        String          @map("workspace_id") @db.Uuid
+  organizationId        String          @map("organization_id") @db.Uuid
   actorUserId        String?         @map("actor_user_id") @db.Uuid
   actorType          String          @default("user") @map("actor_type")
   action             String
@@ -516,10 +547,10 @@ model ApprovalDecision {
   createdAt          DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
   approvalPolicy     ApprovalPolicy? @relation(fields: [approvalPolicyId], references: [approvalPolicyId], onDelete: SetNull)
   transferRequest    TransferRequest @relation(fields: [transferRequestId], references: [transferRequestId], onDelete: Cascade)
-  workspace          Workspace       @relation(fields: [workspaceId], references: [workspaceId], onDelete: Cascade)
+  organization           Organization       @relation(fields: [organizationId], references: [organizationId], onDelete: Cascade)
   actorUser          User?           @relation(fields: [actorUserId], references: [userId], onDelete: SetNull)
 
-  @@index([workspaceId, createdAt(sort: Desc)])
+  @@index([organizationId, createdAt(sort: Desc)])
   @@index([transferRequestId, createdAt(sort: Asc)])
   @@map("approval_decisions")
 }
@@ -527,7 +558,7 @@ model ApprovalDecision {
 model TransferRequestEvent {
   transferRequestEventId String          @id @default(dbgenerated("gen_random_uuid()")) @map("transfer_request_event_id") @db.Uuid
   transferRequestId      String          @map("transfer_request_id") @db.Uuid
-  workspaceId            String          @map("workspace_id") @db.Uuid
+  organizationId            String          @map("organization_id") @db.Uuid
   eventType              String          @map("event_type")
   actorType              String          @map("actor_type")
   actorId                String?         @map("actor_id")
@@ -540,47 +571,47 @@ model TransferRequestEvent {
   payloadJson            Json            @default("{}") @map("payload_json")
   createdAt              DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
   transferRequest        TransferRequest @relation(fields: [transferRequestId], references: [transferRequestId], onDelete: Cascade)
-  workspace              Workspace       @relation(fields: [workspaceId], references: [workspaceId], onDelete: Cascade)
+  organization           Organization       @relation(fields: [organizationId], references: [organizationId], onDelete: Cascade)
 
   @@index([transferRequestId, createdAt(sort: Asc)])
-  @@index([workspaceId, createdAt(sort: Desc)])
+  @@index([organizationId, createdAt(sort: Desc)])
   @@map("transfer_request_events")
 }
 
 model TransferRequestNote {
   transferRequestNoteId String          @id @default(dbgenerated("gen_random_uuid()")) @map("transfer_request_note_id") @db.Uuid
   transferRequestId     String          @map("transfer_request_id") @db.Uuid
-  workspaceId           String          @map("workspace_id") @db.Uuid
+  organizationId           String          @map("organization_id") @db.Uuid
   authorUserId          String?         @map("author_user_id") @db.Uuid
   body                  String
   createdAt             DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
   transferRequest       TransferRequest @relation(fields: [transferRequestId], references: [transferRequestId], onDelete: Cascade)
-  workspace             Workspace       @relation(fields: [workspaceId], references: [workspaceId], onDelete: Cascade)
+  organization           Organization       @relation(fields: [organizationId], references: [organizationId], onDelete: Cascade)
   authorUser            User?           @relation(fields: [authorUserId], references: [userId], onDelete: SetNull)
 
   @@index([transferRequestId, createdAt(sort: Asc)])
-  @@index([workspaceId, createdAt(sort: Desc)])
+  @@index([organizationId, createdAt(sort: Desc)])
   @@map("transfer_request_notes")
 }
 
 model ExceptionNote {
   exceptionNoteId String    @id @default(dbgenerated("gen_random_uuid()")) @map("exception_note_id") @db.Uuid
-  workspaceId     String    @map("workspace_id") @db.Uuid
+  organizationId     String    @map("organization_id") @db.Uuid
   exceptionId     String    @map("exception_id") @db.Uuid
   authorUserId    String?   @map("author_user_id") @db.Uuid
   body            String
   createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
-  workspace       Workspace @relation(fields: [workspaceId], references: [workspaceId], onDelete: Cascade)
+  organization           Organization @relation(fields: [organizationId], references: [organizationId], onDelete: Cascade)
   authorUser      User?     @relation(fields: [authorUserId], references: [userId], onDelete: SetNull)
 
   @@index([exceptionId, createdAt(sort: Asc)])
-  @@index([workspaceId, createdAt(sort: Desc)])
+  @@index([organizationId, createdAt(sort: Desc)])
   @@map("exception_notes")
 }
 
 model ExceptionState {
   exceptionStateId String    @id @default(dbgenerated("gen_random_uuid()")) @map("exception_state_id") @db.Uuid
-  workspaceId      String    @map("workspace_id") @db.Uuid
+  organizationId      String    @map("organization_id") @db.Uuid
   exceptionId      String    @map("exception_id") @db.Uuid
   status           String
   updatedByUserId  String?   @map("updated_by_user_id") @db.Uuid
@@ -589,11 +620,11 @@ model ExceptionState {
   severity         String?   @map("severity")
   createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt        DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
-  workspace        Workspace @relation(fields: [workspaceId], references: [workspaceId], onDelete: Cascade)
+  organization           Organization @relation(fields: [organizationId], references: [organizationId], onDelete: Cascade)
   updatedByUser    User?     @relation(fields: [updatedByUserId], references: [userId], onDelete: SetNull)
   assignedToUser   User?     @relation("ExceptionStateAssignee", fields: [assignedToUserId], references: [userId], onDelete: SetNull)
 
-  @@unique([workspaceId, exceptionId])
-  @@index([workspaceId, status, updatedAt(sort: Desc)])
+  @@unique([organizationId, exceptionId])
+  @@index([organizationId, status, updatedAt(sort: Desc)])
   @@map("exception_states")
 }

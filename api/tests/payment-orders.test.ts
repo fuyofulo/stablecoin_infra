@@ -11,6 +11,8 @@ import { prisma } from '../src/prisma.js';
 const TRUNCATE_SQL = `
 TRUNCATE TABLE
   auth_sessions,
+  wallet_challenges,
+  user_wallets,
   organization_memberships,
   approval_decisions,
   approval_policies,
@@ -31,7 +33,7 @@ TRUNCATE TABLE
   destinations,
   counterparties,
   treasury_wallets,
-  workspaces,
+  
   organizations,
   users
 RESTART IDENTITY CASCADE
@@ -80,7 +82,7 @@ test('payment orders create a business intent and submit into the existing reque
   const setup = await createPaymentOrderSetup();
 
   const paymentOrder = await post(
-    `/workspaces/${setup.workspace.workspaceId}/payment-orders`,
+    `/organizations/${setup.organization.organizationId}/payment-orders`,
     {
       destinationId: setup.destination.destinationId,
       sourceTreasuryWalletId: setup.sourceAddress.treasuryWalletId,
@@ -115,7 +117,7 @@ test('payment orders create a business intent and submit into the existing reque
   assert.equal(transferRequest.destinationId, setup.destination.destinationId);
   assert.equal(transferRequest.status, 'approved');
 
-  const list = await get(`/workspaces/${setup.workspace.workspaceId}/payment-orders`, setup.sessionToken);
+  const list = await get(`/organizations/${setup.organization.organizationId}/payment-orders`, setup.sessionToken);
   assert.equal(list.items.length, 1);
   assert.equal(list.items[0].paymentOrderId, paymentOrder.paymentOrderId);
 });
@@ -124,7 +126,7 @@ test('payment requests capture user intent and promote into payment orders', asy
   const setup = await createPaymentOrderSetup();
 
   const paymentRequest = await post(
-    `/workspaces/${setup.workspace.workspaceId}/payment-requests`,
+    `/organizations/${setup.organization.organizationId}/payment-requests`,
     {
       destinationId: setup.destination.destinationId,
       amountRaw: '15000',
@@ -143,7 +145,7 @@ test('payment requests capture user intent and promote into payment orders', asy
   assert.ok(paymentRequest.paymentOrder.paymentOrderId);
 
   const paymentOrder = await get(
-    `/workspaces/${setup.workspace.workspaceId}/payment-orders/${paymentRequest.paymentOrder.paymentOrderId}`,
+    `/organizations/${setup.organization.organizationId}/payment-orders/${paymentRequest.paymentOrder.paymentOrderId}`,
     setup.sessionToken,
   );
   assert.equal(paymentOrder.paymentRequestId, paymentRequest.paymentRequestId);
@@ -153,7 +155,7 @@ test('payment requests capture user intent and promote into payment orders', asy
   assert.equal(paymentOrder.derivedState, 'ready_for_execution');
   assert.equal(paymentOrder.paymentRequest.reason, 'Pay Fuyo LLC for INV-102');
 
-  const list = await get(`/workspaces/${setup.workspace.workspaceId}/payment-requests`, setup.sessionToken);
+  const list = await get(`/organizations/${setup.organization.organizationId}/payment-requests`, setup.sessionToken);
   assert.equal(list.items.length, 1);
   assert.equal(list.items[0].paymentOrder.paymentOrderId, paymentOrder.paymentOrderId);
 });
@@ -166,7 +168,7 @@ test('CSV import creates payment requests and orders against existing destinatio
   ].join('\n');
 
   const result = await post(
-    `/workspaces/${setup.workspace.workspaceId}/payment-requests/import-csv`,
+    `/organizations/${setup.organization.organizationId}/payment-requests/import-csv`,
     {
       csv,
       createOrderNow: true,
@@ -183,7 +185,7 @@ test('CSV import creates payment requests and orders against existing destinatio
   assert.equal(result.items[0].paymentRequest.destinationId, setup.destination.destinationId);
 
   const paymentOrder = await get(
-    `/workspaces/${setup.workspace.workspaceId}/payment-orders/${result.items[0].paymentRequest.paymentOrder.paymentOrderId}`,
+    `/organizations/${setup.organization.organizationId}/payment-orders/${result.items[0].paymentRequest.paymentOrder.paymentOrderId}`,
     setup.sessionToken,
   );
   assert.equal(paymentOrder.amountRaw, '15000');
@@ -203,7 +205,7 @@ test('CSV import creates unreviewed destinations for raw wallet addresses', asyn
   ].join('\n');
 
   const result = await post(
-    `/workspaces/${setup.workspace.workspaceId}/payment-requests/import-csv`,
+    `/organizations/${setup.organization.organizationId}/payment-requests/import-csv`,
     {
       csv,
       createOrderNow: true,
@@ -218,7 +220,7 @@ test('CSV import creates unreviewed destinations for raw wallet addresses', asyn
   assert.equal(result.items[0].paymentRequest.amountRaw, '10000');
   assert.equal(result.items[1].paymentRequest.externalReference, 'INV-1002');
 
-  const destinations = await get(`/workspaces/${setup.workspace.workspaceId}/destinations`, setup.sessionToken);
+  const destinations = await get(`/organizations/${setup.organization.organizationId}/destinations`, setup.sessionToken);
   const importedDestinations = destinations.items.filter((item: { walletAddress: string }) => [firstWallet, secondWallet].includes(item.walletAddress));
   assert.equal(importedDestinations.length, 2);
   assert.deepEqual(
@@ -226,7 +228,7 @@ test('CSV import creates unreviewed destinations for raw wallet addresses', asyn
     ['unreviewed', 'unreviewed'],
   );
 
-  const addresses = await get(`/workspaces/${setup.workspace.workspaceId}/treasury-wallets`, setup.sessionToken);
+  const addresses = await get(`/organizations/${setup.organization.organizationId}/treasury-wallets`, setup.sessionToken);
   const importedAddresses = addresses.items.filter((item: { address: string }) => [firstWallet, secondWallet].includes(item.address));
   assert.equal(importedAddresses.length, 0);
 });
@@ -234,7 +236,7 @@ test('CSV import creates unreviewed destinations for raw wallet addresses', asyn
 test('payment runs import CSV rows and prepare one batch execution packet', async () => {
   const setup = await createPaymentOrderSetup();
   const secondDestinationAddress = await post(
-    `/workspaces/${setup.workspace.workspaceId}/treasury-wallets`,
+    `/organizations/${setup.organization.organizationId}/treasury-wallets`,
     {
       chain: 'solana',
       address: Keypair.generate().publicKey.toBase58(),
@@ -243,7 +245,7 @@ test('payment runs import CSV rows and prepare one batch execution packet', asyn
     setup.sessionToken,
   );
   const secondDestination = await post(
-    `/workspaces/${setup.workspace.workspaceId}/destinations`,
+    `/organizations/${setup.organization.organizationId}/destinations`,
     {
       walletAddress: secondDestinationAddress.address,
       tokenAccountAddress: secondDestinationAddress.usdcAtaAddress ?? undefined,
@@ -261,7 +263,7 @@ test('payment runs import CSV rows and prepare one batch execution packet', asyn
   ].join('\n');
 
   const imported = await post(
-    `/workspaces/${setup.workspace.workspaceId}/payment-runs/import-csv`,
+    `/organizations/${setup.organization.organizationId}/payment-runs/import-csv`,
     {
       runName: 'April payroll run',
       csv,
@@ -281,7 +283,7 @@ test('payment runs import CSV rows and prepare one batch execution packet', asyn
   assert.equal(imported.paymentRun.reconciliationSummary.settlementCounts.pending, 2);
 
   const prepared = await post(
-    `/workspaces/${setup.workspace.workspaceId}/payment-runs/${imported.paymentRun.paymentRunId}/prepare-execution`,
+    `/organizations/${setup.organization.organizationId}/payment-runs/${imported.paymentRun.paymentRunId}/prepare-execution`,
     {
       sourceTreasuryWalletId: setup.sourceAddress.treasuryWalletId,
     },
@@ -296,7 +298,7 @@ test('payment runs import CSV rows and prepare one batch execution packet', asyn
   assert.equal(prepared.paymentRun.derivedState, 'ready_for_execution');
 
   const preparedAgain = await post(
-    `/workspaces/${setup.workspace.workspaceId}/payment-runs/${imported.paymentRun.paymentRunId}/prepare-execution`,
+    `/organizations/${setup.organization.organizationId}/payment-runs/${imported.paymentRun.paymentRunId}/prepare-execution`,
     {
       sourceTreasuryWalletId: setup.sourceAddress.treasuryWalletId,
     },
@@ -309,7 +311,7 @@ test('payment runs import CSV rows and prepare one batch execution packet', asyn
 
   const signature = '5'.repeat(88);
   const attached = await post(
-    `/workspaces/${setup.workspace.workspaceId}/payment-runs/${imported.paymentRun.paymentRunId}/attach-signature`,
+    `/organizations/${setup.organization.organizationId}/payment-runs/${imported.paymentRun.paymentRunId}/attach-signature`,
     {
       submittedSignature: signature,
       submittedAt: '2026-04-10T12:00:00.000Z',
@@ -322,7 +324,7 @@ test('payment runs import CSV rows and prepare one batch execution packet', asyn
   assert.equal(attached.paymentRun.derivedState, 'submitted_onchain');
 
   const runProof = await get(
-    `/workspaces/${setup.workspace.workspaceId}/payment-runs/${imported.paymentRun.paymentRunId}/proof`,
+    `/organizations/${setup.organization.organizationId}/payment-runs/${imported.paymentRun.paymentRunId}/proof`,
     setup.sessionToken,
   );
   assert.equal(runProof.packetType, 'stablecoin_payment_run_proof');
@@ -342,7 +344,7 @@ test('payment runs import CSV rows and prepare one batch execution packet', asyn
   assert.equal(runProof.orders[0].exceptions, undefined);
 
   const summaryRunProof = await get(
-    `/workspaces/${setup.workspace.workspaceId}/payment-runs/${imported.paymentRun.paymentRunId}/proof?detail=summary`,
+    `/organizations/${setup.organization.organizationId}/payment-runs/${imported.paymentRun.paymentRunId}/proof?detail=summary`,
     setup.sessionToken,
   );
   assert.equal(summaryRunProof.detailLevel, 'summary');
@@ -350,7 +352,7 @@ test('payment runs import CSV rows and prepare one batch execution packet', asyn
   assert.equal(summaryRunProof.orders.length, 2);
 
   const compactRunProof = await get(
-    `/workspaces/${setup.workspace.workspaceId}/payment-runs/${imported.paymentRun.paymentRunId}/proof?detail=compact`,
+    `/organizations/${setup.organization.organizationId}/payment-runs/${imported.paymentRun.paymentRunId}/proof?detail=compact`,
     setup.sessionToken,
   );
   assert.equal(compactRunProof.detailLevel, 'compact');
@@ -362,7 +364,7 @@ test('payment runs import CSV rows and prepare one batch execution packet', asyn
   assert.match(compactRunProof.orderProofs[0].fullProofEndpoint, /\/payment-orders\/.+\/proof$/);
 
   const fullRunProof = await get(
-    `/workspaces/${setup.workspace.workspaceId}/payment-runs/${imported.paymentRun.paymentRunId}/proof?detail=full`,
+    `/organizations/${setup.organization.organizationId}/payment-runs/${imported.paymentRun.paymentRunId}/proof?detail=full`,
     setup.sessionToken,
   );
   assert.equal(fullRunProof.detailLevel, 'full');
@@ -371,7 +373,7 @@ test('payment runs import CSV rows and prepare one batch execution packet', asyn
   assert.ok(Array.isArray(fullRunProof.orderProofs[0].auditTrail));
 
   const runProofMarkdown = await getText(
-    `/workspaces/${setup.workspace.workspaceId}/payment-runs/${imported.paymentRun.paymentRunId}/proof?format=markdown`,
+    `/organizations/${setup.organization.organizationId}/payment-runs/${imported.paymentRun.paymentRunId}/proof?format=markdown`,
     setup.sessionToken,
   );
   assert.match(runProofMarkdown, /^# Payment Run Proof/);
@@ -392,7 +394,7 @@ test('payment run CSV preview detects duplicate rows and import is idempotent by
   ].join('\n');
 
   const preview = await post(
-    `/workspaces/${setup.workspace.workspaceId}/payment-runs/import-csv/preview`,
+    `/organizations/${setup.organization.organizationId}/payment-runs/import-csv/preview`,
     { csv: duplicateCsv },
     setup.sessionToken,
   );
@@ -406,7 +408,7 @@ test('payment run CSV preview detects duplicate rows and import is idempotent by
   assert.match(preview.items[1].warnings[0], /Duplicate CSV row/i);
 
   const imported = await post(
-    `/workspaces/${setup.workspace.workspaceId}/payment-runs/import-csv`,
+    `/organizations/${setup.organization.organizationId}/payment-runs/import-csv`,
     {
       runName: 'Idempotent run',
       csv,
@@ -417,7 +419,7 @@ test('payment run CSV preview detects duplicate rows and import is idempotent by
     setup.sessionToken,
   );
   const replay = await post(
-    `/workspaces/${setup.workspace.workspaceId}/payment-runs/import-csv`,
+    `/organizations/${setup.organization.organizationId}/payment-runs/import-csv`,
     {
       runName: 'Should not create another run',
       csv,
@@ -433,7 +435,7 @@ test('payment run CSV preview detects duplicate rows and import is idempotent by
   assert.equal(replay.paymentRun.totals.orderCount, 1);
 
   const runCount = await prisma.paymentRun.count({
-    where: { workspaceId: setup.workspace.workspaceId },
+    where: { organizationId: setup.organization.organizationId },
   });
   assert.equal(runCount, 1);
 });
@@ -445,7 +447,7 @@ test('payment run cancellation and close are explicit lifecycle actions', async 
     `Cancel Corp,${setup.destination.label},0.01,RUN-CANCEL-1,2026-04-15`,
   ].join('\n');
   const cancellable = await post(
-    `/workspaces/${setup.workspace.workspaceId}/payment-runs/import-csv`,
+    `/organizations/${setup.organization.organizationId}/payment-runs/import-csv`,
     {
       runName: 'Cancellable run',
       csv: cancellableCsv,
@@ -456,7 +458,7 @@ test('payment run cancellation and close are explicit lifecycle actions', async 
   );
 
   const cancelled = await post(
-    `/workspaces/${setup.workspace.workspaceId}/payment-runs/${cancellable.paymentRun.paymentRunId}/cancel`,
+    `/organizations/${setup.organization.organizationId}/payment-runs/${cancellable.paymentRun.paymentRunId}/cancel`,
     {},
     setup.sessionToken,
   );
@@ -470,7 +472,7 @@ test('payment run cancellation and close are explicit lifecycle actions', async 
     `Close Corp,${setup.destination.label},0.01,RUN-CLOSE-1,2026-04-15`,
   ].join('\n');
   const closable = await post(
-    `/workspaces/${setup.workspace.workspaceId}/payment-runs/import-csv`,
+    `/organizations/${setup.organization.organizationId}/payment-runs/import-csv`,
     {
       runName: 'Closable run',
       csv: closableCsv,
@@ -481,7 +483,7 @@ test('payment run cancellation and close are explicit lifecycle actions', async 
   );
   const order = closable.paymentRun.paymentOrders[0];
   await seedExactSettlement({
-    workspaceId: setup.workspace.workspaceId,
+    organizationId: setup.organization.organizationId,
     transferRequestId: order.transferRequestId,
     destinationWallet: setup.destinationAddress.address,
     destinationTokenAccount: setup.destinationAddress.usdcAtaAddress,
@@ -489,7 +491,7 @@ test('payment run cancellation and close are explicit lifecycle actions', async 
   });
 
   const closed = await post(
-    `/workspaces/${setup.workspace.workspaceId}/payment-runs/${closable.paymentRun.paymentRunId}/close`,
+    `/organizations/${setup.organization.organizationId}/payment-runs/${closable.paymentRun.paymentRunId}/close`,
     {},
     setup.sessionToken,
   );
@@ -508,7 +510,7 @@ test('collections create inbound expected transfers against owned receiving wall
   const setup = await createPaymentOrderSetup();
   const payerWallet = Keypair.generate().publicKey.toBase58();
   const dualRoleSource = await post(
-    `/workspaces/${setup.workspace.workspaceId}/collection-sources`,
+    `/organizations/${setup.organization.organizationId}/collection-sources`,
     {
       counterpartyId: setup.counterparty.counterpartyId,
       walletAddress: setup.destinationAddress.address,
@@ -523,7 +525,7 @@ test('collections create inbound expected transfers against owned receiving wall
   assert.equal(dualRoleSource.trustState, 'trusted');
 
   const collection = await post(
-    `/workspaces/${setup.workspace.workspaceId}/collections`,
+    `/organizations/${setup.organization.organizationId}/collections`,
     {
       receivingTreasuryWalletId: setup.sourceAddress.treasuryWalletId,
       collectionSourceId: dualRoleSource.collectionSourceId,
@@ -546,7 +548,7 @@ test('collections create inbound expected transfers against owned receiving wall
   assert.ok(collection.transferRequestId);
 
   const adHocCollection = await post(
-    `/workspaces/${setup.workspace.workspaceId}/collections`,
+    `/organizations/${setup.organization.organizationId}/collections`,
     {
       receivingTreasuryWalletId: setup.sourceAddress.treasuryWalletId,
       counterpartyId: setup.counterparty.counterpartyId,
@@ -572,14 +574,14 @@ test('collections create inbound expected transfers against owned receiving wall
   assert.equal(transferRequest.destination.isInternal, true);
   assert.equal(transferRequest.destination.destinationType, 'internal_collection_receiver');
 
-  const publicDestinations = await get(`/workspaces/${setup.workspace.workspaceId}/destinations`, setup.sessionToken);
+  const publicDestinations = await get(`/organizations/${setup.organization.organizationId}/destinations`, setup.sessionToken);
   assert.ok(
     publicDestinations.items.every((destination: { destinationId: string }) => destination.destinationId !== transferRequest.destinationId),
     'internal collection receiver should not appear in the normal destination address book',
   );
 
   const destinationsWithInternal = await get(
-    `/workspaces/${setup.workspace.workspaceId}/destinations?includeInternal=true`,
+    `/organizations/${setup.organization.organizationId}/destinations?includeInternal=true`,
     setup.sessionToken,
   );
   assert.ok(
@@ -597,11 +599,11 @@ test('collections create inbound expected transfers against owned receiving wall
   const internalText = await internalResponse.text();
   assert.equal(internalResponse.status, 200, internalText);
   const matchingIndex = JSON.parse(internalText);
-  const workspaceSnapshot = matchingIndex.workspaces.find(
-    (workspace: { workspace: { workspaceId: string } }) => workspace.workspace.workspaceId === setup.workspace.workspaceId,
+  const organizationSnapshot = matchingIndex.organizations.find(
+    (organization: { organization: { organizationId: string } }) => organization.organization.organizationId === setup.organization.organizationId,
   );
-  assert.ok(workspaceSnapshot);
-  const match = workspaceSnapshot.matches.find(
+  assert.ok(organizationSnapshot);
+  const match = organizationSnapshot.matches.find(
     (item: { transferRequestId: string }) => item.transferRequestId === collection.transferRequestId,
   );
   assert.equal(match.requestType, 'collection_request');
@@ -610,7 +612,7 @@ test('collections create inbound expected transfers against owned receiving wall
   assert.equal(match.expectedSourceWalletAddress, setup.destinationAddress.address);
 
   await seedExactSettlement({
-    workspaceId: setup.workspace.workspaceId,
+    organizationId: setup.organization.organizationId,
     transferRequestId: collection.transferRequestId,
     sourceWallet: setup.destinationAddress.address,
     sourceTokenAccount: setup.destinationAddress.usdcAtaAddress!,
@@ -620,7 +622,7 @@ test('collections create inbound expected transfers against owned receiving wall
   });
 
   const collected = await get(
-    `/workspaces/${setup.workspace.workspaceId}/collections/${collection.collectionRequestId}`,
+    `/organizations/${setup.organization.organizationId}/collections/${collection.collectionRequestId}`,
     setup.sessionToken,
   );
   assert.equal(collected.derivedState, 'collected');
@@ -628,7 +630,7 @@ test('collections create inbound expected transfers against owned receiving wall
   assert.equal(collected.reconciliationDetail.match.matchedAmountRaw, '25000');
 
   const proof = await get(
-    `/workspaces/${setup.workspace.workspaceId}/collections/${collection.collectionRequestId}/proof`,
+    `/organizations/${setup.organization.organizationId}/collections/${collection.collectionRequestId}/proof`,
     setup.sessionToken,
   );
   assert.equal(proof.packetType, 'stablecoin_collection_proof');
@@ -651,7 +653,7 @@ test('collection runs import CSV rows into a batch of inbound collection request
   ].join('\n');
 
   const preview = await post(
-    `/workspaces/${setup.workspace.workspaceId}/collection-runs/import-csv/preview`,
+    `/organizations/${setup.organization.organizationId}/collection-runs/import-csv/preview`,
     { csv },
     setup.sessionToken,
   );
@@ -662,7 +664,7 @@ test('collection runs import CSV rows into a batch of inbound collection request
   assert.match(preview.csvFingerprint, /^[a-f0-9]{64}$/);
 
   const imported = await post(
-    `/workspaces/${setup.workspace.workspaceId}/collection-runs/import-csv`,
+    `/organizations/${setup.organization.organizationId}/collection-runs/import-csv`,
     {
       runName: 'April receivables',
       csv,
@@ -681,7 +683,7 @@ test('collection runs import CSV rows into a batch of inbound collection request
   assert.equal(imported.collectionRun.collectionRequests[0].transferRequest.requestType, 'collection_request');
 
   const replay = await post(
-    `/workspaces/${setup.workspace.workspaceId}/collection-runs/import-csv`,
+    `/organizations/${setup.organization.organizationId}/collection-runs/import-csv`,
     {
       runName: 'Should replay',
       csv,
@@ -694,13 +696,13 @@ test('collection runs import CSV rows into a batch of inbound collection request
 
   const transferRequestCount = await prisma.transferRequest.count({
     where: {
-      workspaceId: setup.workspace.workspaceId,
+      organizationId: setup.organization.organizationId,
       requestType: 'collection_request',
     },
   });
   assert.equal(transferRequestCount, 2);
 
-  const collectionSources = await get(`/workspaces/${setup.workspace.workspaceId}/collection-sources`, setup.sessionToken);
+  const collectionSources = await get(`/organizations/${setup.organization.organizationId}/collection-sources`, setup.sessionToken);
   const importedSources = collectionSources.items.filter((item: { walletAddress: string }) => [firstPayerWallet, secondPayerWallet].includes(item.walletAddress));
   assert.equal(importedSources.length, 2);
   assert.deepEqual(
@@ -708,12 +710,12 @@ test('collection runs import CSV rows into a batch of inbound collection request
     ['unreviewed', 'unreviewed'],
   );
 
-  const destinations = await get(`/workspaces/${setup.workspace.workspaceId}/destinations?includeInternal=true`, setup.sessionToken);
+  const destinations = await get(`/organizations/${setup.organization.organizationId}/destinations?includeInternal=true`, setup.sessionToken);
   const payerDestinations = destinations.items.filter((item: { walletAddress: string }) => [firstPayerWallet, secondPayerWallet].includes(item.walletAddress));
   assert.equal(payerDestinations.length, 0);
 
   const runProof = await get(
-    `/workspaces/${setup.workspace.workspaceId}/collection-runs/${imported.collectionRun.collectionRunId}/proof`,
+    `/organizations/${setup.organization.organizationId}/collection-runs/${imported.collectionRun.collectionRunId}/proof`,
     setup.sessionToken,
   );
   assert.equal(runProof.packetType, 'stablecoin_collection_run_proof');
@@ -727,7 +729,7 @@ test('payment order duplicate references and unsafe source wallets are rejected'
   const setup = await createPaymentOrderSetup();
 
   await post(
-    `/workspaces/${setup.workspace.workspaceId}/payment-orders`,
+    `/organizations/${setup.organization.organizationId}/payment-orders`,
     {
       destinationId: setup.destination.destinationId,
       sourceTreasuryWalletId: setup.sourceAddress.treasuryWalletId,
@@ -737,7 +739,7 @@ test('payment order duplicate references and unsafe source wallets are rejected'
     setup.sessionToken,
   );
 
-  let response = await fetch(`${baseUrl}/workspaces/${setup.workspace.workspaceId}/payment-orders`, {
+  let response = await fetch(`${baseUrl}/organizations/${setup.organization.organizationId}/payment-orders`, {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
@@ -753,7 +755,7 @@ test('payment order duplicate references and unsafe source wallets are rejected'
   assert.equal(response.status, 400);
   assert.match((await response.json()).message, /already exists/i);
 
-  response = await fetch(`${baseUrl}/workspaces/${setup.workspace.workspaceId}/payment-orders`, {
+  response = await fetch(`${baseUrl}/organizations/${setup.organization.organizationId}/payment-orders`, {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
@@ -771,10 +773,9 @@ test('payment order duplicate references and unsafe source wallets are rejected'
 
   const outsider = await createPaymentOrderSetup({
     userEmail: 'outsider@example.com',
-    organizationName: 'Outsider Org',
-    workspaceName: 'Outsider Workspace',
+    organizationName: 'Outsider Organization',
   });
-  response = await fetch(`${baseUrl}/workspaces/${setup.workspace.workspaceId}/payment-orders`, {
+  response = await fetch(`${baseUrl}/organizations/${setup.organization.organizationId}/payment-orders`, {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
@@ -795,7 +796,7 @@ test('unreviewed destinations route payment orders to the approval inbox without
   const setup = await createPaymentOrderSetup({ destinationTrustState: 'unreviewed' });
 
   const paymentOrder = await post(
-    `/workspaces/${setup.workspace.workspaceId}/payment-orders`,
+    `/organizations/${setup.organization.organizationId}/payment-orders`,
     {
       destinationId: setup.destination.destinationId,
       sourceTreasuryWalletId: setup.sourceAddress.treasuryWalletId,
@@ -818,7 +819,7 @@ test('payment order execution handoff records external references and submitted 
   const paymentOrder = await createSubmittedPaymentOrder(setup, 'EXEC-1');
 
   const execution = await post(
-    `/workspaces/${setup.workspace.workspaceId}/payment-orders/${paymentOrder.paymentOrderId}/create-execution`,
+    `/organizations/${setup.organization.organizationId}/payment-orders/${paymentOrder.paymentOrderId}/create-execution`,
     {
       executionSource: 'external_proposal',
       externalReference: 'squads://proposal/abc',
@@ -836,7 +837,7 @@ test('payment order execution handoff records external references and submitted 
 
   const signature = '3E91VpnTrs4k5y9XrjJbeWZu7nHo4ZpD2sQAAAA1111111111111111111111111111';
   const updatedExecution = await post(
-    `/workspaces/${setup.workspace.workspaceId}/payment-orders/${paymentOrder.paymentOrderId}/attach-signature`,
+    `/organizations/${setup.organization.organizationId}/payment-orders/${paymentOrder.paymentOrderId}/attach-signature`,
     {
       submittedSignature: signature,
       externalReference: 'squads://proposal/abc',
@@ -848,7 +849,7 @@ test('payment order execution handoff records external references and submitted 
   assert.equal(updatedExecution.state, 'submitted_onchain');
 
   const detail = await get(
-    `/workspaces/${setup.workspace.workspaceId}/payment-orders/${paymentOrder.paymentOrderId}`,
+    `/organizations/${setup.organization.organizationId}/payment-orders/${paymentOrder.paymentOrderId}`,
     setup.sessionToken,
   );
   assert.equal(detail.derivedState, 'execution_recorded');
@@ -859,7 +860,7 @@ test('payment order execution handoff records external references and submitted 
 test('payment orders prepare a signer-ready Solana USDC transfer packet', async () => {
   const setup = await createPaymentOrderSetup();
   const draftOrder = await post(
-    `/workspaces/${setup.workspace.workspaceId}/payment-orders`,
+    `/organizations/${setup.organization.organizationId}/payment-orders`,
     {
       destinationId: setup.destination.destinationId,
       amountRaw: '10000',
@@ -870,7 +871,7 @@ test('payment orders prepare a signer-ready Solana USDC transfer packet', async 
   );
 
   const prepared = await post(
-    `/workspaces/${setup.workspace.workspaceId}/payment-orders/${draftOrder.paymentOrderId}/prepare-execution`,
+    `/organizations/${setup.organization.organizationId}/payment-orders/${draftOrder.paymentOrderId}/prepare-execution`,
     {
       sourceTreasuryWalletId: setup.sourceAddress.treasuryWalletId,
     },
@@ -894,7 +895,7 @@ test('payment orders prepare a signer-ready Solana USDC transfer packet', async 
   assert.equal(prepared.executionRecord.metadataJson.preparedExecution.executionRecordId, prepared.executionRecord.executionRecordId);
 
   const preparedAgain = await post(
-    `/workspaces/${setup.workspace.workspaceId}/payment-orders/${draftOrder.paymentOrderId}/prepare-execution`,
+    `/organizations/${setup.organization.organizationId}/payment-orders/${draftOrder.paymentOrderId}/prepare-execution`,
     {
       sourceTreasuryWalletId: setup.sourceAddress.treasuryWalletId,
     },
@@ -919,7 +920,7 @@ test('payment orders prepare a signer-ready Solana USDC transfer packet', async 
 test('payment order execution preparation cannot bypass approval', async () => {
   const setup = await createPaymentOrderSetup({ destinationTrustState: 'unreviewed' });
   const draftOrder = await post(
-    `/workspaces/${setup.workspace.workspaceId}/payment-orders`,
+    `/organizations/${setup.organization.organizationId}/payment-orders`,
     {
       destinationId: setup.destination.destinationId,
       sourceTreasuryWalletId: setup.sourceAddress.treasuryWalletId,
@@ -931,7 +932,7 @@ test('payment order execution preparation cannot bypass approval', async () => {
   );
 
   const response = await fetch(
-    `${baseUrl}/workspaces/${setup.workspace.workspaceId}/payment-orders/${draftOrder.paymentOrderId}/prepare-execution`,
+    `${baseUrl}/organizations/${setup.organization.organizationId}/payment-orders/${draftOrder.paymentOrderId}/prepare-execution`,
     {
       method: 'POST',
       headers: {
@@ -963,7 +964,7 @@ test('payment orders derive settled and exception states from existing reconcili
   const paymentOrder = await createSubmittedPaymentOrder(setup, 'MATCH-1');
 
   await seedExactSettlement({
-    workspaceId: setup.workspace.workspaceId,
+    organizationId: setup.organization.organizationId,
     transferRequestId: paymentOrder.transferRequestId,
     destinationWallet: setup.destinationAddress.address,
     destinationTokenAccount: setup.destinationAddress.usdcAtaAddress,
@@ -971,7 +972,7 @@ test('payment orders derive settled and exception states from existing reconcili
   });
 
   const settled = await get(
-    `/workspaces/${setup.workspace.workspaceId}/payment-orders/${paymentOrder.paymentOrderId}`,
+    `/organizations/${setup.organization.organizationId}/payment-orders/${paymentOrder.paymentOrderId}`,
     setup.sessionToken,
   );
   assert.equal(settled.derivedState, 'settled');
@@ -979,7 +980,7 @@ test('payment orders derive settled and exception states from existing reconcili
   assert.equal(settled.reconciliationDetail.match.matchedAmountRaw, '10000');
 
   const proof = await get(
-    `/workspaces/${setup.workspace.workspaceId}/payment-orders/${paymentOrder.paymentOrderId}/proof`,
+    `/organizations/${setup.organization.organizationId}/payment-orders/${paymentOrder.paymentOrderId}/proof`,
     setup.sessionToken,
   );
   assert.equal(proof.packetType, 'stablecoin_payment_proof');
@@ -998,7 +999,7 @@ test('payment orders derive settled and exception states from existing reconcili
   assert.equal(proof.verification.reconciliation.outcome, 'matched_exact');
 
   const proofMarkdown = await getText(
-    `/workspaces/${setup.workspace.workspaceId}/payment-orders/${paymentOrder.paymentOrderId}/proof?format=markdown`,
+    `/organizations/${setup.organization.organizationId}/payment-orders/${paymentOrder.paymentOrderId}/proof?format=markdown`,
     setup.sessionToken,
   );
   assert.match(proofMarkdown, /^# Payment Proof/);
@@ -1007,7 +1008,7 @@ test('payment orders derive settled and exception states from existing reconcili
 
   const partialOrder = await createSubmittedPaymentOrder(setup, 'MATCH-PARTIAL');
   await seedPartialSettlement({
-    workspaceId: setup.workspace.workspaceId,
+    organizationId: setup.organization.organizationId,
     transferRequestId: partialOrder.transferRequestId,
     destinationWallet: setup.destinationAddress.address,
     destinationTokenAccount: setup.destinationAddress.usdcAtaAddress,
@@ -1016,7 +1017,7 @@ test('payment orders derive settled and exception states from existing reconcili
   });
 
   const partial = await get(
-    `/workspaces/${setup.workspace.workspaceId}/payment-orders/${partialOrder.paymentOrderId}`,
+    `/organizations/${setup.organization.organizationId}/payment-orders/${partialOrder.paymentOrderId}`,
     setup.sessionToken,
   );
   assert.equal(partial.derivedState, 'exception');
@@ -1024,7 +1025,7 @@ test('payment orders derive settled and exception states from existing reconcili
   assert.equal(partial.reconciliationDetail.exceptions[0].reasonCode, 'partial_settlement');
 
   const partialProof = await get(
-    `/workspaces/${setup.workspace.workspaceId}/payment-orders/${partialOrder.paymentOrderId}/proof`,
+    `/organizations/${setup.organization.organizationId}/payment-orders/${partialOrder.paymentOrderId}/proof`,
     setup.sessionToken,
   );
   assert.equal(partialProof.status, 'exception');
@@ -1036,7 +1037,7 @@ async function createSubmittedPaymentOrder(
   reference: string,
 ) {
   return post(
-    `/workspaces/${setup.workspace.workspaceId}/payment-orders`,
+    `/organizations/${setup.organization.organizationId}/payment-orders`,
     {
       destinationId: setup.destination.destinationId,
       sourceTreasuryWalletId: setup.sourceAddress.treasuryWalletId,
@@ -1055,7 +1056,6 @@ async function createSubmittedPaymentOrder(
 async function createPaymentOrderSetup(options?: {
   userEmail?: string;
   organizationName?: string;
-  workspaceName?: string;
   destinationTrustState?: 'trusted' | 'unreviewed' | 'restricted' | 'blocked';
 }) {
   const register = await post('/auth/register', {
@@ -1063,6 +1063,7 @@ async function createPaymentOrderSetup(options?: {
     password: 'DemoPass123!',
     displayName: 'Phase F Operator',
   });
+  await verifyRegisteredEmail(register);
 
   const organization = await post(
     '/organizations',
@@ -1072,16 +1073,8 @@ async function createPaymentOrderSetup(options?: {
     register.sessionToken,
   );
 
-  const workspace = await post(
-    `/organizations/${organization.organizationId}/workspaces`,
-    {
-      workspaceName: options?.workspaceName ?? 'Phase F Workspace',
-    },
-    register.sessionToken,
-  );
-
   const sourceAddress = await post(
-    `/workspaces/${workspace.workspaceId}/treasury-wallets`,
+    `/organizations/${organization.organizationId}/treasury-wallets`,
     {
       chain: 'solana',
       address: 'PGm4dkZcqPTkYKqAjNtAokVwJirJB8XQcGpYWBVcFMW',
@@ -1091,7 +1084,7 @@ async function createPaymentOrderSetup(options?: {
   );
 
   const destinationAddress = await post(
-    `/workspaces/${workspace.workspaceId}/treasury-wallets`,
+    `/organizations/${organization.organizationId}/treasury-wallets`,
     {
       chain: 'solana',
       address: 'VhfmPjvQxSiQW2FjnvoghewGGVYaWcz4cmDxpFPQEti',
@@ -1101,7 +1094,7 @@ async function createPaymentOrderSetup(options?: {
   );
 
   const counterparty = await post(
-    `/workspaces/${workspace.workspaceId}/counterparties`,
+    `/organizations/${organization.organizationId}/counterparties`,
     {
       displayName: `Vendor ${crypto.randomUUID().slice(0, 8)}`,
       category: 'vendor',
@@ -1110,7 +1103,7 @@ async function createPaymentOrderSetup(options?: {
   );
 
   const destination = await post(
-    `/workspaces/${workspace.workspaceId}/destinations`,
+    `/organizations/${organization.organizationId}/destinations`,
     {
       walletAddress: destinationAddress.address,
       tokenAccountAddress: destinationAddress.usdcAtaAddress ?? undefined,
@@ -1126,7 +1119,6 @@ async function createPaymentOrderSetup(options?: {
   return {
     sessionToken: register.sessionToken as string,
     organization,
-    workspace,
     sourceAddress,
     destinationAddress,
     counterparty,
@@ -1135,7 +1127,7 @@ async function createPaymentOrderSetup(options?: {
 }
 
 async function seedExactSettlement(args: {
-  workspaceId: string;
+  organizationId: string;
   transferRequestId: string;
   sourceWallet?: string;
   sourceTokenAccount?: string;
@@ -1177,7 +1169,7 @@ async function seedExactSettlement(args: {
 
   await insertClickHouseRows('settlement_matches', [
     {
-      workspace_id: args.workspaceId,
+      organization_id: args.organizationId,
       transfer_request_id: args.transferRequestId,
       signature,
       observed_transfer_id: transferId,
@@ -1199,7 +1191,7 @@ async function seedExactSettlement(args: {
 }
 
 async function seedPartialSettlement(args: {
-  workspaceId: string;
+  organizationId: string;
   transferRequestId: string;
   destinationWallet: string;
   destinationTokenAccount: string;
@@ -1224,7 +1216,7 @@ async function seedPartialSettlement(args: {
 
   await insertClickHouseRows('settlement_matches', [
     {
-      workspace_id: args.workspaceId,
+      organization_id: args.organizationId,
       transfer_request_id: args.transferRequestId,
       signature,
       observed_transfer_id: transferId,
@@ -1246,7 +1238,7 @@ async function seedPartialSettlement(args: {
 
   await insertClickHouseRows('exceptions', [
     {
-      workspace_id: args.workspaceId,
+      organization_id: args.organizationId,
       exception_id: exceptionId,
       transfer_request_id: args.transferRequestId,
       signature,
@@ -1346,6 +1338,12 @@ async function post(path: string, body: unknown, sessionToken?: string) {
   );
 
   return JSON.parse(text);
+}
+
+async function verifyRegisteredEmail(register: { sessionToken: string; devEmailVerificationCode?: string | null }) {
+  const code = register.devEmailVerificationCode;
+  assert.ok(code, 'registration should return a demo email verification code until email delivery exists');
+  await post('/auth/verify-email', { code }, register.sessionToken);
 }
 
 async function get(path: string, sessionToken: string) {

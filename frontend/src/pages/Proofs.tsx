@@ -116,50 +116,50 @@ function collectionPayerLabel(c: CollectionRequest): string {
 }
 
 export function ProofsPage({ session: _session }: { session: AuthenticatedSession }) {
-  const { workspaceId } = useParams<{ workspaceId: string }>();
+  const { organizationId } = useParams<{ organizationId: string }>();
   const { error: toastError } = useToast();
   const [expandedRunId, setExpandedRunId] = useState<string | null>(null);
   const [expandedCollectionRunId, setExpandedCollectionRunId] = useState<string | null>(null);
   const [preview, setPreview] = useState<{ title: string; data: Record<string, unknown> } | null>(null);
 
   const ordersQuery = useQuery({
-    queryKey: ['payment-orders', workspaceId] as const,
-    queryFn: () => api.listPaymentOrders(workspaceId!),
-    enabled: Boolean(workspaceId),
+    queryKey: ['payment-orders', organizationId] as const,
+    queryFn: () => api.listPaymentOrders(organizationId!),
+    enabled: Boolean(organizationId),
     refetchInterval: 10_000,
   });
   const runsQuery = useQuery({
-    queryKey: ['payment-runs', workspaceId] as const,
-    queryFn: () => api.listPaymentRuns(workspaceId!),
-    enabled: Boolean(workspaceId),
+    queryKey: ['payment-runs', organizationId] as const,
+    queryFn: () => api.listPaymentRuns(organizationId!),
+    enabled: Boolean(organizationId),
     refetchInterval: 10_000,
   });
   const collectionsQuery = useQuery({
-    queryKey: ['collections', workspaceId] as const,
-    queryFn: () => api.listCollections(workspaceId!),
-    enabled: Boolean(workspaceId),
+    queryKey: ['collections', organizationId] as const,
+    queryFn: () => api.listCollections(organizationId!),
+    enabled: Boolean(organizationId),
     refetchInterval: 10_000,
   });
   const collectionRunsQuery = useQuery({
-    queryKey: ['collection-runs', workspaceId] as const,
-    queryFn: () => api.listCollectionRuns(workspaceId!),
-    enabled: Boolean(workspaceId),
+    queryKey: ['collection-runs', organizationId] as const,
+    queryFn: () => api.listCollectionRuns(organizationId!),
+    enabled: Boolean(organizationId),
     refetchInterval: 10_000,
   });
 
   const exportOrderMutation = useMutation({
-    mutationFn: (id: string) => api.getPaymentOrderProof(workspaceId!, id),
+    mutationFn: (id: string) => api.getPaymentOrderProof(organizationId!, id),
     onSuccess: (proof, id) => downloadJson(`payment-proof-${id}.json`, proof),
     onError: (err) => toastError(err instanceof Error ? err.message : 'Unable to export proof.'),
   });
   const exportRunMutation = useMutation({
-    mutationFn: (id: string) => api.getPaymentRunProof(workspaceId!, id),
+    mutationFn: (id: string) => api.getPaymentRunProof(organizationId!, id),
     onSuccess: (proof, id) => downloadJson(`payment-run-proof-${id}.json`, proof),
     onError: (err) => toastError(err instanceof Error ? err.message : 'Unable to export run proof.'),
   });
   const previewOrderMutation = useMutation({
     mutationFn: async (order: PaymentOrder) => {
-      const packet = await api.getPaymentOrderProof(workspaceId!, order.paymentOrderId);
+      const packet = await api.getPaymentOrderProof(organizationId!, order.paymentOrderId);
       return {
         title: `Payment proof · ${order.destination.label}`,
         data: JSON.parse(JSON.stringify(packet)) as Record<string, unknown>,
@@ -170,7 +170,7 @@ export function ProofsPage({ session: _session }: { session: AuthenticatedSessio
   });
   const previewRunMutation = useMutation({
     mutationFn: async (run: PaymentRun) => {
-      const packet = await api.getPaymentRunProof(workspaceId!, run.paymentRunId);
+      const packet = await api.getPaymentRunProof(organizationId!, run.paymentRunId);
       return {
         title: `Run proof · ${run.runName}`,
         data: JSON.parse(JSON.stringify(packet)) as Record<string, unknown>,
@@ -180,20 +180,20 @@ export function ProofsPage({ session: _session }: { session: AuthenticatedSessio
     onError: (err) => toastError(err instanceof Error ? err.message : 'Unable to load preview.'),
   });
   const exportCollectionMutation = useMutation({
-    mutationFn: (id: string) => api.getCollectionProof(workspaceId!, id),
+    mutationFn: (id: string) => api.getCollectionProof(organizationId!, id),
     onSuccess: (proof, id) => downloadJson(`collection-proof-${id}.json`, proof),
     onError: (err) =>
       toastError(err instanceof Error ? err.message : 'Unable to export collection proof.'),
   });
   const exportCollectionRunMutation = useMutation({
-    mutationFn: (id: string) => api.getCollectionRunProof(workspaceId!, id),
+    mutationFn: (id: string) => api.getCollectionRunProof(organizationId!, id),
     onSuccess: (proof, id) => downloadJson(`collection-run-proof-${id}.json`, proof),
     onError: (err) =>
       toastError(err instanceof Error ? err.message : 'Unable to export collection run proof.'),
   });
   const previewCollectionMutation = useMutation({
     mutationFn: async (c: CollectionRequest) => {
-      const packet = await api.getCollectionProof(workspaceId!, c.collectionRequestId);
+      const packet = await api.getCollectionProof(organizationId!, c.collectionRequestId);
       return {
         title: `Collection proof · ${collectionPayerLabel(c)}`,
         data: JSON.parse(JSON.stringify(packet)) as Record<string, unknown>,
@@ -204,7 +204,7 @@ export function ProofsPage({ session: _session }: { session: AuthenticatedSessio
   });
   const previewCollectionRunMutation = useMutation({
     mutationFn: async (r: CollectionRunSummary) => {
-      const packet = await api.getCollectionRunProof(workspaceId!, r.collectionRunId);
+      const packet = await api.getCollectionRunProof(organizationId!, r.collectionRunId);
       return {
         title: `Collection run proof · ${r.runName}`,
         data: JSON.parse(JSON.stringify(packet)) as Record<string, unknown>,
@@ -214,12 +214,12 @@ export function ProofsPage({ session: _session }: { session: AuthenticatedSessio
     onError: (err) => toastError(err instanceof Error ? err.message : 'Unable to load preview.'),
   });
 
-  if (!workspaceId) {
+  if (!organizationId) {
     return (
       <main className="page-frame">
         <div className="rd-state">
-          <h2 className="rd-state-title">Workspace unavailable</h2>
-          <p className="rd-state-body">Pick a workspace from the sidebar.</p>
+          <h2 className="rd-state-title">Organization unavailable</h2>
+          <p className="rd-state-body">Pick a organization from the sidebar.</p>
         </div>
       </main>
     );
@@ -342,7 +342,7 @@ export function ProofsPage({ session: _session }: { session: AuthenticatedSessio
                     return (
                       <RunGroupRows
                         key={group.key}
-                        workspaceId={workspaceId}
+                        organizationId={organizationId}
                         group={group}
                         expanded={expanded}
                         onToggle={() =>
@@ -452,7 +452,7 @@ export function ProofsPage({ session: _session }: { session: AuthenticatedSessio
                     return (
                       <CollectionRunGroupRows
                         key={group.key}
-                        workspaceId={workspaceId}
+                        organizationId={organizationId}
                         group={group}
                         expanded={expanded}
                         onToggle={() =>
@@ -531,7 +531,7 @@ export function ProofsPage({ session: _session }: { session: AuthenticatedSessio
 }
 
 function RunGroupRows(props: {
-  workspaceId: string;
+  organizationId: string;
   group: Extract<ProofGroup, { kind: 'run' }>;
   expanded: boolean;
   onToggle: () => void;
@@ -546,7 +546,7 @@ function RunGroupRows(props: {
   exportingOrder: boolean;
 }) {
   const {
-    workspaceId,
+    organizationId,
     group,
     expanded,
     onToggle,
@@ -619,7 +619,7 @@ function RunGroupRows(props: {
                   </span>
                   <div className="rd-recipient-main">
                     <Link
-                      to={`/workspaces/${workspaceId}/payments/${order.paymentOrderId}`}
+                      to={`/organizations/${organizationId}/payments/${order.paymentOrderId}`}
                       style={{ color: 'var(--ax-text)', textDecoration: 'none', fontWeight: 500 }}
                     >
                       {order.counterparty?.displayName ?? order.destination.label}
@@ -725,7 +725,7 @@ function Chevron({ expanded }: { expanded: boolean }) {
 }
 
 function CollectionRunGroupRows(props: {
-  workspaceId: string;
+  organizationId: string;
   group: Extract<CollectionProofGroup, { kind: 'collection-run' }>;
   expanded: boolean;
   onToggle: () => void;
@@ -740,7 +740,7 @@ function CollectionRunGroupRows(props: {
   exportingRequest: boolean;
 }) {
   const {
-    workspaceId,
+    organizationId,
     group,
     expanded,
     onToggle,
@@ -822,7 +822,7 @@ function CollectionRunGroupRows(props: {
                     </span>
                     <div className="rd-recipient-main">
                       <Link
-                        to={`/workspaces/${workspaceId}/collections/${c.collectionRequestId}`}
+                        to={`/organizations/${organizationId}/collections/${c.collectionRequestId}`}
                         style={{ color: 'var(--ax-text)', textDecoration: 'none', fontWeight: 500 }}
                       >
                         {collectionPayerLabel(c)}

@@ -13,7 +13,7 @@ import {
 } from '@prisma/client';
 import {
   buildApprovalEvaluationSummary,
-  getOrCreateWorkspaceApprovalPolicy,
+  getOrCreateOrganizationApprovalPolicy,
   serializeApprovalPolicy,
 } from './approval-policy.js';
 import { escapeClickHouseString, normalizeClickHouseDateTime, queryClickHouse } from './clickhouse.js';
@@ -96,7 +96,7 @@ function asUuidSql(value: string | null | undefined) {
 
 async function queryExceptionStateRecord(
   client: PrismaQueryClient,
-  workspaceId: string,
+  organizationId: string,
   exceptionId: string,
 ): Promise<ExceptionStateOverlay | null> {
   const rows = await client.$queryRaw<
@@ -125,7 +125,7 @@ async function queryExceptionStateRecord(
     FROM exception_states es
     LEFT JOIN users u
       ON u.user_id = es.assigned_to_user_id
-    WHERE es.workspace_id = CAST(${workspaceId} AS uuid)
+    WHERE es.organization_id = CAST(${organizationId} AS uuid)
       AND es.exception_id = CAST(${exceptionId} AS uuid)
     LIMIT 1
   `);
@@ -154,7 +154,7 @@ async function queryExceptionStateRecord(
 
 async function queryExceptionStateRecords(
   client: PrismaQueryClient,
-  workspaceId: string,
+  organizationId: string,
   exceptionIds: string[],
 ): Promise<ExceptionStateOverlay[]> {
   if (!exceptionIds.length) {
@@ -188,7 +188,7 @@ async function queryExceptionStateRecords(
     FROM exception_states es
     LEFT JOIN users u
       ON u.user_id = es.assigned_to_user_id
-    WHERE es.workspace_id = CAST(${workspaceId} AS uuid)
+    WHERE es.organization_id = CAST(${organizationId} AS uuid)
       AND es.exception_id IN (${idList})
   `);
 
@@ -212,7 +212,7 @@ async function queryExceptionStateRecords(
 async function upsertExceptionStateRecord(
   client: PrismaQueryClient,
   args: {
-    workspaceId: string;
+    organizationId: string;
     exceptionId: string;
     status: string;
     updatedByUserId: string;
@@ -223,7 +223,7 @@ async function upsertExceptionStateRecord(
 ): Promise<ExceptionStateOverlay> {
   await client.$executeRaw(Prisma.sql`
     INSERT INTO exception_states (
-      workspace_id,
+      organization_id,
       exception_id,
       status,
       updated_by_user_id,
@@ -232,7 +232,7 @@ async function upsertExceptionStateRecord(
       severity
     )
     VALUES (
-      CAST(${args.workspaceId} AS uuid),
+      CAST(${args.organizationId} AS uuid),
       CAST(${args.exceptionId} AS uuid),
       ${args.status},
       CAST(${args.updatedByUserId} AS uuid),
@@ -240,7 +240,7 @@ async function upsertExceptionStateRecord(
       ${args.resolutionCode},
       ${args.severity}
     )
-    ON CONFLICT (workspace_id, exception_id) DO UPDATE SET
+    ON CONFLICT (organization_id, exception_id) DO UPDATE SET
       status = EXCLUDED.status,
       updated_by_user_id = EXCLUDED.updated_by_user_id,
       assigned_to_user_id = EXCLUDED.assigned_to_user_id,
@@ -249,7 +249,7 @@ async function upsertExceptionStateRecord(
       updated_at = now()
   `);
 
-  const state = await queryExceptionStateRecord(client, args.workspaceId, args.exceptionId);
+  const state = await queryExceptionStateRecord(client, args.organizationId, args.exceptionId);
   if (!state) {
     throw new Error('Exception state write failed');
   }
@@ -337,10 +337,10 @@ type QueueBuildOptions = {
   requestStatus?: string;
 };
 
-export async function listReconciliationQueue(workspaceId: string, options: QueueBuildOptions = {}) {
+export async function listReconciliationQueue(organizationId: string, options: QueueBuildOptions = {}) {
   const transferRequests = await prisma.transferRequest.findMany({
     where: {
-      workspaceId,
+      organizationId,
       asset: 'usdc',
     },
     include: {
@@ -376,8 +376,8 @@ export async function listReconciliationQueue(workspaceId: string, options: Queu
     collectSubmittedExecutionSignatures(transferRequests),
   );
   const [matches, exceptions] = await Promise.all([
-    querySettlementMatches(workspaceId, requestIds),
-    queryExceptions(workspaceId, requestIds),
+    querySettlementMatches(organizationId, requestIds),
+    queryExceptions(organizationId, requestIds),
   ]);
 
   const items = buildQueueItems({
@@ -395,7 +395,7 @@ export async function listReconciliationQueue(workspaceId: string, options: Queu
 }
 
 export async function listApprovalInbox(args: {
-  workspaceId: string;
+  organizationId: string;
   limit?: number;
   statuses?: Array<'pending_approval' | 'escalated'>;
 }) {
@@ -403,7 +403,7 @@ export async function listApprovalInbox(args: {
   const [transferRequests, approvalPolicy] = await Promise.all([
     prisma.transferRequest.findMany({
       where: {
-        workspaceId: args.workspaceId,
+        organizationId: args.organizationId,
         asset: 'usdc',
         status: {
           in: statuses,
@@ -436,7 +436,7 @@ export async function listApprovalInbox(args: {
       orderBy: { requestedAt: 'desc' },
       take: args.limit ?? 100,
     }),
-    getOrCreateWorkspaceApprovalPolicy(args.workspaceId),
+    getOrCreateOrganizationApprovalPolicy(args.organizationId),
   ]);
 
   const requestIds = transferRequests.map((request) => request.transferRequestId);
@@ -444,8 +444,8 @@ export async function listApprovalInbox(args: {
     collectSubmittedExecutionSignatures(transferRequests),
   );
   const [matches, exceptions] = await Promise.all([
-    querySettlementMatches(args.workspaceId, requestIds),
-    queryExceptions(args.workspaceId, requestIds),
+    querySettlementMatches(args.organizationId, requestIds),
+    queryExceptions(args.organizationId, requestIds),
   ]);
   const items = buildQueueItems({
     transferRequests,
@@ -473,9 +473,9 @@ export async function listApprovalInbox(args: {
   };
 }
 
-export async function getReconciliationDetail(workspaceId: string, transferRequestId: string) {
+export async function getReconciliationDetail(organizationId: string, transferRequestId: string) {
   const requestWithTimeline = await prisma.transferRequest.findFirstOrThrow({
-    where: { workspaceId, transferRequestId },
+    where: { organizationId, transferRequestId },
     include: {
       sourceTreasuryWallet: true,
       destination: {
@@ -528,8 +528,8 @@ export async function getReconciliationDetail(workspaceId: string, transferReque
   });
 
   const [matches, exceptions] = await Promise.all([
-    querySettlementMatches(workspaceId, [transferRequestId]),
-    queryExceptions(workspaceId, [transferRequestId]),
+    querySettlementMatches(organizationId, [transferRequestId]),
+    queryExceptions(organizationId, [transferRequestId]),
   ]);
 
   const observedExecutionSignatures = await queryObservedTransactionSignatures(
@@ -547,7 +547,7 @@ export async function getReconciliationDetail(workspaceId: string, transferReque
   const exceptionNotes = exceptionIds.length
     ? await prisma.exceptionNote.findMany({
         where: {
-          workspaceId,
+          organizationId,
           exceptionId: {
             in: exceptionIds,
           },
@@ -601,7 +601,7 @@ export async function getReconciliationDetail(workspaceId: string, transferReque
     relatedObservedPayments: annotatedObservedPayments,
   });
 
-  const approvalPolicy = await getOrCreateWorkspaceApprovalPolicy(workspaceId);
+  const approvalPolicy = await getOrCreateOrganizationApprovalPolicy(organizationId);
   const approvalEvaluation = buildApprovalEvaluationSummary({
     policy: approvalPolicy,
     amountRaw: requestWithTimeline.amountRaw,
@@ -679,8 +679,8 @@ type ReconciliationRecommendedAction =
   | 'review_exception'
   | 'export_proof';
 
-export async function getReconciliationExplanation(workspaceId: string, transferRequestId: string) {
-  const detail = await getReconciliationDetail(workspaceId, transferRequestId);
+export async function getReconciliationExplanation(organizationId: string, transferRequestId: string) {
+  const detail = await getReconciliationDetail(organizationId, transferRequestId);
   const activeExceptions = detail.exceptions.filter(isActiveException);
   const edgeCases = buildReconciliationEdgeCases(detail, activeExceptions);
   const outcome = deriveReconciliationOutcome(detail, activeExceptions);
@@ -695,7 +695,7 @@ export async function getReconciliationExplanation(workspaceId: string, transfer
 
   return {
     servedAt: new Date().toISOString(),
-    workspaceId,
+    organizationId,
     transferRequestId,
     outcome,
     summary: buildReconciliationSummary(detail, outcome, activeExceptions),
@@ -769,8 +769,8 @@ export async function getReconciliationExplanation(workspaceId: string, transfer
   };
 }
 
-export async function getReconciliationRefreshPreview(workspaceId: string, transferRequestId: string) {
-  const explanation = await getReconciliationExplanation(workspaceId, transferRequestId);
+export async function getReconciliationRefreshPreview(organizationId: string, transferRequestId: string) {
+  const explanation = await getReconciliationExplanation(organizationId, transferRequestId);
 
   return {
     ...explanation,
@@ -783,14 +783,14 @@ export async function getReconciliationRefreshPreview(workspaceId: string, trans
 }
 
 export async function applyExceptionAction(args: {
-  workspaceId: string;
+  organizationId: string;
   exceptionId: string;
   action: ExceptionAction;
   actorUserId: string;
   note?: string;
 }) {
-  const { workspaceId, exceptionId, action, actorUserId, note } = args;
-  const exception = await queryExceptionById(workspaceId, exceptionId);
+  const { organizationId, exceptionId, action, actorUserId, note } = args;
+  const exception = await queryExceptionById(organizationId, exceptionId);
 
   if (!exception) {
     throw new Error('Exception not found');
@@ -802,10 +802,10 @@ export async function applyExceptionAction(args: {
 
   const nextStatus = getTargetExceptionStatusForAction(action);
   const updatedExceptionState = await prisma.$transaction(async (tx) => {
-    const existingState = await queryExceptionStateRecord(tx, workspaceId, exceptionId);
+    const existingState = await queryExceptionStateRecord(tx, organizationId, exceptionId);
 
     const state = await upsertExceptionStateRecord(tx, {
-      workspaceId,
+      organizationId,
       exceptionId,
       status: nextStatus,
       updatedByUserId: actorUserId,
@@ -817,7 +817,7 @@ export async function applyExceptionAction(args: {
     if (note?.trim()) {
       await tx.exceptionNote.create({
         data: {
-          workspaceId,
+          organizationId,
           exceptionId,
           authorUserId: actorUserId,
           body: note.trim(),
@@ -834,7 +834,7 @@ export async function applyExceptionAction(args: {
       if (request) {
         await createTransferRequestEvent(tx, {
           transferRequestId: request.transferRequestId,
-          workspaceId,
+          organizationId,
           eventType: 'exception_status_updated',
           actorType: 'user',
           actorId: actorUserId,
@@ -859,7 +859,7 @@ export async function applyExceptionAction(args: {
 }
 
 export async function updateExceptionMetadata(args: {
-  workspaceId: string;
+  organizationId: string;
   exceptionId: string;
   actorUserId: string;
   assignedToUserId?: string | null;
@@ -867,15 +867,15 @@ export async function updateExceptionMetadata(args: {
   severity?: string | null;
   note?: string;
 }) {
-  const exception = await queryExceptionById(args.workspaceId, args.exceptionId);
+  const exception = await queryExceptionById(args.organizationId, args.exceptionId);
   if (!exception) {
     throw new Error('Exception not found');
   }
 
   const updatedExceptionState = await prisma.$transaction(async (tx) => {
-    const existingState = await queryExceptionStateRecord(tx, args.workspaceId, args.exceptionId);
+    const existingState = await queryExceptionStateRecord(tx, args.organizationId, args.exceptionId);
     const state = await upsertExceptionStateRecord(tx, {
-      workspaceId: args.workspaceId,
+      organizationId: args.organizationId,
       exceptionId: args.exceptionId,
       status: existingState?.status ?? exception.status,
       updatedByUserId: args.actorUserId,
@@ -889,7 +889,7 @@ export async function updateExceptionMetadata(args: {
     if (args.note?.trim()) {
       await tx.exceptionNote.create({
         data: {
-          workspaceId: args.workspaceId,
+          organizationId: args.organizationId,
           exceptionId: args.exceptionId,
           authorUserId: args.actorUserId,
           body: args.note.trim(),
@@ -906,7 +906,7 @@ export async function updateExceptionMetadata(args: {
       if (request) {
         await createTransferRequestEvent(tx, {
           transferRequestId: request.transferRequestId,
-          workspaceId: args.workspaceId,
+          organizationId: args.organizationId,
           eventType: 'exception_metadata_updated',
           actorType: 'user',
           actorId: args.actorUserId,
@@ -932,19 +932,19 @@ export async function updateExceptionMetadata(args: {
 }
 
 export async function addExceptionNote(args: {
-  workspaceId: string;
+  organizationId: string;
   exceptionId: string;
   actorUserId: string;
   body: string;
 }) {
-  const exception = await queryExceptionById(args.workspaceId, args.exceptionId);
+  const exception = await queryExceptionById(args.organizationId, args.exceptionId);
   if (!exception) {
     throw new Error('Exception not found');
   }
 
   const note = await prisma.exceptionNote.create({
     data: {
-      workspaceId: args.workspaceId,
+      organizationId: args.organizationId,
       exceptionId: args.exceptionId,
       authorUserId: args.actorUserId,
       body: args.body.trim(),
@@ -963,14 +963,14 @@ export async function addExceptionNote(args: {
   return serializeExceptionNote(note);
 }
 
-export async function getExceptionDetail(workspaceId: string, exceptionId: string) {
-  const exception = await queryExceptionById(workspaceId, exceptionId);
+export async function getExceptionDetail(organizationId: string, exceptionId: string) {
+  const exception = await queryExceptionById(organizationId, exceptionId);
   if (!exception) {
     throw new Error('Exception not found');
   }
 
   const notes = await prisma.exceptionNote.findMany({
-    where: { workspaceId, exceptionId },
+    where: { organizationId, exceptionId },
     include: {
       authorUser: {
         select: {
@@ -990,16 +990,16 @@ export async function getExceptionDetail(workspaceId: string, exceptionId: strin
   };
 }
 
-export async function listWorkspaceExceptions(args: {
-  workspaceId: string;
+export async function listOrganizationExceptions(args: {
+  organizationId: string;
   limit?: number;
   status?: string;
   severity?: string;
   assigneeUserId?: string;
   reasonCode?: string;
 }) {
-  const rows = await queryExceptionsByWorkspace({
-    workspaceId: args.workspaceId,
+  const rows = await queryExceptionsByOrganization({
+    organizationId: args.organizationId,
   });
 
   const filtered = rows.filter((row) => {
@@ -1169,7 +1169,7 @@ function extractLinkedPaymentId(events: TransferRequestEvent[]) {
 export function serializeTransferRequest(request: TransferRequestWithRelations) {
   return {
     transferRequestId: request.transferRequestId,
-    workspaceId: request.workspaceId,
+    organizationId: request.organizationId,
     paymentOrderId: request.paymentOrderId,
     sourceTreasuryWalletId: request.sourceTreasuryWalletId,
     destinationId: request.destinationId,
@@ -1209,7 +1209,7 @@ function serializeApprovalDecision(
     approvalDecisionId: decision.approvalDecisionId,
     approvalPolicyId: decision.approvalPolicyId,
     transferRequestId: decision.transferRequestId,
-    workspaceId: decision.workspaceId,
+    organizationId: decision.organizationId,
     actorUserId: decision.actorUserId,
     actorType: decision.actorType,
     action: decision.action,
@@ -1264,7 +1264,7 @@ function serializeDestination(
 ) {
   return {
     destinationId: destination.destinationId,
-    workspaceId: destination.workspaceId,
+    organizationId: destination.organizationId,
     counterpartyId: destination.counterpartyId,
     chain: destination.chain,
     asset: destination.asset,
@@ -1580,12 +1580,12 @@ function applyExceptionStateOverlay(
   };
 }
 
-async function getExceptionStateMap(workspaceId: string, exceptionIds: string[]) {
+async function getExceptionStateMap(organizationId: string, exceptionIds: string[]) {
   if (!exceptionIds.length) {
     return new Map<string, ExceptionStateOverlay>();
   }
 
-  const states = await queryExceptionStateRecords(prisma, workspaceId, exceptionIds);
+  const states = await queryExceptionStateRecords(prisma, organizationId, exceptionIds);
 
   return new Map(
     states.map((state) => [
@@ -1602,7 +1602,7 @@ async function getExceptionStateMap(workspaceId: string, exceptionIds: string[])
   );
 }
 
-async function querySettlementMatches(workspaceId: string, transferRequestIds: string[]) {
+async function querySettlementMatches(organizationId: string, transferRequestIds: string[]) {
   if (!transferRequestIds.length) {
     return [] as SettlementMatchRow[];
   }
@@ -1628,7 +1628,7 @@ async function querySettlementMatches(workspaceId: string, transferRequestIds: s
       if(isNull(observed_event_time) OR isNull(matched_at), NULL, dateDiff('millisecond', observed_event_time, matched_at)) AS chain_to_match_ms,
       updated_at
     FROM ${config.clickhouseDatabase}.settlement_matches FINAL
-    WHERE workspace_id = toUUID('${workspaceId}')
+    WHERE organization_id = toUUID('${organizationId}')
       AND transfer_request_id IN (${ids})
     ORDER BY updated_at DESC
     LIMIT 1 BY transfer_request_id
@@ -1636,7 +1636,7 @@ async function querySettlementMatches(workspaceId: string, transferRequestIds: s
   `);
 }
 
-async function queryExceptions(workspaceId: string, transferRequestIds: string[]) {
+async function queryExceptions(organizationId: string, transferRequestIds: string[]) {
   if (!transferRequestIds.length) {
     return [] as ExceptionRow[];
   }
@@ -1659,7 +1659,7 @@ async function queryExceptions(workspaceId: string, transferRequestIds: string[]
       created_at,
       updated_at
     FROM ${config.clickhouseDatabase}.exceptions FINAL
-    WHERE workspace_id = toUUID('${workspaceId}')
+    WHERE organization_id = toUUID('${organizationId}')
       AND transfer_request_id IN (${ids})
     ORDER BY updated_at DESC
     LIMIT 1 BY exception_id
@@ -1667,14 +1667,14 @@ async function queryExceptions(workspaceId: string, transferRequestIds: string[]
   `);
 
   const stateMap = await getExceptionStateMap(
-    workspaceId,
+    organizationId,
     rows.map((row) => row.exception_id),
   );
 
   return rows.map((row) => applyExceptionStateOverlay(row, stateMap.get(row.exception_id) ?? null));
 }
 
-async function queryExceptionById(workspaceId: string, exceptionId: string) {
+async function queryExceptionById(organizationId: string, exceptionId: string) {
   const rows = await queryClickHouse<ExceptionRow>(`
     SELECT
       exception_id,
@@ -1691,7 +1691,7 @@ async function queryExceptionById(workspaceId: string, exceptionId: string) {
       created_at,
       updated_at
     FROM ${config.clickhouseDatabase}.exceptions FINAL
-    WHERE workspace_id = toUUID('${workspaceId}')
+    WHERE organization_id = toUUID('${organizationId}')
       AND exception_id = toUUID('${exceptionId}')
     ORDER BY updated_at DESC
     LIMIT 1
@@ -1703,15 +1703,15 @@ async function queryExceptionById(workspaceId: string, exceptionId: string) {
     return null;
   }
 
-  const state = await queryExceptionStateRecord(prisma, workspaceId, exceptionId);
+  const state = await queryExceptionStateRecord(prisma, organizationId, exceptionId);
 
   return applyExceptionStateOverlay(row, state);
 }
 
-async function queryExceptionsByWorkspace(args: {
-  workspaceId: string;
+async function queryExceptionsByOrganization(args: {
+  organizationId: string;
 }) {
-  const clauses = [`workspace_id = toUUID('${args.workspaceId}')`];
+  const clauses = [`organization_id = toUUID('${args.organizationId}')`];
 
   const rows = await queryClickHouse<ExceptionRow>(`
     SELECT
@@ -1737,7 +1737,7 @@ async function queryExceptionsByWorkspace(args: {
   `);
 
   const stateMap = await getExceptionStateMap(
-    args.workspaceId,
+    args.organizationId,
     rows.map((row) => row.exception_id),
   );
 
@@ -1955,43 +1955,6 @@ function serializeObservedTransaction(row: ObservedTransactionRow) {
   };
 }
 
-async function queryObservedPaymentsBySignatures(signatures: string[]) {
-  const uniqueSignatures = uniqueValues(signatures.filter(Boolean));
-  if (!uniqueSignatures.length) {
-    return [] as Array<Awaited<ReturnType<typeof queryObservedPaymentById>> extends infer T ? NonNullable<T> : never>;
-  }
-
-  const response = await queryClickHouse<ObservedPaymentRow>(
-    `
-      SELECT
-        payment_id,
-        signature,
-        slot,
-        event_time,
-        asset,
-        source_wallet,
-        destination_wallet,
-        gross_amount_raw,
-        gross_amount_decimal,
-        net_destination_amount_raw,
-        net_destination_amount_decimal,
-        fee_amount_raw,
-        fee_amount_decimal,
-        route_count,
-        payment_kind,
-        reconstruction_rule,
-        confidence_band,
-        properties_json,
-        created_at
-      FROM ${config.clickhouseDatabase}.observed_payments
-      WHERE signature IN (${uniqueSignatures.map((signature) => `'${signature}'`).join(', ')})
-      FORMAT JSONEachRow
-    `,
-  );
-
-  return response.map((row) => serializeObservedPayment(row));
-}
-
 function safeJsonParse(value: string | null) {
   if (!value) return null;
   try {
@@ -2011,38 +1974,6 @@ function collectSubmittedExecutionSignatures(transferRequests: TransferRequestWi
 
 function uniqueValues(values: string[]) {
   return [...new Set(values)];
-}
-
-function serializeObservedPayment(row: ObservedPaymentRow) {
-  return {
-    paymentId: row.payment_id,
-    signature: row.signature,
-    slot: Number(row.slot),
-    eventTime: normalizeClickHouseDateTime(row.event_time)!,
-    asset: row.asset,
-    sourceWallet: row.source_wallet,
-    destinationWallet: row.destination_wallet,
-    grossAmountRaw: row.gross_amount_raw,
-    grossAmountDecimal: row.gross_amount_decimal,
-    netDestinationAmountRaw: row.net_destination_amount_raw,
-    netDestinationAmountDecimal: row.net_destination_amount_decimal,
-    feeAmountRaw: row.fee_amount_raw,
-    feeAmountDecimal: row.fee_amount_decimal,
-    routeCount: Number(row.route_count),
-    paymentKind: row.payment_kind,
-    reconstructionRule: row.reconstruction_rule,
-    confidenceBand: row.confidence_band,
-    propertiesJson: safeJsonParse(row.properties_json),
-    createdAt: normalizeClickHouseDateTime(row.created_at)!,
-  };
-}
-
-function normalizeRoleTags(value: Prisma.JsonValue | null | undefined) {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-
-  return value.filter((item): item is string => typeof item === 'string');
 }
 
 function formatRawUsdc(amountRaw: string) {

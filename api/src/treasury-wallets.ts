@@ -20,9 +20,9 @@ export type UpdateTreasuryWalletInput = {
   isActive?: boolean;
 };
 
-export async function listTreasuryWallets(workspaceId: string, options?: { limit?: number }) {
+export async function listTreasuryWallets(organizationId: string, options?: { limit?: number }) {
   const items = await prisma.treasuryWallet.findMany({
-    where: { workspaceId },
+    where: { organizationId },
     orderBy: { createdAt: 'desc' },
     take: options?.limit ?? 100,
   });
@@ -30,17 +30,17 @@ export async function listTreasuryWallets(workspaceId: string, options?: { limit
   return { items: items.map(serializeTreasuryWallet) };
 }
 
-export async function createTreasuryWallet(workspaceId: string, input: CreateTreasuryWalletInput) {
+export async function createTreasuryWallet(organizationId: string, input: CreateTreasuryWalletInput) {
   const displayName = normalizeOptionalText(input.displayName);
   if (displayName) {
-    await assertWalletNameAvailable(workspaceId, displayName);
+    await assertWalletNameAvailable(organizationId, displayName);
   }
-  await assertWalletAddressAvailable(workspaceId, input.address);
+  await assertWalletAddressAvailable(organizationId, input.address);
   const usdcAtaAddress = deriveUsdcAtaForWallet(input.address);
 
   const wallet = await prisma.treasuryWallet.create({
     data: {
-      workspaceId,
+      organizationId,
       chain: input.chain ?? SOLANA_CHAIN,
       address: input.address,
       assetScope: input.assetScope ?? USDC_ASSET,
@@ -60,13 +60,13 @@ export async function createTreasuryWallet(workspaceId: string, input: CreateTre
 }
 
 export async function updateTreasuryWallet(
-  workspaceId: string,
+  organizationId: string,
   treasuryWalletId: string,
   input: UpdateTreasuryWalletInput,
 ) {
   const current = await prisma.treasuryWallet.findFirstOrThrow({
     where: {
-      workspaceId,
+      organizationId,
       treasuryWalletId,
     },
   });
@@ -77,11 +77,11 @@ export async function updateTreasuryWallet(
     input.displayName !== undefined ? normalizeOptionalText(input.displayName) : current.displayName;
 
   if (nextDisplayName) {
-    await assertWalletNameAvailable(workspaceId, nextDisplayName, treasuryWalletId);
+    await assertWalletNameAvailable(organizationId, nextDisplayName, treasuryWalletId);
   }
 
   if (nextAddress !== current.address) {
-    await assertWalletAddressAvailable(workspaceId, nextAddress, treasuryWalletId);
+    await assertWalletAddressAvailable(organizationId, nextAddress, treasuryWalletId);
   }
 
   const wallet = await prisma.$transaction(async (tx) => {
@@ -107,13 +107,13 @@ export async function updateTreasuryWallet(
 }
 
 async function assertWalletNameAvailable(
-  workspaceId: string,
+  organizationId: string,
   displayName: string,
   excludeTreasuryWalletId?: string,
 ) {
   const existing = await prisma.treasuryWallet.findFirst({
     where: {
-      workspaceId,
+      organizationId,
       displayName: {
         equals: displayName,
         mode: 'insensitive',
@@ -124,18 +124,18 @@ async function assertWalletNameAvailable(
   });
 
   if (existing) {
-    throw new Error(`Wallet name "${displayName}" already exists in this workspace`);
+    throw new Error(`Wallet name "${displayName}" already exists in this organization`);
   }
 }
 
 async function assertWalletAddressAvailable(
-  workspaceId: string,
+  organizationId: string,
   address: string,
   excludeTreasuryWalletId?: string,
 ) {
   const existing = await prisma.treasuryWallet.findFirst({
     where: {
-      workspaceId,
+      organizationId,
       address,
       ...(excludeTreasuryWalletId ? { treasuryWalletId: { not: excludeTreasuryWalletId } } : {}),
     },
@@ -143,13 +143,13 @@ async function assertWalletAddressAvailable(
   });
 
   if (existing) {
-    throw new Error(`Treasury wallet address "${address}" already exists in this workspace`);
+    throw new Error(`Treasury wallet address "${address}" already exists in this organization`);
   }
 }
 
 function serializeTreasuryWallet(wallet: {
   treasuryWalletId: string;
-  workspaceId: string;
+  organizationId: string;
   chain: string;
   address: string;
   assetScope: string;
@@ -165,7 +165,7 @@ function serializeTreasuryWallet(wallet: {
 }) {
   return {
     treasuryWalletId: wallet.treasuryWalletId,
-    workspaceId: wallet.workspaceId,
+    organizationId: wallet.organizationId,
     chain: wallet.chain,
     address: wallet.address,
     assetScope: wallet.assetScope,

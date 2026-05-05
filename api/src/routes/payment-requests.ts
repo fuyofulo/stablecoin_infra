@@ -10,16 +10,16 @@ import {
   previewPaymentRequestsCsv,
   promotePaymentRequestToOrder,
 } from '../payment-requests.js';
-import { assertWorkspaceAccess, assertWorkspaceAdmin } from '../workspace-access.js';
+import { assertOrganizationAccess, assertOrganizationAdmin } from '../organization-access.js';
 import { asyncRoute, sendCreated, sendJson, sendList, unwrapItems } from '../route-helpers.js';
 
 export const paymentRequestsRouter = Router();
 
-const workspaceParamsSchema = z.object({
-  workspaceId: z.string().uuid(),
+const organizationParamsSchema = z.object({
+  organizationId: z.string().uuid(),
 });
 
-const paymentRequestParamsSchema = workspaceParamsSchema.extend({
+const paymentRequestParamsSchema = organizationParamsSchema.extend({
   paymentRequestId: z.string().uuid(),
 });
 
@@ -58,25 +58,25 @@ const promotePaymentRequestSchema = z.object({
   submitNow: z.boolean().default(false),
 });
 
-paymentRequestsRouter.get('/workspaces/:workspaceId/payment-requests', asyncRoute(async (req, res) => {
-    const { workspaceId } = workspaceParamsSchema.parse(req.params);
+paymentRequestsRouter.get('/organizations/:organizationId/payment-requests', asyncRoute(async (req, res) => {
+    const { organizationId } = organizationParamsSchema.parse(req.params);
     const query = listPaymentRequestsQuerySchema.parse(req.query);
-    await assertWorkspaceAccess(workspaceId, req.auth!);
+    await assertOrganizationAccess(organizationId, req.auth!);
 
-    const result = await listPaymentRequests(workspaceId, {
+    const result = await listPaymentRequests(organizationId, {
       limit: query.limit,
       state: query.state,
     });
     sendList(res, unwrapItems(result), { limit: query.limit, state: query.state ?? null });
 }));
 
-paymentRequestsRouter.post('/workspaces/:workspaceId/payment-requests', asyncRoute(async (req, res) => {
-    const { workspaceId } = workspaceParamsSchema.parse(req.params);
-    await assertWorkspaceAdmin(workspaceId, req.auth!);
+paymentRequestsRouter.post('/organizations/:organizationId/payment-requests', asyncRoute(async (req, res) => {
+    const { organizationId } = organizationParamsSchema.parse(req.params);
+    await assertOrganizationAdmin(organizationId, req.auth!);
     const input = createPaymentRequestSchema.parse(req.body);
 
     const detail = await createPaymentRequest({
-      workspaceId,
+      organizationId,
       actorUserId: req.auth!.userId,
       destinationId: input.destinationId,
       amountRaw: input.amountRaw,
@@ -93,13 +93,13 @@ paymentRequestsRouter.post('/workspaces/:workspaceId/payment-requests', asyncRou
     sendCreated(res, detail);
 }));
 
-paymentRequestsRouter.post('/workspaces/:workspaceId/payment-requests/import-csv', asyncRoute(async (req, res) => {
-    const { workspaceId } = workspaceParamsSchema.parse(req.params);
-    await assertWorkspaceAdmin(workspaceId, req.auth!);
+paymentRequestsRouter.post('/organizations/:organizationId/payment-requests/import-csv', asyncRoute(async (req, res) => {
+    const { organizationId } = organizationParamsSchema.parse(req.params);
+    await assertOrganizationAdmin(organizationId, req.auth!);
     const input = importPaymentRequestsCsvSchema.parse(req.body);
 
     sendCreated(res, await importPaymentRequestsFromCsv({
-      workspaceId,
+      organizationId,
       actorUserId: req.auth!.userId,
       csv: input.csv,
       createOrderNow: input.createOrderNow,
@@ -108,33 +108,33 @@ paymentRequestsRouter.post('/workspaces/:workspaceId/payment-requests/import-csv
     }));
 }));
 
-paymentRequestsRouter.post('/workspaces/:workspaceId/payment-requests/import-csv/preview', asyncRoute(async (req, res) => {
-    const { workspaceId } = workspaceParamsSchema.parse(req.params);
-    await assertWorkspaceAccess(workspaceId, req.auth!);
+paymentRequestsRouter.post('/organizations/:organizationId/payment-requests/import-csv/preview', asyncRoute(async (req, res) => {
+    const { organizationId } = organizationParamsSchema.parse(req.params);
+    await assertOrganizationAccess(organizationId, req.auth!);
     const input = z.object({ csv: z.string().min(1) }).parse(req.body);
 
     sendJson(res, await previewPaymentRequestsCsv({
-      workspaceId,
+      organizationId,
       csv: input.csv,
     }));
 }));
 
-paymentRequestsRouter.get('/workspaces/:workspaceId/payment-requests/:paymentRequestId', asyncRoute(async (req, res) => {
-    const { workspaceId, paymentRequestId } = paymentRequestParamsSchema.parse(req.params);
-    await assertWorkspaceAccess(workspaceId, req.auth!);
+paymentRequestsRouter.get('/organizations/:organizationId/payment-requests/:paymentRequestId', asyncRoute(async (req, res) => {
+    const { organizationId, paymentRequestId } = paymentRequestParamsSchema.parse(req.params);
+    await assertOrganizationAccess(organizationId, req.auth!);
 
-    sendJson(res, await getPaymentRequestDetail(workspaceId, paymentRequestId));
+    sendJson(res, await getPaymentRequestDetail(organizationId, paymentRequestId));
 }));
 
 paymentRequestsRouter.post(
-  '/workspaces/:workspaceId/payment-requests/:paymentRequestId/promote',
+  '/organizations/:organizationId/payment-requests/:paymentRequestId/promote',
   asyncRoute(async (req, res) => {
-      const { workspaceId, paymentRequestId } = paymentRequestParamsSchema.parse(req.params);
-      await assertWorkspaceAdmin(workspaceId, req.auth!);
+      const { organizationId, paymentRequestId } = paymentRequestParamsSchema.parse(req.params);
+      await assertOrganizationAdmin(organizationId, req.auth!);
       const input = promotePaymentRequestSchema.parse(req.body);
 
       sendCreated(res, await promotePaymentRequestToOrder({
-        workspaceId,
+        organizationId,
         paymentRequestId,
         actorUserId: req.auth!.userId,
         sourceTreasuryWalletId: input.sourceTreasuryWalletId,
@@ -144,13 +144,13 @@ paymentRequestsRouter.post(
 );
 
 paymentRequestsRouter.post(
-  '/workspaces/:workspaceId/payment-requests/:paymentRequestId/cancel',
+  '/organizations/:organizationId/payment-requests/:paymentRequestId/cancel',
   asyncRoute(async (req, res) => {
-      const { workspaceId, paymentRequestId } = paymentRequestParamsSchema.parse(req.params);
-      await assertWorkspaceAdmin(workspaceId, req.auth!);
+      const { organizationId, paymentRequestId } = paymentRequestParamsSchema.parse(req.params);
+      await assertOrganizationAdmin(organizationId, req.auth!);
 
       sendJson(res, await cancelPaymentRequest({
-        workspaceId,
+        organizationId,
         paymentRequestId,
       }));
   }),

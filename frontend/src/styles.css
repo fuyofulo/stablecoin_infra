@@ -450,7 +450,7 @@ a {
   min-height: 0;
 }
 
-.sidebar-workspace {
+.sidebar-organization {
   padding-bottom: 8px;
 }
 
@@ -515,17 +515,17 @@ a {
   color: var(--text);
 }
 
-.sidebar-workspace + .sidebar-workspace {
+.sidebar-organization + .sidebar-organization {
   margin-top: 8px;
   padding-top: 16px;
   border-top: 1px solid var(--border);
 }
 
-.sidebar-workspace-header {
+.sidebar-organization-header {
   margin-bottom: 14px;
 }
 
-.sidebar-workspace-title {
+.sidebar-organization-title {
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -535,7 +535,7 @@ a {
   border: 1px solid var(--border);
 }
 
-.sidebar-workspace-name {
+.sidebar-organization-name {
   font-size: 14px;
   font-weight: 600;
   letter-spacing: -0.02em;
@@ -543,7 +543,7 @@ a {
   line-height: 1.25;
 }
 
-.sidebar-workspace-org {
+.sidebar-organization-org {
   font-size: 12px;
   font-weight: 500;
   color: var(--text-muted);
@@ -636,7 +636,7 @@ a {
   text-align: center;
 }
 
-.sidebar-empty-workspace {
+.sidebar-empty-organization {
   padding: 8px 4px 16px;
 }
 
@@ -2150,7 +2150,7 @@ a {
     font-size: 12px;
   }
 
-  .sidebar-workspace-title {
+  .sidebar-organization-title {
     padding: 8px 10px;
   }
 

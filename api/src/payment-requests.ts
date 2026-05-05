@@ -23,7 +23,7 @@ export function isPaymentRequestState(value: string): value is PaymentRequestSta
 }
 
 export async function listPaymentRequests(
-  workspaceId: string,
+  organizationId: string,
   options?: {
     limit?: number;
     state?: string;
@@ -31,7 +31,7 @@ export async function listPaymentRequests(
 ) {
   const requests = await prisma.paymentRequest.findMany({
     where: {
-      workspaceId,
+      organizationId,
       ...(options?.state ? { state: options.state } : {}),
     },
     include: paymentRequestInclude,
@@ -42,9 +42,9 @@ export async function listPaymentRequests(
   return { items: requests.map(serializePaymentRequest) };
 }
 
-export async function getPaymentRequestDetail(workspaceId: string, paymentRequestId: string) {
+export async function getPaymentRequestDetail(organizationId: string, paymentRequestId: string) {
   const request = await prisma.paymentRequest.findFirstOrThrow({
-    where: { workspaceId, paymentRequestId },
+    where: { organizationId, paymentRequestId },
     include: paymentRequestInclude,
   });
 
@@ -52,7 +52,7 @@ export async function getPaymentRequestDetail(workspaceId: string, paymentReques
 }
 
 export async function createPaymentRequest(args: {
-  workspaceId: string;
+  organizationId: string;
   actorUserId: string;
   paymentRunId?: string | null;
   destinationId: string;
@@ -68,7 +68,7 @@ export async function createPaymentRequest(args: {
 }) {
   const destination = await prisma.destination.findFirst({
     where: {
-      workspaceId: args.workspaceId,
+      organizationId: args.organizationId,
       destinationId: args.destinationId,
       isActive: true,
     },
@@ -84,7 +84,7 @@ export async function createPaymentRequest(args: {
   }
 
   await enforceDuplicatePaymentRequest({
-    workspaceId: args.workspaceId,
+    organizationId: args.organizationId,
     destinationId: destination.destinationId,
     amountRaw: args.amountRaw,
     externalReference: normalizeOptionalText(args.externalReference),
@@ -92,7 +92,7 @@ export async function createPaymentRequest(args: {
 
   const request = await prisma.paymentRequest.create({
     data: {
-      workspaceId: args.workspaceId,
+      organizationId: args.organizationId,
       paymentRunId: args.paymentRunId ?? null,
       destinationId: destination.destinationId,
       counterpartyId: destination.counterpartyId,
@@ -112,7 +112,7 @@ export async function createPaymentRequest(args: {
   }
 
   await promotePaymentRequestToOrder({
-    workspaceId: args.workspaceId,
+    organizationId: args.organizationId,
     paymentRequestId: request.paymentRequestId,
     actorUserId: args.actorUserId,
     paymentRunId: args.paymentRunId,
@@ -120,11 +120,11 @@ export async function createPaymentRequest(args: {
     submitNow: args.submitOrderNow ?? false,
   });
 
-  return getPaymentRequestDetail(args.workspaceId, request.paymentRequestId);
+  return getPaymentRequestDetail(args.organizationId, request.paymentRequestId);
 }
 
 export async function promotePaymentRequestToOrder(args: {
-  workspaceId: string;
+  organizationId: string;
   paymentRequestId: string;
   actorUserId: string;
   paymentRunId?: string | null;
@@ -132,7 +132,7 @@ export async function promotePaymentRequestToOrder(args: {
   submitNow?: boolean;
 }) {
   const request = await prisma.paymentRequest.findFirstOrThrow({
-    where: { workspaceId: args.workspaceId, paymentRequestId: args.paymentRequestId },
+    where: { organizationId: args.organizationId, paymentRequestId: args.paymentRequestId },
     include: paymentRequestInclude,
   });
 
@@ -141,11 +141,11 @@ export async function promotePaymentRequestToOrder(args: {
   }
 
   if (request.paymentOrder) {
-    return getPaymentOrderDetail(args.workspaceId, request.paymentOrder.paymentOrderId);
+    return getPaymentOrderDetail(args.organizationId, request.paymentOrder.paymentOrderId);
   }
 
   const paymentOrder = await createPaymentOrder({
-    workspaceId: args.workspaceId,
+    organizationId: args.organizationId,
     actorUserId: args.actorUserId,
     destinationId: request.destinationId,
     paymentRunId: args.paymentRunId ?? request.paymentRunId,
@@ -176,11 +176,11 @@ export async function promotePaymentRequestToOrder(args: {
 }
 
 export async function cancelPaymentRequest(args: {
-  workspaceId: string;
+  organizationId: string;
   paymentRequestId: string;
 }) {
   const request = await prisma.paymentRequest.findFirstOrThrow({
-    where: { workspaceId: args.workspaceId, paymentRequestId: args.paymentRequestId },
+    where: { organizationId: args.organizationId, paymentRequestId: args.paymentRequestId },
     include: paymentRequestInclude,
   });
 
@@ -198,7 +198,7 @@ export async function cancelPaymentRequest(args: {
 }
 
 export async function importPaymentRequestsFromCsv(args: {
-  workspaceId: string;
+  organizationId: string;
   actorUserId: string;
   csv: string;
   createOrderNow?: boolean;
@@ -230,14 +230,14 @@ export async function importPaymentRequestsFromCsv(args: {
       seenImportKeys.set(importKey, rowNumber);
 
       const destination = await resolveCsvDestination({
-        workspaceId: args.workspaceId,
+        organizationId: args.organizationId,
         destinationInput: parsed.destinationInput,
         counterpartyName: parsed.counterpartyName,
         rowNumber,
       });
 
       const paymentRequest = await createPaymentRequest({
-        workspaceId: args.workspaceId,
+        organizationId: args.organizationId,
         actorUserId: args.actorUserId,
         paymentRunId: args.paymentRunId,
         destinationId: destination.destinationId,
@@ -279,7 +279,7 @@ export async function importPaymentRequestsFromCsv(args: {
 }
 
 export async function previewPaymentRequestsCsv(args: {
-  workspaceId: string;
+  organizationId: string;
   csv: string;
 }) {
   const rows = parseCsv(args.csv);
@@ -303,14 +303,14 @@ export async function previewPaymentRequestsCsv(args: {
       seenImportKeys.set(importKey, duplicateRowNumber ?? rowNumber);
 
       const resolution = await previewCsvDestination({
-        workspaceId: args.workspaceId,
+        organizationId: args.organizationId,
         destinationInput: parsed.destinationInput,
         counterpartyName: parsed.counterpartyName,
         rowNumber,
       });
       const duplicate = resolution.destination
         ? await findActivePaymentDuplicate({
-            workspaceId: args.workspaceId,
+            organizationId: args.organizationId,
             destinationId: resolution.destination.destinationId,
             amountRaw: parsed.amountRaw,
             externalReference: parsed.externalReference,
@@ -381,7 +381,7 @@ const paymentRequestInclude = {
 } satisfies Prisma.PaymentRequestInclude;
 
 async function resolveCsvDestination(args: {
-  workspaceId: string;
+  organizationId: string;
   destinationInput: string | null;
   counterpartyName: string | null;
   rowNumber: number;
@@ -390,13 +390,13 @@ async function resolveCsvDestination(args: {
     throw new Error(`Row ${args.rowNumber}: destination wallet address is required`);
   }
 
-  const destination = await findDestinationForCsv(args.workspaceId, args.destinationInput);
+  const destination = await findDestinationForCsv(args.organizationId, args.destinationInput);
   if (destination) {
     return destination;
   }
 
   return createCsvDestinationFromWallet({
-    workspaceId: args.workspaceId,
+    organizationId: args.organizationId,
     walletAddress: args.destinationInput,
     labelFromCsv: args.counterpartyName,
     rowNumber: args.rowNumber,
@@ -404,7 +404,7 @@ async function resolveCsvDestination(args: {
 }
 
 async function previewCsvDestination(args: {
-  workspaceId: string;
+  organizationId: string;
   destinationInput: string | null;
   counterpartyName: string | null;
   rowNumber: number;
@@ -413,7 +413,7 @@ async function previewCsvDestination(args: {
     throw new Error(`Row ${args.rowNumber}: destination wallet address is required`);
   }
 
-  const destination = await findDestinationForCsv(args.workspaceId, args.destinationInput);
+  const destination = await findDestinationForCsv(args.organizationId, args.destinationInput);
   if (destination) {
     return {
       destination: serializeDestination({ ...destination, counterparty: null }),
@@ -438,7 +438,7 @@ async function previewCsvDestination(args: {
   };
 }
 
-async function findDestinationForCsv(workspaceId: string, value: string) {
+async function findDestinationForCsv(organizationId: string, value: string) {
   const alternatives: Prisma.DestinationWhereInput[] = [
     { label: { equals: value, mode: 'insensitive' } },
     { walletAddress: value },
@@ -451,7 +451,7 @@ async function findDestinationForCsv(workspaceId: string, value: string) {
 
   return prisma.destination.findFirst({
     where: {
-      workspaceId,
+      organizationId,
       isActive: true,
       OR: alternatives,
     },
@@ -493,7 +493,7 @@ function buildCsvImportRowKey(parsed: ReturnType<typeof parsePaymentRequestCsvRe
 }
 
 async function findActivePaymentDuplicate(args: {
-  workspaceId: string;
+  organizationId: string;
   destinationId: string;
   amountRaw: string | bigint;
   externalReference: string | null;
@@ -504,7 +504,7 @@ async function findActivePaymentDuplicate(args: {
 
   const paymentRequest = await prisma.paymentRequest.findFirst({
     where: {
-      workspaceId: args.workspaceId,
+      organizationId: args.organizationId,
       destinationId: args.destinationId,
       amountRaw: BigInt(args.amountRaw),
       externalReference: {
@@ -528,7 +528,7 @@ async function findActivePaymentDuplicate(args: {
 
   const paymentOrder = await prisma.paymentOrder.findFirst({
     where: {
-      workspaceId: args.workspaceId,
+      organizationId: args.organizationId,
       destinationId: args.destinationId,
       amountRaw: BigInt(args.amountRaw),
       state: {
@@ -556,7 +556,7 @@ async function findActivePaymentDuplicate(args: {
 }
 
 async function createCsvDestinationFromWallet(args: {
-  workspaceId: string;
+  organizationId: string;
   walletAddress: string;
   labelFromCsv: string | null;
   rowNumber: number;
@@ -573,8 +573,8 @@ async function createCsvDestinationFromWallet(args: {
   return prisma.$transaction(async (tx) => {
     const existing = await tx.destination.findUnique({
       where: {
-        workspaceId_walletAddress: {
-          workspaceId: args.workspaceId,
+        organizationId_walletAddress: {
+          organizationId: args.organizationId,
           walletAddress: args.walletAddress,
         },
       },
@@ -592,7 +592,7 @@ async function createCsvDestinationFromWallet(args: {
 
     return tx.destination.create({
       data: {
-        workspaceId: args.workspaceId,
+        organizationId: args.organizationId,
         chain: SOLANA_CHAIN,
         asset: USDC_ASSET,
         walletAddress: args.walletAddress,
@@ -614,7 +614,7 @@ async function createCsvDestinationFromWallet(args: {
 function serializePaymentRequest(request: PaymentRequestWithRelations) {
   return {
     paymentRequestId: request.paymentRequestId,
-    workspaceId: request.workspaceId,
+    organizationId: request.organizationId,
     paymentRunId: request.paymentRunId,
     destinationId: request.destinationId,
     counterpartyId: request.counterpartyId,
@@ -644,7 +644,7 @@ function serializePaymentRequest(request: PaymentRequestWithRelations) {
 function serializeDestination(destination: Destination & { counterparty: Counterparty | null }) {
   return {
     destinationId: destination.destinationId,
-    workspaceId: destination.workspaceId,
+    organizationId: destination.organizationId,
     counterpartyId: destination.counterpartyId,
     chain: destination.chain,
     asset: destination.asset,
@@ -688,7 +688,7 @@ function serializeUserRef(user: Pick<User, 'userId' | 'email' | 'displayName'> |
 }
 
 async function enforceDuplicatePaymentRequest(args: {
-  workspaceId: string;
+  organizationId: string;
   destinationId: string;
   amountRaw: string | bigint;
   externalReference: string | null;
@@ -699,7 +699,7 @@ async function enforceDuplicatePaymentRequest(args: {
 
   const duplicate = await prisma.paymentRequest.findFirst({
     where: {
-      workspaceId: args.workspaceId,
+      organizationId: args.organizationId,
       destinationId: args.destinationId,
       amountRaw: BigInt(args.amountRaw),
       externalReference: {

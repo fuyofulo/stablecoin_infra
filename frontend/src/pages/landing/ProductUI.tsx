@@ -307,7 +307,7 @@ export function ProofJsonMockup() {
   "packetType": "stablecoin_payment_run_proof",
   "version": 1,
   "detailLevel": "summary",
-  "workspaceId": "1d1e901f-ba1b-4d8f-8640-ee3b2e54519c",
+  "organizationId": "1d1e901f-ba1b-4d8f-8640-ee3b2e54519c",
   "paymentRunId": "6ec01ec8-aefb-3c71-d0b4-f89234a128fb",
   "runName": "payouts",
   "status": "settled",

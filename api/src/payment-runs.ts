@@ -32,7 +32,7 @@ type PaymentRunWithRelations = PaymentRun & {
 
 type RunOrderForExecution = {
   paymentOrderId: string;
-  workspaceId: string;
+  organizationId: string;
   paymentRunId: string | null;
   sourceTreasuryWalletId: string | null;
   amountRaw: bigint;
@@ -48,7 +48,7 @@ type RunOrderForExecution = {
     executionRecords: Array<{
       executionRecordId: string;
       transferRequestId: string;
-      workspaceId: string;
+      organizationId: string;
       submittedSignature: string | null;
       executionSource: string;
       executorUserId: string | null;
@@ -62,9 +62,9 @@ type RunOrderForExecution = {
   }>;
 };
 
-export async function listPaymentRuns(workspaceId: string) {
+export async function listPaymentRuns(organizationId: string) {
   const runs = await prisma.paymentRun.findMany({
-    where: { workspaceId },
+    where: { organizationId },
     include: paymentRunInclude,
     orderBy: { createdAt: 'desc' },
     take: 100,
@@ -73,13 +73,13 @@ export async function listPaymentRuns(workspaceId: string) {
   return { items: await Promise.all(runs.map(serializePaymentRunSummary)) };
 }
 
-export async function getPaymentRunDetail(workspaceId: string, paymentRunId: string) {
+export async function getPaymentRunDetail(organizationId: string, paymentRunId: string) {
   const run = await prisma.paymentRun.findFirstOrThrow({
-    where: { workspaceId, paymentRunId },
+    where: { organizationId, paymentRunId },
     include: paymentRunInclude,
   });
 
-  const orders = await listPaymentOrders(workspaceId, {
+  const orders = await listPaymentOrders(organizationId, {
     paymentRunId,
     limit: 250,
   });
@@ -90,9 +90,9 @@ export async function getPaymentRunDetail(workspaceId: string, paymentRunId: str
   };
 }
 
-export async function deletePaymentRun(workspaceId: string, paymentRunId: string) {
+export async function deletePaymentRun(organizationId: string, paymentRunId: string) {
   const existing = await prisma.paymentRun.findFirst({
-    where: { workspaceId, paymentRunId },
+    where: { organizationId, paymentRunId },
     select: { paymentRunId: true },
   });
   if (!existing) {
@@ -105,11 +105,11 @@ export async function deletePaymentRun(workspaceId: string, paymentRunId: string
 }
 
 export async function previewPaymentRunCsv(args: {
-  workspaceId: string;
+  organizationId: string;
   csv: string;
 }) {
   const preview = await previewPaymentRequestsCsv({
-    workspaceId: args.workspaceId,
+    organizationId: args.organizationId,
     csv: args.csv,
   });
   return {
@@ -119,7 +119,7 @@ export async function previewPaymentRunCsv(args: {
 }
 
 export async function importPaymentRunFromCsv(args: {
-  workspaceId: string;
+  organizationId: string;
   actorUserId: string;
   csv: string;
   runName?: string | null;
@@ -130,13 +130,13 @@ export async function importPaymentRunFromCsv(args: {
   const csvFingerprint = buildCsvFingerprint(args.csv);
   const importKey = normalizeOptionalText(args.importKey);
   const existingRun = await findExistingImportedPaymentRun({
-    workspaceId: args.workspaceId,
+    organizationId: args.organizationId,
     importKey,
     csvFingerprint,
   });
   if (existingRun) {
     return {
-      paymentRun: await getPaymentRunDetail(args.workspaceId, existingRun.paymentRunId),
+      paymentRun: await getPaymentRunDetail(args.organizationId, existingRun.paymentRunId),
       importResult: {
         idempotentReplay: true,
         imported: 0,
@@ -147,7 +147,7 @@ export async function importPaymentRunFromCsv(args: {
   }
 
   const preview = await previewPaymentRunCsv({
-    workspaceId: args.workspaceId,
+    organizationId: args.organizationId,
     csv: args.csv,
   });
   const failedRows = preview.items.filter((item) => item.status === 'failed');
@@ -161,7 +161,7 @@ export async function importPaymentRunFromCsv(args: {
 
   const run = await prisma.paymentRun.create({
     data: {
-      workspaceId: args.workspaceId,
+      organizationId: args.organizationId,
       sourceTreasuryWalletId: args.sourceTreasuryWalletId ?? null,
       runName: normalizeOptionalText(args.runName) ?? `CSV payment run ${new Date().toISOString().slice(0, 10)}`,
       inputSource: 'csv_import',
@@ -176,7 +176,7 @@ export async function importPaymentRunFromCsv(args: {
   });
 
   const importResult = await importPaymentRequestsFromCsv({
-    workspaceId: args.workspaceId,
+    organizationId: args.organizationId,
     actorUserId: args.actorUserId,
     csv: args.csv,
     createOrderNow: true,
@@ -197,20 +197,20 @@ export async function importPaymentRunFromCsv(args: {
     throw new Error(`CSV import had no valid rows, so no payment run was created.${detail}`);
   }
 
-  await refreshPersistedRunState(args.workspaceId, run.paymentRunId);
+  await refreshPersistedRunState(args.organizationId, run.paymentRunId);
 
   return {
-    paymentRun: await getPaymentRunDetail(args.workspaceId, run.paymentRunId),
+    paymentRun: await getPaymentRunDetail(args.organizationId, run.paymentRunId),
     importResult,
   };
 }
 
 export async function cancelPaymentRun(args: {
-  workspaceId: string;
+  organizationId: string;
   paymentRunId: string;
   actorUserId: string;
 }) {
-  const detail = await getPaymentRunDetail(args.workspaceId, args.paymentRunId);
+  const detail = await getPaymentRunDetail(args.organizationId, args.paymentRunId);
   if (detail.state === 'cancelled') {
     return detail;
   }
@@ -249,7 +249,7 @@ export async function cancelPaymentRun(args: {
       await tx.paymentOrderEvent.create({
         data: {
           paymentOrderId: order.paymentOrderId,
-          workspaceId: args.workspaceId,
+          organizationId: args.organizationId,
           eventType: 'payment_run_row_cancelled',
           actorType: 'user',
           actorId: args.actorUserId,
@@ -282,15 +282,15 @@ export async function cancelPaymentRun(args: {
     }
   });
 
-  return getPaymentRunDetail(args.workspaceId, args.paymentRunId);
+  return getPaymentRunDetail(args.organizationId, args.paymentRunId);
 }
 
 export async function closePaymentRun(args: {
-  workspaceId: string;
+  organizationId: string;
   paymentRunId: string;
   actorUserId: string;
 }) {
-  const detail = await getPaymentRunDetail(args.workspaceId, args.paymentRunId);
+  const detail = await getPaymentRunDetail(args.organizationId, args.paymentRunId);
   if (detail.state === 'closed') {
     return detail;
   }
@@ -324,7 +324,7 @@ export async function closePaymentRun(args: {
         await tx.paymentOrderEvent.create({
           data: {
             paymentOrderId: order.paymentOrderId,
-            workspaceId: args.workspaceId,
+            organizationId: args.organizationId,
             eventType: 'payment_run_row_closed',
             actorType: 'user',
             actorId: args.actorUserId,
@@ -348,17 +348,17 @@ export async function closePaymentRun(args: {
     }
   });
 
-  return getPaymentRunDetail(args.workspaceId, args.paymentRunId);
+  return getPaymentRunDetail(args.organizationId, args.paymentRunId);
 }
 
 export async function preparePaymentRunExecution(args: {
-  workspaceId: string;
+  organizationId: string;
   paymentRunId: string;
   actorUserId: string;
   sourceTreasuryWalletId?: string | null;
 }) {
   const run = await prisma.paymentRun.findFirstOrThrow({
-    where: { workspaceId: args.workspaceId, paymentRunId: args.paymentRunId },
+    where: { organizationId: args.organizationId, paymentRunId: args.paymentRunId },
     include: paymentRunInclude,
   });
 
@@ -369,7 +369,7 @@ export async function preparePaymentRunExecution(args: {
 
   const source = await prisma.treasuryWallet.findFirst({
     where: {
-      workspaceId: args.workspaceId,
+      organizationId: args.organizationId,
       treasuryWalletId: sourceTreasuryWalletId,
       isActive: true,
     },
@@ -379,7 +379,7 @@ export async function preparePaymentRunExecution(args: {
     throw new Error('Source wallet not found');
   }
 
-  const initialOrders = await loadRunOrdersForExecution(args.workspaceId, args.paymentRunId);
+  const initialOrders = await loadRunOrdersForExecution(args.organizationId, args.paymentRunId);
   if (!initialOrders.length) {
     throw new Error('Payment run has no payment orders');
   }
@@ -416,14 +416,14 @@ export async function preparePaymentRunExecution(args: {
   for (const order of initialOrders) {
     if (order.state === 'draft') {
       await submitPaymentOrder({
-        workspaceId: args.workspaceId,
+        organizationId: args.organizationId,
         paymentOrderId: order.paymentOrderId,
         actorUserId: args.actorUserId,
       });
     }
   }
 
-  const orders = await loadRunOrdersForExecution(args.workspaceId, args.paymentRunId);
+  const orders = await loadRunOrdersForExecution(args.organizationId, args.paymentRunId);
   const alreadySubmitted = orders.filter((order) => hasSubmittedExecution(order));
   const rejected = orders.filter((order) => {
     const request = getPrimaryTransferRequest(order);
@@ -435,7 +435,7 @@ export async function preparePaymentRunExecution(args: {
   });
 
   if (blocked.length) {
-    await refreshPersistedRunState(args.workspaceId, args.paymentRunId);
+    await refreshPersistedRunState(args.organizationId, args.paymentRunId);
     throw new Error(`${blocked.length} payment run row(s) need approval before batch execution can be prepared`);
   }
 
@@ -446,7 +446,7 @@ export async function preparePaymentRunExecution(args: {
   });
 
   if (!executableOrders.length) {
-    await refreshPersistedRunState(args.workspaceId, args.paymentRunId);
+    await refreshPersistedRunState(args.organizationId, args.paymentRunId);
     throw new Error(
       rejected.length
         ? 'No executable rows in this run. Rejected rows are excluded from batch execution.'
@@ -492,7 +492,7 @@ export async function preparePaymentRunExecution(args: {
         ?? await tx.executionRecord.create({
           data: {
             transferRequestId: draft.transferRequestId,
-            workspaceId: args.workspaceId,
+            organizationId: args.organizationId,
             executionSource: 'prepared_solana_batch_transfer',
             executorUserId: args.actorUserId,
             state: 'ready_for_execution',
@@ -521,7 +521,7 @@ export async function preparePaymentRunExecution(args: {
         await tx.paymentOrderEvent.create({
           data: {
             paymentOrderId: draft.paymentOrderId,
-            workspaceId: args.workspaceId,
+            organizationId: args.organizationId,
             eventType: 'payment_run_execution_prepared',
             actorType: 'user',
             actorId: args.actorUserId,
@@ -560,12 +560,12 @@ export async function preparePaymentRunExecution(args: {
   return {
     executionRecords: executionRecords.map(serializeExecutionRecord),
     executionPacket,
-    paymentRun: await getPaymentRunDetail(args.workspaceId, args.paymentRunId),
+    paymentRun: await getPaymentRunDetail(args.organizationId, args.paymentRunId),
   };
 }
 
 export async function attachPaymentRunSignature(args: {
-  workspaceId: string;
+  organizationId: string;
   paymentRunId: string;
   actorUserId: string;
   submittedSignature: string;
@@ -576,7 +576,7 @@ export async function attachPaymentRunSignature(args: {
     throw new Error('Submitted signature is required');
   }
 
-  const orders = await loadRunOrdersForExecution(args.workspaceId, args.paymentRunId);
+  const orders = await loadRunOrdersForExecution(args.organizationId, args.paymentRunId);
   if (!orders.length) {
     throw new Error('Payment run has no payment orders');
   }
@@ -602,7 +602,7 @@ export async function attachPaymentRunSignature(args: {
         ?? await tx.executionRecord.create({
           data: {
             transferRequestId: request.transferRequestId,
-            workspaceId: args.workspaceId,
+            organizationId: args.organizationId,
             executionSource: 'prepared_solana_batch_transfer',
             executorUserId: args.actorUserId,
             state: 'ready_for_execution',
@@ -644,7 +644,7 @@ export async function attachPaymentRunSignature(args: {
       await tx.paymentOrderEvent.create({
         data: {
           paymentOrderId: order.paymentOrderId,
-          workspaceId: args.workspaceId,
+          organizationId: args.organizationId,
           eventType: 'payment_run_signature_attached',
           actorType: 'user',
           actorId: args.actorUserId,
@@ -672,12 +672,12 @@ export async function attachPaymentRunSignature(args: {
 
   return {
     executionRecords: updatedRecords.map(serializeExecutionRecord),
-    paymentRun: await getPaymentRunDetail(args.workspaceId, args.paymentRunId),
+    paymentRun: await getPaymentRunDetail(args.organizationId, args.paymentRunId),
   };
 }
 
 async function serializePaymentRunSummary(run: PaymentRunWithRelations) {
-  const orders = await listPaymentOrders(run.workspaceId, {
+  const orders = await listPaymentOrders(run.organizationId, {
     paymentRunId: run.paymentRunId,
     limit: 250,
   });
@@ -687,7 +687,7 @@ async function serializePaymentRunSummary(run: PaymentRunWithRelations) {
 
   return {
     paymentRunId: run.paymentRunId,
-    workspaceId: run.workspaceId,
+    organizationId: run.organizationId,
     sourceTreasuryWalletId: run.sourceTreasuryWalletId,
     runName: run.runName,
     inputSource: run.inputSource,
@@ -814,18 +814,18 @@ function derivePaymentRunState(storedState: string, orders: Array<{ derivedState
   return derivePaymentRunStateFromRows(storedState, orders);
 }
 
-async function refreshPersistedRunState(workspaceId: string, paymentRunId: string) {
-  const detail = await getPaymentRunDetail(workspaceId, paymentRunId);
+async function refreshPersistedRunState(organizationId: string, paymentRunId: string) {
+  const detail = await getPaymentRunDetail(organizationId, paymentRunId);
   await prisma.paymentRun.update({
     where: { paymentRunId },
     data: { state: detail.derivedState },
   });
 }
 
-async function loadRunOrdersForExecution(workspaceId: string, paymentRunId: string) {
+async function loadRunOrdersForExecution(organizationId: string, paymentRunId: string) {
   return prisma.paymentOrder.findMany({
     where: {
-      workspaceId,
+      organizationId,
       paymentRunId,
       state: { not: 'cancelled' },
     },
@@ -969,7 +969,7 @@ function hasSubmittedExecution(order: RunOrderForExecution) {
 function serializeTreasuryWallet(address: TreasuryWallet) {
   return {
     treasuryWalletId: address.treasuryWalletId,
-    workspaceId: address.workspaceId,
+    organizationId: address.organizationId,
     chain: address.chain,
     address: address.address,
     assetScope: address.assetScope,
@@ -997,7 +997,7 @@ function buildCsvFingerprint(csv: string) {
 }
 
 async function findExistingImportedPaymentRun(args: {
-  workspaceId: string;
+  organizationId: string;
   importKey: string | null;
   csvFingerprint: string;
 }) {
@@ -1020,7 +1020,7 @@ async function findExistingImportedPaymentRun(args: {
 
   return prisma.paymentRun.findFirst({
     where: {
-      workspaceId: args.workspaceId,
+      organizationId: args.organizationId,
       inputSource: 'csv_import',
       state: { not: 'cancelled' },
       OR: metadataMatchers,

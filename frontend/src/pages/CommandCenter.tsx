@@ -57,53 +57,49 @@ type RecentRow =
     };
 
 export function CommandCenterPage({ session }: { session: AuthenticatedSession }) {
-  const { workspaceId } = useParams<{ workspaceId: string }>();
+  const { organizationId } = useParams<{ organizationId: string }>();
   const navigate = useNavigate();
-  const workspaceName = useMemo(() => {
-    for (const org of session.organizations) {
-      const ws = org.workspaces.find((w) => w.workspaceId === workspaceId);
-      if (ws) return ws.workspaceName;
-    }
-    return 'Workspace';
-  }, [session, workspaceId]);
+  const organizationName = useMemo(() => {
+    return session.organizations.find((org) => org.organizationId === organizationId)?.organizationName ?? 'Organization';
+  }, [session, organizationId]);
 
   const ordersQuery = useQuery({
-    queryKey: ['payment-orders', workspaceId] as const,
-    queryFn: () => api.listPaymentOrders(workspaceId!),
-    enabled: Boolean(workspaceId),
+    queryKey: ['payment-orders', organizationId] as const,
+    queryFn: () => api.listPaymentOrders(organizationId!),
+    enabled: Boolean(organizationId),
     refetchInterval: 10_000,
   });
   const runsQuery = useQuery({
-    queryKey: ['payment-runs', workspaceId] as const,
-    queryFn: () => api.listPaymentRuns(workspaceId!),
-    enabled: Boolean(workspaceId),
+    queryKey: ['payment-runs', organizationId] as const,
+    queryFn: () => api.listPaymentRuns(organizationId!),
+    enabled: Boolean(organizationId),
     refetchInterval: 10_000,
   });
   const exceptionsQuery = useQuery({
-    queryKey: ['exceptions', workspaceId] as const,
-    queryFn: () => api.listExceptions(workspaceId!),
-    enabled: Boolean(workspaceId),
+    queryKey: ['exceptions', organizationId] as const,
+    queryFn: () => api.listExceptions(organizationId!),
+    enabled: Boolean(organizationId),
     refetchInterval: 15_000,
   });
   const balancesQuery = useQuery({
-    queryKey: ['treasury-wallet-balances', workspaceId] as const,
-    queryFn: () => api.listTreasuryWalletBalances(workspaceId!),
-    enabled: Boolean(workspaceId),
+    queryKey: ['treasury-wallet-balances', organizationId] as const,
+    queryFn: () => api.listTreasuryWalletBalances(organizationId!),
+    enabled: Boolean(organizationId),
     refetchInterval: 15_000,
   });
   const destinationsQuery = useQuery({
-    queryKey: ['destinations', workspaceId] as const,
-    queryFn: () => api.listDestinations(workspaceId!),
-    enabled: Boolean(workspaceId),
+    queryKey: ['destinations', organizationId] as const,
+    queryFn: () => api.listDestinations(organizationId!),
+    enabled: Boolean(organizationId),
     refetchInterval: 30_000,
   });
 
-  if (!workspaceId) {
+  if (!organizationId) {
     return (
       <main className="page-frame">
         <div className="rd-state">
-          <h2 className="rd-state-title">Workspace unavailable</h2>
-          <p className="rd-state-body">Pick a workspace from the sidebar.</p>
+          <h2 className="rd-state-title">Organization unavailable</h2>
+          <p className="rd-state-body">Pick a organization from the sidebar.</p>
         </div>
       </main>
     );
@@ -163,7 +159,7 @@ export function CommandCenterPage({ session }: { session: AuthenticatedSession }
         tone: statusToneForPayment(o.derivedState),
         origin: 'single',
         createdAt: o.createdAt,
-        to: `/workspaces/${workspaceId}/payments/${o.paymentOrderId}`,
+        to: `/organizations/${organizationId}/payments/${o.paymentOrderId}`,
       })),
       ...runs.map<RecentRow>((r) => ({
         kind: 'run',
@@ -177,13 +173,13 @@ export function CommandCenterPage({ session }: { session: AuthenticatedSession }
         origin: 'run',
         originLabel: `Batch · ${r.totals.orderCount} rows`,
         createdAt: r.createdAt,
-        to: `/workspaces/${workspaceId}/runs/${r.paymentRunId}`,
+        to: `/organizations/${organizationId}/runs/${r.paymentRunId}`,
       })),
     ];
     return list
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
       .slice(0, 8);
-  }, [standaloneOrders, runs, workspaceId]);
+  }, [standaloneOrders, runs, organizationId]);
 
   const hasData = orders.length > 0 || runs.length > 0;
   const destinationCount = destinationsQuery.data?.items.length ?? 0;
@@ -211,8 +207,8 @@ export function CommandCenterPage({ session }: { session: AuthenticatedSession }
     <main className="page-frame">
       <header className="page-header">
         <div>
-          <p className="eyebrow">Workspace</p>
-          <h1>{workspaceName}</h1>
+          <p className="eyebrow">Organization</p>
+          <h1>{organizationName}</h1>
           <p>Deterministic financial workflow for crypto payments.</p>
         </div>
       </header>
@@ -296,7 +292,7 @@ export function CommandCenterPage({ session }: { session: AuthenticatedSession }
             <strong style={{ fontWeight: 600 }}>{openExceptions}</strong> open exception
             {openExceptions === 1 ? '' : 's'} — payments that didn't match expected settlement.{' '}
             <Link
-              to={`/workspaces/${workspaceId}/exceptions`}
+              to={`/organizations/${organizationId}/exceptions`}
               style={{ color: 'inherit', textDecoration: 'underline' }}
             >
               Review
@@ -309,9 +305,9 @@ export function CommandCenterPage({ session }: { session: AuthenticatedSession }
           <div className="rd-section-head">
             <div>
               <h2 className="rd-section-title">Recent activity</h2>
-              <p className="rd-section-sub">Latest payments and batches across this workspace.</p>
+              <p className="rd-section-sub">Latest payments and batches across this organization.</p>
             </div>
-            <Link to={`/workspaces/${workspaceId}/payments`} className="rd-btn rd-btn-ghost" style={{ minHeight: 32, padding: '6px 10px', fontSize: 12 }}>
+            <Link to={`/organizations/${organizationId}/payments`} className="rd-btn rd-btn-ghost" style={{ minHeight: 32, padding: '6px 10px', fontSize: 12 }}>
               View all
               <span className="rd-btn-arrow" aria-hidden>→</span>
             </Link>
@@ -329,7 +325,7 @@ export function CommandCenterPage({ session }: { session: AuthenticatedSession }
                 <p style={{ margin: '0 0 16px' }}>
                   Create a single payment or import a CSV to begin a workflow.
                 </p>
-                <Link to={`/workspaces/${workspaceId}/payments`} className="rd-btn rd-btn-primary">
+                <Link to={`/organizations/${organizationId}/payments`} className="rd-btn rd-btn-primary">
                   New payment
                 </Link>
               </div>

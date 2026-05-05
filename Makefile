@@ -26,7 +26,7 @@ infra-down:
 reset-data:
 	set -euo pipefail && \
 	docker compose up -d postgres clickhouse && \
-	docker compose exec -T postgres sh -lc "$(PSQL_QUIET) -U usdc_ops -d usdc_ops -c \"TRUNCATE TABLE auth_sessions, organization_memberships, collection_request_events, collection_requests, collection_runs, collection_sources, transfer_requests, treasury_wallets, workspaces, organizations, users RESTART IDENTITY CASCADE;\"" >/dev/null && \
+	docker compose exec -T postgres sh -lc "$(PSQL_QUIET) -U usdc_ops -d usdc_ops -c \"TRUNCATE TABLE auth_sessions, wallet_challenges, user_wallets, organization_memberships, collection_request_events, collection_requests, collection_runs, collection_sources, transfer_requests, treasury_wallets, organizations, users RESTART IDENTITY CASCADE;\"" >/dev/null && \
 	docker compose exec -T clickhouse sh -lc "clickhouse-client --multiquery -q \"TRUNCATE TABLE IF EXISTS usdc_ops.exceptions; TRUNCATE TABLE IF EXISTS usdc_ops.settlement_matches; TRUNCATE TABLE IF EXISTS usdc_ops.request_book_snapshots; TRUNCATE TABLE IF EXISTS usdc_ops.matcher_events; TRUNCATE TABLE IF EXISTS usdc_ops.observed_payments; TRUNCATE TABLE IF EXISTS usdc_ops.observed_transfers; TRUNCATE TABLE IF EXISTS usdc_ops.observed_transactions;\"" >/dev/null && \
 	echo "Application data cleared from Postgres and ClickHouse."
 
@@ -35,7 +35,7 @@ dev:
 	if [[ -f api/.env ]]; then set -a && source api/.env && set +a; fi && \
 	if [[ -f yellowstone/.env ]]; then set -a && source yellowstone/.env && set +a; fi && \
 	export DATABASE_URL="$${DATABASE_URL:-$(POSTGRES_URL)}" && \
-	export CONTROL_PLANE_API_URL="$${CONTROL_PLANE_API_URL:-https://api.decimal.finance}" && \
+	export CONTROL_PLANE_API_URL="http://127.0.0.1:3100" && \
 	export CLICKHOUSE_URL="$${CLICKHOUSE_URL:-http://127.0.0.1:8123}" && \
 	$(MAKE) sync-postgres-schema && \
 	docker compose up -d clickhouse && \
@@ -73,8 +73,9 @@ test: test-api test-worker test-frontend
 test-api:
 	set -euo pipefail && \
 	export DATABASE_URL="$${DATABASE_URL:-$(POSTGRES_URL)}" && \
-	docker compose up -d postgres && \
+	docker compose up -d postgres clickhouse && \
 	docker compose exec -T postgres sh -lc "$(PSQL_QUIET) -U usdc_ops -d usdc_ops -f /docker-entrypoint-initdb.d/001-control-plane.sql" >/dev/null && \
+	docker compose exec -T clickhouse sh -lc 'clickhouse-client --multiquery < /docker-entrypoint-initdb.d/001-bootstrap.sql >/dev/null && clickhouse-client --multiquery < /docker-entrypoint-initdb.d/002-schema.sql >/dev/null' && \
 	cd api && \
 	npm run prisma:generate >/dev/null && \
 	npm test

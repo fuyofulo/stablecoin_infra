@@ -1,5 +1,5 @@
 use crate::control_plane::{
-    WorkspaceRegistry, WorkspaceRegistryCache, WorkspaceTransferRequestMatch,
+    OrganizationRegistry, OrganizationRegistryCache, OrganizationTransferRequestMatch,
     run_matching_index_event_listener,
 };
 use crate::storage::{
@@ -106,7 +106,7 @@ pub struct YellowstoneWorker {
     endpoint: String,
     x_token: Option<String>,
     writer: ClickHouseWriter,
-    registry_cache: Arc<Mutex<WorkspaceRegistryCache>>,
+    registry_cache: Arc<Mutex<OrganizationRegistryCache>>,
     recent_signatures: tokio::sync::Mutex<RecentSignatureCache>,
     pending_materialized_observations: tokio::sync::Mutex<PendingMaterializedObservations>,
     latest_seen_slot: AtomicU64,
@@ -120,7 +120,7 @@ impl YellowstoneWorker {
         endpoint: String,
         x_token: Option<String>,
         writer: ClickHouseWriter,
-        registry_cache: WorkspaceRegistryCache,
+        registry_cache: OrganizationRegistryCache,
         debug_account_logs: bool,
         debug_stream_logs: bool,
         debug_parsed_updates: bool,
@@ -148,7 +148,7 @@ impl YellowstoneWorker {
         println!("Yellowstone Worker started! Connecting to {}...", endpoint);
 
         if let Err(error) = self.refresh_registry_if_stale().await {
-            eprintln!("Failed to load workspace registry on startup: {}", error);
+            eprintln!("Failed to load organization registry on startup: {}", error);
         }
         tokio::spawn(run_matching_index_event_listener(
             self.registry_cache.clone(),
@@ -533,7 +533,7 @@ impl YellowstoneWorker {
 
     async fn materialize_observed_settlement(
         &self,
-        registry: &WorkspaceRegistry,
+        registry: &OrganizationRegistry,
         context: &TransactionContext,
         worker_received_at: DateTime<Utc>,
         worker_state: &mut WorkerState,
@@ -669,17 +669,17 @@ impl YellowstoneWorker {
                         .map(|(transfer_id, _, _)| transfer_id.clone())
                 });
 
-            let destination_workspaces: HashSet<String> = destination_matches
+            let destination_organizations: HashSet<String> = destination_matches
                 .iter()
-                .map(|matched| matched.workspace_id.clone())
+                .map(|matched| matched.organization_id.clone())
                 .collect();
 
-            for workspace_id in &destination_workspaces {
+            for organization_id in &destination_organizations {
                 let pending_requests = registry
-                    .pending_requests_for_destination_wallet(workspace_id, &destination_wallet)
+                    .pending_requests_for_destination_wallet(organization_id, &destination_wallet)
                     .unwrap_or(&[]);
 
-                let windowed_requests: Vec<&WorkspaceTransferRequestMatch> = pending_requests
+                let windowed_requests: Vec<&OrganizationTransferRequestMatch> = pending_requests
                     .iter()
                     .filter(|request| {
                         is_within_match_window(request.requested_at, context.event_time)
@@ -742,7 +742,7 @@ impl YellowstoneWorker {
 
                 let observation_event = MatcherEventRow {
                     event_id: Uuid::new_v4().to_string(),
-                    workspace_id: workspace_id.clone(),
+                    organization_id: organization_id.clone(),
                     destination_address: destination_wallet.clone(),
                     transfer_request_id: None,
                     observed_transfer_id: representative_transfer_id.clone(),
@@ -782,7 +782,7 @@ impl YellowstoneWorker {
                     };
 
                     let snapshot_row = RequestBookSnapshotRow {
-                        workspace_id: workspace_id.clone(),
+                        organization_id: organization_id.clone(),
                         destination_address: destination_wallet.clone(),
                         transfer_request_id: request.transfer_request_id.clone(),
                         requested_at: request.requested_at,
@@ -813,7 +813,7 @@ impl YellowstoneWorker {
 
                     let allocation_event = MatcherEventRow {
                         event_id: Uuid::new_v4().to_string(),
-                        workspace_id: workspace_id.clone(),
+                        organization_id: organization_id.clone(),
                         destination_address: destination_wallet.clone(),
                         transfer_request_id: Some(request.transfer_request_id.clone()),
                         observed_transfer_id: representative_transfer_id.clone(),
@@ -845,7 +845,7 @@ impl YellowstoneWorker {
                     matcher_event_rows.push(allocation_event);
 
                     let settlement_match = SettlementMatchRow {
-                        workspace_id: workspace_id.clone(),
+                        organization_id: organization_id.clone(),
                         transfer_request_id: request.transfer_request_id.clone(),
                         signature: Some(context.signature.clone()),
                         observed_transfer_id: representative_transfer_id.clone(),
@@ -884,7 +884,7 @@ impl YellowstoneWorker {
 
                     if allocation.match_status == "matched_partial" {
                         exception_rows.push(ExceptionRow {
-                            workspace_id: workspace_id.clone(),
+                            organization_id: organization_id.clone(),
                             exception_id: request.transfer_request_id.clone(),
                             transfer_request_id: Some(request.transfer_request_id.clone()),
                             signature: Some(context.signature.clone()),
@@ -916,7 +916,7 @@ impl YellowstoneWorker {
                         });
                     } else if allocation.remaining_request_raw == 0 && allocation.fill_count > 1 {
                         exception_rows.push(ExceptionRow {
-                            workspace_id: workspace_id.clone(),
+                            organization_id: organization_id.clone(),
                             exception_id: request.transfer_request_id.clone(),
                             transfer_request_id: Some(request.transfer_request_id.clone()),
                             signature: Some(context.signature.clone()),
@@ -950,7 +950,7 @@ impl YellowstoneWorker {
 
                 if remaining_observation_raw > 0 {
                     let exception_row = ExceptionRow {
-                        workspace_id: workspace_id.clone(),
+                        organization_id: organization_id.clone(),
                         exception_id: Uuid::new_v4().to_string(),
                         transfer_request_id: None,
                         signature: Some(context.signature.clone()),
@@ -1099,7 +1099,7 @@ fn is_within_match_window(requested_at: DateTime<Utc>, observed_at: DateTime<Utc
 }
 
 fn request_matches_observed_source(
-    request: &WorkspaceTransferRequestMatch,
+    request: &OrganizationTransferRequestMatch,
     observed_source_wallet: Option<&str>,
 ) -> bool {
     if request.request_type != "collection_request" {
@@ -1113,14 +1113,14 @@ fn request_matches_observed_source(
 }
 
 fn select_requests_for_observation<'a>(
-    windowed_requests: &'a [&'a WorkspaceTransferRequestMatch],
+    windowed_requests: &'a [&'a OrganizationTransferRequestMatch],
     observed_signature: &str,
 ) -> (
-    Vec<&'a WorkspaceTransferRequestMatch>,
+    Vec<&'a OrganizationTransferRequestMatch>,
     &'static str,
     &'static str,
 ) {
-    let signature_requests: Vec<&WorkspaceTransferRequestMatch> = windowed_requests
+    let signature_requests: Vec<&OrganizationTransferRequestMatch> = windowed_requests
         .iter()
         .copied()
         .filter(|request| request.submitted_signature.as_deref() == Some(observed_signature))
@@ -1142,7 +1142,7 @@ fn select_requests_for_observation<'a>(
 }
 
 fn is_relevant_context(
-    registry: &WorkspaceRegistry,
+    registry: &OrganizationRegistry,
     context: &TransactionContext,
     observed_transfers: &[ObservedTransfer],
     observed_payments: &[ObservedPayment],
@@ -1231,8 +1231,8 @@ fn timestamp_to_utc(
 mod tests {
     use super::*;
     use crate::control_plane::{
-        WorkspacePaymentMatch, WorkspaceRegistry, WorkspaceRegistryCache,
-        WorkspaceTransferRequestMatch,
+        OrganizationPaymentMatch, OrganizationRegistry, OrganizationRegistryCache,
+        OrganizationTransferRequestMatch,
     };
     use crate::storage::ClickHouseWriter;
     use reqwest::Client;
@@ -1253,9 +1253,9 @@ mod tests {
     #[test]
     fn request_selection_prefers_submitted_signature_over_fifo_candidates() {
         let requested_at = Utc::now();
-        let fifo_request = WorkspaceTransferRequestMatch {
+        let fifo_request = OrganizationTransferRequestMatch {
             transfer_request_id: "fifo-request".to_string(),
-            workspace_id: "workspace-1".to_string(),
+            organization_id: "organization-1".to_string(),
             destination_wallet_address: "wallet-1".to_string(),
             amount_raw: 10_000,
             requested_at,
@@ -1263,9 +1263,9 @@ mod tests {
             expected_source_wallet_address: None,
             submitted_signature: None,
         };
-        let signature_request = WorkspaceTransferRequestMatch {
+        let signature_request = OrganizationTransferRequestMatch {
             transfer_request_id: "signature-request".to_string(),
-            workspace_id: "workspace-1".to_string(),
+            organization_id: "organization-1".to_string(),
             destination_wallet_address: "wallet-1".to_string(),
             amount_raw: 10_000,
             requested_at,
@@ -1289,9 +1289,9 @@ mod tests {
     #[test]
     fn request_selection_falls_back_to_fifo_when_no_submitted_signature_matches() {
         let requested_at = Utc::now();
-        let fifo_request = WorkspaceTransferRequestMatch {
+        let fifo_request = OrganizationTransferRequestMatch {
             transfer_request_id: "fifo-request".to_string(),
-            workspace_id: "workspace-1".to_string(),
+            organization_id: "organization-1".to_string(),
             destination_wallet_address: "wallet-1".to_string(),
             amount_raw: 10_000,
             requested_at,
@@ -1299,9 +1299,9 @@ mod tests {
             expected_source_wallet_address: None,
             submitted_signature: None,
         };
-        let other_signature_request = WorkspaceTransferRequestMatch {
+        let other_signature_request = OrganizationTransferRequestMatch {
             transfer_request_id: "other-signature-request".to_string(),
-            workspace_id: "workspace-1".to_string(),
+            organization_id: "organization-1".to_string(),
             destination_wallet_address: "wallet-1".to_string(),
             amount_raw: 10_000,
             requested_at,
@@ -1321,9 +1321,9 @@ mod tests {
     #[test]
     fn collection_requests_only_match_expected_payer_source_when_defined() {
         let requested_at = Utc::now();
-        let request = WorkspaceTransferRequestMatch {
+        let request = OrganizationTransferRequestMatch {
             transfer_request_id: "collection-request".to_string(),
-            workspace_id: "workspace-1".to_string(),
+            organization_id: "organization-1".to_string(),
             destination_wallet_address: "receiver-wallet".to_string(),
             amount_raw: 10_000,
             requested_at,
@@ -1341,9 +1341,9 @@ mod tests {
     fn relevance_gate_accepts_watched_destination_wallet() {
         let destination_wallet = Pubkey::new_unique();
         let destination_token_account = Pubkey::new_unique();
-        let workspace_id = Uuid::new_v4().to_string();
-        let registry = WorkspaceRegistry::from_matches(vec![WorkspacePaymentMatch {
-            workspace_id,
+        let organization_id = Uuid::new_v4().to_string();
+        let registry = OrganizationRegistry::from_matches(vec![OrganizationPaymentMatch {
+            organization_id,
             wallet_address: destination_wallet.to_string(),
         }]);
 
@@ -1378,7 +1378,7 @@ mod tests {
     fn relevance_gate_rejects_unwatched_usdc_transfer() {
         let destination_wallet = Pubkey::new_unique();
         let destination_token_account = Pubkey::new_unique();
-        let registry = WorkspaceRegistry::default();
+        let registry = OrganizationRegistry::default();
 
         let update = make_usdc_transaction_update(
             23,
@@ -1418,17 +1418,17 @@ mod tests {
 
         let wallet = Pubkey::new_unique();
         let token_account = Pubkey::new_unique();
-        let workspace_id = Uuid::new_v4().to_string();
+        let organization_id = Uuid::new_v4().to_string();
         let transfer_request_id = Uuid::new_v4().to_string();
 
-        let registry = WorkspaceRegistry::with_transfer_requests(
-            vec![WorkspacePaymentMatch {
-                workspace_id: workspace_id.clone(),
+        let registry = OrganizationRegistry::with_transfer_requests(
+            vec![OrganizationPaymentMatch {
+                organization_id: organization_id.clone(),
                 wallet_address: wallet.to_string(),
             }],
-            vec![WorkspaceTransferRequestMatch {
+            vec![OrganizationTransferRequestMatch {
                 transfer_request_id: transfer_request_id.clone(),
-                workspace_id: workspace_id.clone(),
+                organization_id: organization_id.clone(),
                 destination_wallet_address: wallet.to_string(),
                 amount_raw: 50_000_000,
                 requested_at: Utc::now(),
@@ -1513,10 +1513,10 @@ mod tests {
 
         let wallet = Pubkey::new_unique();
         let token_account = Pubkey::new_unique();
-        let workspace_id = Uuid::new_v4().to_string();
+        let organization_id = Uuid::new_v4().to_string();
 
-        let registry = WorkspaceRegistry::from_matches(vec![WorkspacePaymentMatch {
-            workspace_id: workspace_id.clone(),
+        let registry = OrganizationRegistry::from_matches(vec![OrganizationPaymentMatch {
+            organization_id: organization_id.clone(),
             wallet_address: wallet.to_string(),
         }]);
 
@@ -1568,17 +1568,17 @@ mod tests {
         let source_token_account = Pubkey::new_unique();
         let destination_wallet = Pubkey::new_unique();
         let destination_token_account = Pubkey::new_unique();
-        let workspace_id = Uuid::new_v4().to_string();
+        let organization_id = Uuid::new_v4().to_string();
         let transfer_request_id = Uuid::new_v4().to_string();
 
-        let registry = WorkspaceRegistry::with_transfer_requests(
-            vec![WorkspacePaymentMatch {
-                workspace_id: workspace_id.clone(),
+        let registry = OrganizationRegistry::with_transfer_requests(
+            vec![OrganizationPaymentMatch {
+                organization_id: organization_id.clone(),
                 wallet_address: destination_wallet.to_string(),
             }],
-            vec![WorkspaceTransferRequestMatch {
+            vec![OrganizationTransferRequestMatch {
                 transfer_request_id: transfer_request_id.clone(),
-                workspace_id: workspace_id.clone(),
+                organization_id: organization_id.clone(),
                 destination_wallet_address: destination_wallet.to_string(),
                 amount_raw: 10_000,
                 requested_at: Utc::now(),
@@ -1706,7 +1706,7 @@ mod tests {
             .unwrap_or(false)
     }
 
-    fn test_worker(registry: WorkspaceRegistry) -> YellowstoneWorker {
+    fn test_worker(registry: OrganizationRegistry) -> YellowstoneWorker {
         YellowstoneWorker::new(
             "http://127.0.0.1:0".to_string(),
             None,
@@ -1717,7 +1717,7 @@ mod tests {
                 "default".to_string(),
                 String::new(),
             ),
-            WorkspaceRegistryCache::with_registry(registry),
+            OrganizationRegistryCache::with_registry(registry),
             false,
             false,
             false,
@@ -1878,9 +1878,9 @@ mod tests {
         let destination_wallet = Pubkey::new_unique();
         let destination_token_account = Pubkey::new_unique();
 
-        let worker = test_worker(WorkspaceRegistry::from_matches(vec![
-            WorkspacePaymentMatch {
-                workspace_id: Uuid::new_v4().to_string(),
+        let worker = test_worker(OrganizationRegistry::from_matches(vec![
+            OrganizationPaymentMatch {
+                organization_id: Uuid::new_v4().to_string(),
                 wallet_address: destination_wallet.to_string(),
             },
         ]));

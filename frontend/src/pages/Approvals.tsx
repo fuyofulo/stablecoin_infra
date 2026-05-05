@@ -37,7 +37,7 @@ function sumRaw(orders: PaymentOrder[]): string {
 }
 
 export function ApprovalsPage({ session: _session }: { session: AuthenticatedSession }) {
-  const { workspaceId } = useParams<{ workspaceId: string }>();
+  const { organizationId } = useParams<{ organizationId: string }>();
   const location = useLocation();
   const queryClient = useQueryClient();
   const { success, error: toastError } = useToast();
@@ -50,21 +50,21 @@ export function ApprovalsPage({ session: _session }: { session: AuthenticatedSes
   }, [location.search]);
 
   const ordersQuery = useQuery({
-    queryKey: ['payment-orders', workspaceId] as const,
-    queryFn: () => api.listPaymentOrders(workspaceId!),
-    enabled: Boolean(workspaceId),
+    queryKey: ['payment-orders', organizationId] as const,
+    queryFn: () => api.listPaymentOrders(organizationId!),
+    enabled: Boolean(organizationId),
     refetchInterval: 5_000,
   });
   const runsQuery = useQuery({
-    queryKey: ['payment-runs', workspaceId] as const,
-    queryFn: () => api.listPaymentRuns(workspaceId!),
-    enabled: Boolean(workspaceId),
+    queryKey: ['payment-runs', organizationId] as const,
+    queryFn: () => api.listPaymentRuns(organizationId!),
+    enabled: Boolean(organizationId),
     refetchInterval: 5_000,
   });
   const batchRunQuery = useQuery({
-    queryKey: ['payment-run', workspaceId, runIdFilter] as const,
-    queryFn: () => api.getPaymentRunDetail(workspaceId!, runIdFilter!),
-    enabled: Boolean(workspaceId && runIdFilter),
+    queryKey: ['payment-run', organizationId, runIdFilter] as const,
+    queryFn: () => api.getPaymentRunDetail(organizationId!, runIdFilter!),
+    enabled: Boolean(organizationId && runIdFilter),
   });
 
   const singleDecisionMutation = useMutation({
@@ -72,11 +72,11 @@ export function ApprovalsPage({ session: _session }: { session: AuthenticatedSes
       if (!order.transferRequestId) {
         throw new Error('This payment has no linked approval request yet.');
       }
-      return api.createApprovalDecision(workspaceId!, order.transferRequestId, { action });
+      return api.createApprovalDecision(organizationId!, order.transferRequestId, { action });
     },
     onSuccess: async (_result, vars) => {
       success(`Marked ${shortenAddress(vars.order.paymentOrderId, 4, 4)} as ${vars.action === 'approve' ? 'approved' : 'rejected'}.`);
-      await queryClient.invalidateQueries({ queryKey: ['payment-orders', workspaceId] });
+      await queryClient.invalidateQueries({ queryKey: ['payment-orders', organizationId] });
     },
     onError: (err) => toastError(err instanceof Error ? err.message : 'Could not record decision.'),
   });
@@ -86,7 +86,7 @@ export function ApprovalsPage({ session: _session }: { session: AuthenticatedSes
       const pending = orders.filter((o) => o.derivedState === 'pending_approval' && o.transferRequestId);
       const results = await Promise.allSettled(
         pending.map((o) =>
-          api.createApprovalDecision(workspaceId!, o.transferRequestId!, { action }),
+          api.createApprovalDecision(organizationId!, o.transferRequestId!, { action }),
         ),
       );
       const done = results.filter((r) => r.status === 'fulfilled').length;
@@ -101,17 +101,17 @@ export function ApprovalsPage({ session: _session }: { session: AuthenticatedSes
       } else {
         success(`${action === 'approve' ? 'Approved' : 'Rejected'} ${done} payment${done === 1 ? '' : 's'}.`);
       }
-      await queryClient.invalidateQueries({ queryKey: ['payment-orders', workspaceId] });
+      await queryClient.invalidateQueries({ queryKey: ['payment-orders', organizationId] });
     },
     onError: (err) => toastError(err instanceof Error ? err.message : 'Could not record decisions.'),
   });
 
-  if (!workspaceId) {
+  if (!organizationId) {
     return (
       <main className="page-frame">
         <div className="rd-state">
-          <h2 className="rd-state-title">Workspace unavailable</h2>
-          <p className="rd-state-body">Pick a workspace from the sidebar.</p>
+          <h2 className="rd-state-title">Organization unavailable</h2>
+          <p className="rd-state-body">Pick a organization from the sidebar.</p>
         </div>
       </main>
     );
@@ -254,14 +254,14 @@ export function ApprovalsPage({ session: _session }: { session: AuthenticatedSes
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
             <Link
-              to={`/workspaces/${workspaceId}/runs/${runIdFilter}`}
+              to={`/organizations/${organizationId}/runs/${runIdFilter}`}
               className="rd-btn rd-btn-secondary"
               style={{ textDecoration: 'none' }}
             >
               ← Back to run
             </Link>
             <Link
-              to={`/workspaces/${workspaceId}/approvals`}
+              to={`/organizations/${organizationId}/approvals`}
               className="rd-btn rd-btn-ghost"
               style={{ textDecoration: 'none' }}
             >
@@ -340,7 +340,7 @@ export function ApprovalsPage({ session: _session }: { session: AuthenticatedSes
                     return (
                       <PendingRunRows
                         key={group.key}
-                        workspaceId={workspaceId}
+                        organizationId={organizationId}
                         group={group}
                         expanded={expanded}
                         busy={busy}
@@ -370,7 +370,7 @@ export function ApprovalsPage({ session: _session }: { session: AuthenticatedSes
                       <td>
                         <div className="rd-recipient-main">
                           <Link
-                            to={`/workspaces/${workspaceId}/payments/${order.paymentOrderId}#approval`}
+                            to={`/organizations/${organizationId}/payments/${order.paymentOrderId}#approval`}
                             style={{
                               color: 'var(--ax-text)',
                               textDecoration: 'none',
@@ -453,7 +453,7 @@ export function ApprovalsPage({ session: _session }: { session: AuthenticatedSes
                     return (
                       <HistoryRunRows
                         key={group.key}
-                        workspaceId={workspaceId}
+                        organizationId={organizationId}
                         group={group}
                         expanded={expanded}
                         onToggle={() =>
@@ -467,7 +467,7 @@ export function ApprovalsPage({ session: _session }: { session: AuthenticatedSes
                   return (
                     <HistorySingleRow
                       key={group.key}
-                      workspaceId={workspaceId}
+                      organizationId={organizationId}
                       entry={group.entry}
                     />
                   );
@@ -482,7 +482,7 @@ export function ApprovalsPage({ session: _session }: { session: AuthenticatedSes
 }
 
 function PendingRunRows(props: {
-  workspaceId: string;
+  organizationId: string;
   group: Extract<PendingGroup, { kind: 'run' }>;
   expanded: boolean;
   busy: boolean;
@@ -493,7 +493,7 @@ function PendingRunRows(props: {
   onRejectOne: (order: PaymentOrder) => void;
 }) {
   const {
-    workspaceId,
+    organizationId,
     group,
     expanded,
     busy,
@@ -563,7 +563,7 @@ function PendingRunRows(props: {
                   </span>
                   <div className="rd-recipient-main">
                     <Link
-                      to={`/workspaces/${workspaceId}/payments/${order.paymentOrderId}#approval`}
+                      to={`/organizations/${organizationId}/payments/${order.paymentOrderId}#approval`}
                       style={{
                         color: 'var(--ax-text)',
                         textDecoration: 'none',
@@ -611,12 +611,12 @@ function PendingRunRows(props: {
 }
 
 function HistoryRunRows(props: {
-  workspaceId: string;
+  organizationId: string;
   group: Extract<HistoryGroup, { kind: 'run' }>;
   expanded: boolean;
   onToggle: () => void;
 }) {
-  const { workspaceId, group, expanded, onToggle } = props;
+  const { organizationId, group, expanded, onToggle } = props;
   const { run, entries } = group;
   const approved = entries.filter((e) => e.decision.action === 'approve').length;
   const rejected = entries.filter((e) => e.decision.action === 'reject').length;
@@ -655,7 +655,7 @@ function HistoryRunRows(props: {
             <Chevron expanded={expanded} />
             <div className="rd-recipient-main">
               <Link
-                to={`/workspaces/${workspaceId}/runs/${run.paymentRunId}`}
+                to={`/organizations/${organizationId}/runs/${run.paymentRunId}`}
                 onClick={(e) => e.stopPropagation()}
                 style={{ color: 'var(--ax-text)', textDecoration: 'none', fontWeight: 500 }}
               >
@@ -715,7 +715,7 @@ function HistoryRunRows(props: {
                     </span>
                     <div className="rd-recipient-main">
                       <Link
-                        to={`/workspaces/${workspaceId}/payments/${order.paymentOrderId}#approval`}
+                        to={`/organizations/${organizationId}/payments/${order.paymentOrderId}#approval`}
                         style={{
                           color: 'var(--ax-text)',
                           textDecoration: 'none',
@@ -762,7 +762,7 @@ function HistoryRunRows(props: {
   );
 }
 
-function HistorySingleRow({ workspaceId, entry }: { workspaceId: string; entry: DecisionEntry }) {
+function HistorySingleRow({ organizationId, entry }: { organizationId: string; entry: DecisionEntry }) {
   const { order, decision } = entry;
   const tone =
     decision.action === 'approve'
@@ -775,7 +775,7 @@ function HistorySingleRow({ workspaceId, entry }: { workspaceId: string; entry: 
       <td>
         <div className="rd-recipient-main">
           <Link
-            to={`/workspaces/${workspaceId}/payments/${order.paymentOrderId}#approval`}
+            to={`/organizations/${organizationId}/payments/${order.paymentOrderId}#approval`}
             style={{ color: 'var(--ax-text)', textDecoration: 'none', fontWeight: 500 }}
           >
             {order.counterparty?.displayName ?? order.destination.label}

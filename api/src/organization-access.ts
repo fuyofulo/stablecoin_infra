@@ -51,33 +51,6 @@ export async function assertOrganizationAdmin(organizationId: string, actor: Acc
   return result;
 }
 
-export async function assertWorkspaceAccess(workspaceId: string, actor: AccessActor) {
-  const workspace = await prisma.workspace.findUnique({
-    where: { workspaceId },
-  });
-
-  if (!workspace) {
-    throw new Error('Workspace not found');
-  }
-
-  const { membership } = await assertOrganizationAccess(workspace.organizationId, actor);
-
-  return {
-    workspace,
-    membership,
-  };
-}
-
-export async function assertWorkspaceAdmin(workspaceId: string, actor: AccessActor) {
-  const result = await assertWorkspaceAccess(workspaceId, actor);
-
-  if (!canMutateWithRole(result.membership.role, actor)) {
-    throw new Error('Admin access required');
-  }
-
-  return result;
-}
-
 export function isAdminRole(role: string | null | undefined) {
   return Boolean(role && ADMIN_ROLES.has(role));
 }
@@ -86,7 +59,7 @@ function getUserId(actor: AccessActor) {
   return typeof actor === 'string' ? actor : actor.userId;
 }
 
-function canMutateWithRole(role: string | null | undefined, actor: AccessActor) {
+function canMutateWithRole(role: string | null | undefined, _actor: AccessActor) {
   if (!role) {
     return false;
   }

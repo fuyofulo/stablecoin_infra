@@ -8,20 +8,20 @@ import {
   updateCounterparty,
   updateDestination,
 } from '../destinations.js';
-import { assertWorkspaceAccess, assertWorkspaceAdmin } from '../workspace-access.js';
+import { assertOrganizationAccess, assertOrganizationAdmin } from '../organization-access.js';
 import { asyncRoute, listQuerySchema, sendCreated, sendList, sendJson, unwrapItems } from '../route-helpers.js';
 
 export const destinationsRouter = Router();
 
-const workspaceParamsSchema = z.object({
-  workspaceId: z.string().uuid(),
+const organizationParamsSchema = z.object({
+  organizationId: z.string().uuid(),
 });
 
-const destinationParamsSchema = workspaceParamsSchema.extend({
+const destinationParamsSchema = organizationParamsSchema.extend({
   destinationId: z.string().uuid(),
 });
 
-const counterpartyParamsSchema = workspaceParamsSchema.extend({
+const counterpartyParamsSchema = organizationParamsSchema.extend({
   counterpartyId: z.string().uuid(),
 });
 
@@ -96,44 +96,44 @@ const updateDestinationSchema = z.object({
   'At least one field must be updated',
 );
 
-destinationsRouter.get('/workspaces/:workspaceId/counterparties', asyncRoute(async (req, res) => {
-  const { workspaceId } = workspaceParamsSchema.parse(req.params);
+destinationsRouter.get('/organizations/:organizationId/counterparties', asyncRoute(async (req, res) => {
+  const { organizationId } = organizationParamsSchema.parse(req.params);
   const query = listAddressBookQuerySchema.parse(req.query);
-  await assertWorkspaceAccess(workspaceId, req.auth!);
-  sendList(res, unwrapItems(await listCounterparties(workspaceId, query)), { limit: query.limit });
+  await assertOrganizationAccess(organizationId, req.auth!);
+  sendList(res, unwrapItems(await listCounterparties(organizationId, query)), { limit: query.limit });
 }));
 
-destinationsRouter.post('/workspaces/:workspaceId/counterparties', asyncRoute(async (req, res) => {
-  const { workspaceId } = workspaceParamsSchema.parse(req.params);
-  await assertWorkspaceAdmin(workspaceId, req.auth!);
+destinationsRouter.post('/organizations/:organizationId/counterparties', asyncRoute(async (req, res) => {
+  const { organizationId } = organizationParamsSchema.parse(req.params);
+  await assertOrganizationAdmin(organizationId, req.auth!);
   const input = createCounterpartySchema.parse(req.body);
-  sendCreated(res, await createCounterparty(workspaceId, input));
+  sendCreated(res, await createCounterparty(organizationId, input));
 }));
 
-destinationsRouter.patch('/workspaces/:workspaceId/counterparties/:counterpartyId', asyncRoute(async (req, res) => {
-  const { workspaceId, counterpartyId } = counterpartyParamsSchema.parse(req.params);
-  await assertWorkspaceAdmin(workspaceId, req.auth!);
+destinationsRouter.patch('/organizations/:organizationId/counterparties/:counterpartyId', asyncRoute(async (req, res) => {
+  const { organizationId, counterpartyId } = counterpartyParamsSchema.parse(req.params);
+  await assertOrganizationAdmin(organizationId, req.auth!);
   const input = updateCounterpartySchema.parse(req.body);
-  sendJson(res, await updateCounterparty(workspaceId, counterpartyId, input));
+  sendJson(res, await updateCounterparty(organizationId, counterpartyId, input));
 }));
 
-destinationsRouter.get('/workspaces/:workspaceId/destinations', asyncRoute(async (req, res) => {
-  const { workspaceId } = workspaceParamsSchema.parse(req.params);
+destinationsRouter.get('/organizations/:organizationId/destinations', asyncRoute(async (req, res) => {
+  const { organizationId } = organizationParamsSchema.parse(req.params);
   const query = listAddressBookQuerySchema.parse(req.query);
-  await assertWorkspaceAccess(workspaceId, req.auth!);
-  sendList(res, unwrapItems(await listDestinations(workspaceId, query)), { limit: query.limit });
+  await assertOrganizationAccess(organizationId, req.auth!);
+  sendList(res, unwrapItems(await listDestinations(organizationId, query)), { limit: query.limit });
 }));
 
-destinationsRouter.post('/workspaces/:workspaceId/destinations', asyncRoute(async (req, res) => {
-  const { workspaceId } = workspaceParamsSchema.parse(req.params);
-  await assertWorkspaceAdmin(workspaceId, req.auth!);
+destinationsRouter.post('/organizations/:organizationId/destinations', asyncRoute(async (req, res) => {
+  const { organizationId } = organizationParamsSchema.parse(req.params);
+  await assertOrganizationAdmin(organizationId, req.auth!);
   const input = createDestinationSchema.parse(req.body);
-  sendCreated(res, await createDestination(workspaceId, input));
+  sendCreated(res, await createDestination(organizationId, input));
 }));
 
-destinationsRouter.patch('/workspaces/:workspaceId/destinations/:destinationId', asyncRoute(async (req, res) => {
-    const { workspaceId, destinationId } = destinationParamsSchema.parse(req.params);
-    await assertWorkspaceAdmin(workspaceId, req.auth!);
+destinationsRouter.patch('/organizations/:organizationId/destinations/:destinationId', asyncRoute(async (req, res) => {
+    const { organizationId, destinationId } = destinationParamsSchema.parse(req.params);
+    await assertOrganizationAdmin(organizationId, req.auth!);
     const input = updateDestinationSchema.parse(req.body);
-    sendJson(res, await updateDestination(workspaceId, destinationId, input));
+    sendJson(res, await updateDestination(organizationId, destinationId, input));
 }));

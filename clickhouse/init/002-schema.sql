@@ -75,9 +75,6 @@ ALTER TABLE observed_transfers
     DROP PROJECTION IF EXISTS prj_ot_by_destination_token_account;
 
 ALTER TABLE observed_transfers
-    DROP COLUMN IF EXISTS workspace_id;
-
-ALTER TABLE observed_transfers
     ADD COLUMN IF NOT EXISTS instruction_index Nullable(UInt32) AFTER transfer_kind;
 
 ALTER TABLE observed_transfers
@@ -118,7 +115,7 @@ ORDER BY (event_time, signature, payment_id);
 CREATE TABLE IF NOT EXISTS matcher_events
 (
     event_id UUID,
-    workspace_id UUID,
+    organization_id UUID,
     destination_address String,
     transfer_request_id Nullable(UUID),
     observed_transfer_id Nullable(UUID),
@@ -134,7 +131,13 @@ CREATE TABLE IF NOT EXISTS matcher_events
 )
 ENGINE = MergeTree
 PARTITION BY toYYYYMM(event_time)
-ORDER BY (workspace_id, destination_address, event_time, event_id);
+ORDER BY (organization_id, destination_address, event_time, event_id);
+
+-- Legacy workspace-scoped installs cannot have ORDER BY keys changed in place.
+-- Keep sync non-destructive: add organization_id for new writes and leave old
+-- workspace_id columns/data intact until an explicit offline migration is run.
+ALTER TABLE matcher_events
+    ADD COLUMN IF NOT EXISTS organization_id UUID AFTER event_id;
 
 ALTER TABLE matcher_events
     RENAME COLUMN IF EXISTS observed_movement_id TO observed_transfer_id;
@@ -144,7 +147,7 @@ ALTER TABLE matcher_events
 
 CREATE TABLE IF NOT EXISTS request_book_snapshots
 (
-    workspace_id UUID,
+    organization_id UUID,
     destination_address String,
     transfer_request_id UUID,
     requested_at DateTime64(3, 'UTC'),
@@ -161,7 +164,10 @@ CREATE TABLE IF NOT EXISTS request_book_snapshots
 )
 ENGINE = ReplacingMergeTree(updated_at)
 PARTITION BY toYYYYMM(updated_at)
-ORDER BY (workspace_id, destination_address, transfer_request_id);
+ORDER BY (organization_id, destination_address, transfer_request_id);
+
+ALTER TABLE request_book_snapshots
+    ADD COLUMN IF NOT EXISTS organization_id UUID FIRST;
 
 ALTER TABLE request_book_snapshots
     RENAME COLUMN IF EXISTS last_observed_movement_id TO last_observed_transfer_id;
@@ -174,7 +180,7 @@ ALTER TABLE request_book_snapshots
 
 CREATE TABLE IF NOT EXISTS settlement_matches
 (
-    workspace_id UUID,
+    organization_id UUID,
     transfer_request_id UUID,
     signature Nullable(String),
     observed_transfer_id Nullable(UUID),
@@ -194,7 +200,10 @@ CREATE TABLE IF NOT EXISTS settlement_matches
 )
 ENGINE = ReplacingMergeTree(updated_at)
 PARTITION BY toYYYYMM(updated_at)
-ORDER BY (workspace_id, transfer_request_id);
+ORDER BY (organization_id, transfer_request_id);
+
+ALTER TABLE settlement_matches
+    ADD COLUMN IF NOT EXISTS organization_id UUID FIRST;
 
 ALTER TABLE settlement_matches
     RENAME COLUMN IF EXISTS observed_movement_id TO observed_transfer_id;
@@ -210,7 +219,7 @@ ALTER TABLE settlement_matches
 
 CREATE TABLE IF NOT EXISTS exceptions
 (
-    workspace_id UUID,
+    organization_id UUID,
     exception_id UUID,
     transfer_request_id Nullable(UUID),
     signature Nullable(String),
@@ -227,7 +236,10 @@ CREATE TABLE IF NOT EXISTS exceptions
 )
 ENGINE = ReplacingMergeTree(updated_at)
 PARTITION BY toYYYYMM(updated_at)
-ORDER BY (workspace_id, exception_id);
+ORDER BY (organization_id, exception_id);
+
+ALTER TABLE exceptions
+    ADD COLUMN IF NOT EXISTS organization_id UUID FIRST;
 
 ALTER TABLE exceptions
     RENAME COLUMN IF EXISTS observed_movement_id TO observed_transfer_id;

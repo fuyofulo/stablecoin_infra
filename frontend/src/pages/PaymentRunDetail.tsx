@@ -209,7 +209,7 @@ function useOutsideClick<T extends HTMLElement>(handler: () => void) {
 }
 
 export function PaymentRunDetailPage() {
-  const { workspaceId, paymentRunId } = useParams<{ workspaceId: string; paymentRunId: string }>();
+  const { organizationId, paymentRunId } = useParams<{ organizationId: string; paymentRunId: string }>();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
 
@@ -225,16 +225,16 @@ export function PaymentRunDetailPage() {
   useEffect(() => setPrepared(null), [selectedSourceAddressId]);
 
   const addressesQuery = useQuery({
-    queryKey: ['addresses', workspaceId] as const,
-    queryFn: () => api.listTreasuryWallets(workspaceId!),
-    enabled: Boolean(workspaceId),
+    queryKey: ['addresses', organizationId] as const,
+    queryFn: () => api.listTreasuryWallets(organizationId!),
+    enabled: Boolean(organizationId),
     refetchInterval: 30_000,
   });
 
   const runQuery = useQuery({
-    queryKey: ['payment-run', workspaceId, paymentRunId] as const,
-    queryFn: () => api.getPaymentRunDetail(workspaceId!, paymentRunId!),
-    enabled: Boolean(workspaceId && paymentRunId),
+    queryKey: ['payment-run', organizationId, paymentRunId] as const,
+    queryFn: () => api.getPaymentRunDetail(organizationId!, paymentRunId!),
+    enabled: Boolean(organizationId && paymentRunId),
     refetchInterval: (query) => {
       if (typeof document !== 'undefined' && document.hidden) return false;
       const s = query.state.data?.derivedState;
@@ -256,7 +256,7 @@ export function PaymentRunDetailPage() {
       const drafts = orders.filter((o) => o.derivedState === 'draft');
       if (drafts.length === 0) return { routed: 0, failed: 0 };
       const results = await Promise.allSettled(
-        drafts.map((o) => api.submitPaymentOrder(workspaceId!, o.paymentOrderId)),
+        drafts.map((o) => api.submitPaymentOrder(organizationId!, o.paymentOrderId)),
       );
       const routed = results.filter((r) => r.status === 'fulfilled').length;
       const failed = drafts.length - routed;
@@ -268,8 +268,8 @@ export function PaymentRunDetailPage() {
           `Routed ${routed} payment${routed === 1 ? '' : 's'} for approval. ${failed} failed to route.`,
         );
       }
-      await queryClient.invalidateQueries({ queryKey: ['payment-run', workspaceId, paymentRunId] });
-      navigate(`/workspaces/${workspaceId}/approvals?runId=${paymentRunId}`);
+      await queryClient.invalidateQueries({ queryKey: ['payment-run', organizationId, paymentRunId] });
+      navigate(`/organizations/${organizationId}/approvals?runId=${paymentRunId}`);
     },
     onError: (err) => toastError(err instanceof Error ? err.message : 'Could not route payments for approval.'),
   });
@@ -279,17 +279,17 @@ export function PaymentRunDetailPage() {
       const orders = runQuery.data?.paymentOrders ?? [];
       const drafts = orders.filter((o) => o.derivedState === 'draft');
       const submitResults = await Promise.allSettled(
-        drafts.map((o) => api.submitPaymentOrder(workspaceId!, o.paymentOrderId)),
+        drafts.map((o) => api.submitPaymentOrder(organizationId!, o.paymentOrderId)),
       );
       const routedDrafts = submitResults.filter((r) => r.status === 'fulfilled').length;
       const draftFailures = drafts.length - routedDrafts;
-      const refreshedRun = await api.getPaymentRunDetail(workspaceId!, paymentRunId!);
+      const refreshedRun = await api.getPaymentRunDetail(organizationId!, paymentRunId!);
       const pending = (refreshedRun.paymentOrders ?? []).filter(
         (o) => o.derivedState === 'pending_approval' && Boolean(o.transferRequestId),
       );
       const approveResults = await Promise.allSettled(
         pending.map((o) =>
-          api.createApprovalDecision(workspaceId!, o.transferRequestId!, { action: 'approve' }),
+          api.createApprovalDecision(organizationId!, o.transferRequestId!, { action: 'approve' }),
         ),
       );
       const approved = approveResults.filter((r) => r.status === 'fulfilled').length;
@@ -305,7 +305,7 @@ export function PaymentRunDetailPage() {
       } else {
         success(`Approved ${advanced} payment${advanced === 1 ? '' : 's'}.`);
       }
-      await queryClient.invalidateQueries({ queryKey: ['payment-run', workspaceId, paymentRunId] });
+      await queryClient.invalidateQueries({ queryKey: ['payment-run', organizationId, paymentRunId] });
     },
     onError: (err) => toastError(err instanceof Error ? err.message : 'Could not approve payments.'),
   });
@@ -323,14 +323,14 @@ export function PaymentRunDetailPage() {
         || preparation.paymentRun.sourceTreasuryWalletId !== effectiveSourceAddressId
         || preparation.executionPacket.signerWallet !== sourceAddressRow.address;
       if (sourceMismatch) {
-        preparation = await api.preparePaymentRunExecution(workspaceId!, paymentRunId!, {
+        preparation = await api.preparePaymentRunExecution(organizationId!, paymentRunId!, {
           sourceTreasuryWalletId: effectiveSourceAddressId,
         });
         setPrepared(preparation);
       }
       if (!preparation) throw new Error('Could not prepare the execution packet. Try again.');
       const signature = await signAndSubmitPreparedPayment(preparation.executionPacket, selectedWalletId);
-      await api.attachPaymentRunSignature(workspaceId!, paymentRunId!, {
+      await api.attachPaymentRunSignature(organizationId!, paymentRunId!, {
         submittedSignature: signature,
         submittedAt: new Date().toISOString(),
       });
@@ -338,8 +338,8 @@ export function PaymentRunDetailPage() {
     },
     onSuccess: async (signature) => {
       success(`Signed and submitted · ${shortenAddress(signature, 8, 8)}`);
-      await queryClient.invalidateQueries({ queryKey: ['payment-run', workspaceId, paymentRunId] });
-      await queryClient.invalidateQueries({ queryKey: ['payment-orders', workspaceId] });
+      await queryClient.invalidateQueries({ queryKey: ['payment-run', organizationId, paymentRunId] });
+      await queryClient.invalidateQueries({ queryKey: ['payment-orders', organizationId] });
     },
     onError: (err) => {
       const message = err instanceof Error ? err.message : 'Could not sign the batch.';
@@ -352,7 +352,7 @@ export function PaymentRunDetailPage() {
   });
 
   const proofMutation = useMutation({
-    mutationFn: () => api.getPaymentRunProof(workspaceId!, paymentRunId!),
+    mutationFn: () => api.getPaymentRunProof(organizationId!, paymentRunId!),
     onSuccess: (proof) => {
       downloadJson(`payment-run-proof-${paymentRunId}.json`, proof);
       success('Proof packet downloaded.');
@@ -361,17 +361,17 @@ export function PaymentRunDetailPage() {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: () => api.deletePaymentRun(workspaceId!, paymentRunId!),
+    mutationFn: () => api.deletePaymentRun(organizationId!, paymentRunId!),
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ['payment-runs', workspaceId] });
-      navigate(`/workspaces/${workspaceId}/runs`);
+      await queryClient.invalidateQueries({ queryKey: ['payment-runs', organizationId] });
+      navigate(`/organizations/${organizationId}/runs`);
     },
     onError: (err) => toastError(err instanceof Error ? err.message : 'Could not delete run.'),
   });
 
   const menuRef = useOutsideClick<HTMLDivElement>(() => setMenuOpen(false));
 
-  if (!workspaceId || !paymentRunId) {
+  if (!organizationId || !paymentRunId) {
     return (
       <main className="page-frame" data-layout="rd">
         <div className="rd-container">
@@ -402,7 +402,7 @@ export function PaymentRunDetailPage() {
     return (
       <main className="page-frame" data-layout="rd">
         <div className="rd-container">
-          <Link to={`/workspaces/${workspaceId}/runs`} className="rd-back">
+          <Link to={`/organizations/${organizationId}/runs`} className="rd-back">
             <span className="rd-back-arrow">←</span>
             <span>Payment runs</span>
           </Link>
@@ -450,7 +450,7 @@ export function PaymentRunDetailPage() {
   return (
     <main className="page-frame" data-layout="rd">
       <div className="rd-container">
-        <Link to={`/workspaces/${workspaceId}/runs`} className="rd-back">
+        <Link to={`/organizations/${organizationId}/runs`} className="rd-back">
           <span className="rd-back-arrow" aria-hidden>
             ←
           </span>
@@ -563,7 +563,7 @@ export function PaymentRunDetailPage() {
               {runOrders.length} row{runOrders.length === 1 ? '' : 's'}
             </span>
           </div>
-          <RecipientsTable workspaceId={workspaceId} orders={runOrders} />
+          <RecipientsTable organizationId={organizationId} orders={runOrders} />
         </section>
       </div>
 
@@ -853,7 +853,7 @@ function PrimaryActionCard(props: {
   );
 }
 
-function RecipientsTable({ workspaceId, orders }: { workspaceId: string; orders: PaymentOrder[] }) {
+function RecipientsTable({ organizationId, orders }: { organizationId: string; orders: PaymentOrder[] }) {
   if (!orders.length) {
     return (
       <div className="rd-table-shell">
@@ -942,7 +942,7 @@ function RecipientsTable({ workspaceId, orders }: { workspaceId: string; orders:
                 </td>
                 <td>
                   <Link
-                    to={`/workspaces/${workspaceId}/payments/${rid(order.paymentOrderId)}`}
+                    to={`/organizations/${organizationId}/payments/${rid(order.paymentOrderId)}`}
                     className="rd-btn rd-btn-ghost"
                     style={{ minHeight: 32, padding: '6px 10px', fontSize: 12 }}
                   >

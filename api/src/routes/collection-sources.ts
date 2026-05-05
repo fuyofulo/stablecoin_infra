@@ -6,15 +6,15 @@ import {
   updateCollectionSource,
 } from '../collection-sources.js';
 import { asyncRoute, listQuerySchema, sendCreated, sendJson, sendList, unwrapItems } from '../route-helpers.js';
-import { assertWorkspaceAccess, assertWorkspaceAdmin } from '../workspace-access.js';
+import { assertOrganizationAccess, assertOrganizationAdmin } from '../organization-access.js';
 
 export const collectionSourcesRouter = Router();
 
-const workspaceParamsSchema = z.object({
-  workspaceId: z.string().uuid(),
+const organizationParamsSchema = z.object({
+  organizationId: z.string().uuid(),
 });
 
-const collectionSourceParamsSchema = workspaceParamsSchema.extend({
+const collectionSourceParamsSchema = organizationParamsSchema.extend({
   collectionSourceId: z.string().uuid(),
 });
 
@@ -56,23 +56,23 @@ const updateCollectionSourceSchema = z.object({
   'At least one field must be updated',
 );
 
-collectionSourcesRouter.get('/workspaces/:workspaceId/collection-sources', asyncRoute(async (req, res) => {
-  const { workspaceId } = workspaceParamsSchema.parse(req.params);
+collectionSourcesRouter.get('/organizations/:organizationId/collection-sources', asyncRoute(async (req, res) => {
+  const { organizationId } = organizationParamsSchema.parse(req.params);
   const query = listCollectionSourcesQuerySchema.parse(req.query);
-  await assertWorkspaceAccess(workspaceId, req.auth!);
-  sendList(res, unwrapItems(await listCollectionSources(workspaceId, query)), { limit: query.limit });
+  await assertOrganizationAccess(organizationId, req.auth!);
+  sendList(res, unwrapItems(await listCollectionSources(organizationId, query)), { limit: query.limit });
 }));
 
-collectionSourcesRouter.post('/workspaces/:workspaceId/collection-sources', asyncRoute(async (req, res) => {
-  const { workspaceId } = workspaceParamsSchema.parse(req.params);
-  await assertWorkspaceAdmin(workspaceId, req.auth!);
+collectionSourcesRouter.post('/organizations/:organizationId/collection-sources', asyncRoute(async (req, res) => {
+  const { organizationId } = organizationParamsSchema.parse(req.params);
+  await assertOrganizationAdmin(organizationId, req.auth!);
   const input = createCollectionSourceSchema.parse(req.body);
-  sendCreated(res, await createCollectionSource(workspaceId, input));
+  sendCreated(res, await createCollectionSource(organizationId, input));
 }));
 
-collectionSourcesRouter.patch('/workspaces/:workspaceId/collection-sources/:collectionSourceId', asyncRoute(async (req, res) => {
-  const { workspaceId, collectionSourceId } = collectionSourceParamsSchema.parse(req.params);
-  await assertWorkspaceAdmin(workspaceId, req.auth!);
+collectionSourcesRouter.patch('/organizations/:organizationId/collection-sources/:collectionSourceId', asyncRoute(async (req, res) => {
+  const { organizationId, collectionSourceId } = collectionSourceParamsSchema.parse(req.params);
+  await assertOrganizationAdmin(organizationId, req.auth!);
   const input = updateCollectionSourceSchema.parse(req.body);
-  sendJson(res, await updateCollectionSource(workspaceId, collectionSourceId, input));
+  sendJson(res, await updateCollectionSource(organizationId, collectionSourceId, input));
 }));

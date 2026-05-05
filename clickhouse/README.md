@@ -22,10 +22,10 @@ docker exec -it usdc-ops-clickhouse clickhouse-client
 
 The init scripts create the `usdc_ops` database and the first-pass schema for:
 
-- workspace configuration
+- organization configuration
 - raw ingestion
 - canonical normalized events
-- workspace interpretation
+- organization interpretation
 - serving tables
 
 Runtime state is stored in Docker named volumes, not in this repository.

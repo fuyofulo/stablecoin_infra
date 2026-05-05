@@ -25,8 +25,10 @@ import type {
   PaymentRunExecutionPreparation,
   PaymentRunImportResult,
   ReconciliationRow,
-  Workspace,
+  Organization,
   TreasuryWallet,
+  UserWallet,
+  WalletChallenge,
 } from './types';
 import { getPublicApiBaseUrl } from './public-config';
 
@@ -140,6 +142,21 @@ export const api = {
   getSession() {
     return request<AuthenticatedSession>('/auth/session');
   },
+  verifyEmail(input: { code: string }) {
+    return request<{ user: AuthenticatedSession['user'] }>('/auth/verify-email', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    });
+  },
+  resendVerification() {
+    return request<{ user: AuthenticatedSession['user']; devEmailVerificationCode: string | null }>(
+      '/auth/resend-verification',
+      {
+        method: 'POST',
+        body: JSON.stringify({}),
+      },
+    );
+  },
   logout() {
     return request<void>('/auth/logout', {
       method: 'POST',
@@ -151,22 +168,49 @@ export const api = {
       body: JSON.stringify(input),
     });
   },
-  createWorkspace(
-    organizationId: string,
-    input: {
-      workspaceName: string;
-      status?: string;
-    },
-  ) {
-    return request<Workspace>(`/organizations/${organizationId}/workspaces`, {
+  joinOrganization(organizationId: string) {
+    return request<OrganizationMembership>(`/organizations/${organizationId}/join`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    });
+  },
+  listUserWallets() {
+    return request<{ items: UserWallet[] }>('/user-wallets');
+  },
+  createWalletChallenge(input: { walletAddress: string }) {
+    return request<WalletChallenge>('/user-wallets/challenge', {
       method: 'POST',
       body: JSON.stringify(input),
     });
   },
-  listTreasuryWallets(workspaceId: string) {
-    return request<{ items: TreasuryWallet[] }>(`/workspaces/${workspaceId}/treasury-wallets`);
+  connectExternalWallet(input: {
+    walletAddress: string;
+    nonce: string;
+    signedMessageBase64: string;
+    signatureBase64: string;
+    provider?: string;
+    label?: string;
+  }) {
+    return request<UserWallet>('/user-wallets/external', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    });
   },
-  listTreasuryWalletBalances(workspaceId: string) {
+  registerEmbeddedWallet(input: {
+    walletAddress: string;
+    provider?: string;
+    providerWalletId?: string;
+    label?: string;
+  }) {
+    return request<UserWallet>('/user-wallets/embedded', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    });
+  },
+  listTreasuryWallets(organizationId: string) {
+    return request<{ items: TreasuryWallet[] }>(`/organizations/${organizationId}/treasury-wallets`);
+  },
+  listTreasuryWalletBalances(organizationId: string) {
     return request<{
       fetchedAt: string;
       solUsdPrice: number | null;
@@ -181,13 +225,13 @@ export const api = {
         usdcRaw: string | null;
         rpcError: string | null;
       }>;
-    }>(`/workspaces/${workspaceId}/treasury-wallets/balances`);
+    }>(`/organizations/${organizationId}/treasury-wallets/balances`);
   },
-  listCounterparties(workspaceId: string) {
-    return request<{ items: Counterparty[] }>(`/workspaces/${workspaceId}/counterparties`);
+  listCounterparties(organizationId: string) {
+    return request<{ items: Counterparty[] }>(`/organizations/${organizationId}/counterparties`);
   },
   createCounterparty(
-    workspaceId: string,
+    organizationId: string,
     input: {
       displayName: string;
       category?: string;
@@ -195,16 +239,16 @@ export const api = {
       status?: string;
     },
   ) {
-    return request<Counterparty>(`/workspaces/${workspaceId}/counterparties`, {
+    return request<Counterparty>(`/organizations/${organizationId}/counterparties`, {
       method: 'POST',
       body: JSON.stringify(input),
     });
   },
-  listDestinations(workspaceId: string) {
-    return request<{ items: Destination[] }>(`/workspaces/${workspaceId}/destinations`);
+  listDestinations(organizationId: string) {
+    return request<{ items: Destination[] }>(`/organizations/${organizationId}/destinations`);
   },
   createDestination(
-    workspaceId: string,
+    organizationId: string,
     input: {
       counterpartyId?: string;
       walletAddress: string;
@@ -217,13 +261,13 @@ export const api = {
       isActive?: boolean;
     },
   ) {
-    return request<Destination>(`/workspaces/${workspaceId}/destinations`, {
+    return request<Destination>(`/organizations/${organizationId}/destinations`, {
       method: 'POST',
       body: JSON.stringify(input),
     });
   },
   updateDestination(
-    workspaceId: string,
+    organizationId: string,
     destinationId: string,
     input: {
       counterpartyId?: string | null;
@@ -235,13 +279,13 @@ export const api = {
       isActive?: boolean;
     },
   ) {
-    return request<Destination>(`/workspaces/${workspaceId}/destinations/${destinationId}`, {
+    return request<Destination>(`/organizations/${organizationId}/destinations/${destinationId}`, {
       method: 'PATCH',
       body: JSON.stringify(input),
     });
   },
   createTreasuryWallet(
-    workspaceId: string,
+    organizationId: string,
     input: {
       address: string;
       displayName?: string;
@@ -249,7 +293,7 @@ export const api = {
       notes?: string;
     },
   ) {
-    return request(`/workspaces/${workspaceId}/treasury-wallets`, {
+    return request(`/organizations/${organizationId}/treasury-wallets`, {
       method: 'POST',
       body: JSON.stringify({
         chain: 'solana',
@@ -259,34 +303,34 @@ export const api = {
       }),
     });
   },
-  listTransfers(workspaceId: string) {
+  listTransfers(organizationId: string) {
     return request<{ servedAt: string; items: ObservedTransfer[] }>(
-      `/workspaces/${workspaceId}/transfers?limit=100`,
+      `/organizations/${organizationId}/transfers?limit=100`,
     );
   },
-  listReconciliation(workspaceId: string) {
+  listReconciliation(organizationId: string) {
     return request<{ servedAt: string; items: ReconciliationRow[] }>(
-      `/workspaces/${workspaceId}/reconciliation?limit=100`,
+      `/organizations/${organizationId}/reconciliation?limit=100`,
     );
   },
-  getApprovalPolicy(workspaceId: string) {
-    return request<ApprovalPolicy>(`/workspaces/${workspaceId}/approval-policy`);
+  getApprovalPolicy(organizationId: string) {
+    return request<ApprovalPolicy>(`/organizations/${organizationId}/approval-policy`);
   },
   updateApprovalPolicy(
-    workspaceId: string,
+    organizationId: string,
     input: {
       policyName?: string;
       isActive?: boolean;
       ruleJson?: Partial<ApprovalPolicy['ruleJson']>;
     },
   ) {
-    return request<ApprovalPolicy>(`/workspaces/${workspaceId}/approval-policy`, {
+    return request<ApprovalPolicy>(`/organizations/${organizationId}/approval-policy`, {
       method: 'PATCH',
       body: JSON.stringify(input),
     });
   },
   createApprovalDecision(
-    workspaceId: string,
+    organizationId: string,
     transferRequestId: string,
     input: {
       action: 'approve' | 'reject' | 'escalate';
@@ -294,73 +338,73 @@ export const api = {
     },
   ) {
     return request<{ transferRequestId: string; status: string }>(
-      `/workspaces/${workspaceId}/transfer-requests/${transferRequestId}/approval-decisions`,
+      `/organizations/${organizationId}/transfer-requests/${transferRequestId}/approval-decisions`,
       {
         method: 'POST',
         body: JSON.stringify(input),
       },
     );
   },
-  listExceptions(workspaceId: string) {
+  listExceptions(organizationId: string) {
     return request<{ servedAt: string; items: ExceptionItem[] }>(
-      `/workspaces/${workspaceId}/exceptions?limit=100`,
+      `/organizations/${organizationId}/exceptions?limit=100`,
     );
   },
-  getWorkspaceException(workspaceId: string, exceptionId: string) {
+  getOrganizationException(organizationId: string, exceptionId: string) {
     return request<ExceptionItem & { notes: ExceptionNote[] }>(
-      `/workspaces/${workspaceId}/exceptions/${exceptionId}`,
+      `/organizations/${organizationId}/exceptions/${exceptionId}`,
     );
   },
   applyExceptionAction(
-    workspaceId: string,
+    organizationId: string,
     exceptionId: string,
     input: {
       action: 'reviewed' | 'expected' | 'dismissed' | 'reopen';
       note?: string;
     },
   ) {
-    return request<ExceptionItem>(`/workspaces/${workspaceId}/exceptions/${exceptionId}/actions`, {
+    return request<ExceptionItem>(`/organizations/${organizationId}/exceptions/${exceptionId}/actions`, {
       method: 'POST',
       body: JSON.stringify(input),
     });
   },
-  addExceptionNote(workspaceId: string, exceptionId: string, input: { body: string }) {
-    return request<ExceptionNote>(`/workspaces/${workspaceId}/exceptions/${exceptionId}/notes`, {
+  addExceptionNote(organizationId: string, exceptionId: string, input: { body: string }) {
+    return request<ExceptionNote>(`/organizations/${organizationId}/exceptions/${exceptionId}/notes`, {
       method: 'POST',
       body: JSON.stringify(input),
     });
   },
-  listPaymentOrders(workspaceId: string, state?: PaymentOrder['state']) {
+  listPaymentOrders(organizationId: string, state?: PaymentOrder['state']) {
     const params = new URLSearchParams({ limit: '100' });
     if (state) {
       params.set('state', state);
     }
     return request<{ servedAt: string; items: PaymentOrder[] }>(
-      `/workspaces/${workspaceId}/payment-orders?${params.toString()}`,
+      `/organizations/${organizationId}/payment-orders?${params.toString()}`,
     );
   },
-  listPaymentRequests(workspaceId: string, state?: PaymentRequest['state']) {
+  listPaymentRequests(organizationId: string, state?: PaymentRequest['state']) {
     const params = new URLSearchParams({ limit: '100' });
     if (state) {
       params.set('state', state);
     }
     return request<{ servedAt: string; items: PaymentRequest[] }>(
-      `/workspaces/${workspaceId}/payment-requests?${params.toString()}`,
+      `/organizations/${organizationId}/payment-requests?${params.toString()}`,
     );
   },
-  listPaymentRuns(workspaceId: string) {
-    return request<{ servedAt: string; items: PaymentRun[] }>(`/workspaces/${workspaceId}/payment-runs`);
+  listPaymentRuns(organizationId: string) {
+    return request<{ servedAt: string; items: PaymentRun[] }>(`/organizations/${organizationId}/payment-runs`);
   },
-  getPaymentRunDetail(workspaceId: string, paymentRunId: string) {
-    return request<PaymentRun>(`/workspaces/${workspaceId}/payment-runs/${paymentRunId}`);
+  getPaymentRunDetail(organizationId: string, paymentRunId: string) {
+    return request<PaymentRun>(`/organizations/${organizationId}/payment-runs/${paymentRunId}`);
   },
-  deletePaymentRun(workspaceId: string, paymentRunId: string) {
-    return request<Record<string, unknown>>(`/workspaces/${workspaceId}/payment-runs/${paymentRunId}`, {
+  deletePaymentRun(organizationId: string, paymentRunId: string) {
+    return request<Record<string, unknown>>(`/organizations/${organizationId}/payment-runs/${paymentRunId}`, {
       method: 'DELETE',
     });
   },
   importPaymentRunCsv(
-    workspaceId: string,
+    organizationId: string,
     input: {
       csv: string;
       runName?: string;
@@ -368,13 +412,13 @@ export const api = {
       submitOrderNow?: boolean;
     },
   ) {
-    return request<PaymentRunImportResult>(`/workspaces/${workspaceId}/payment-runs/import-csv`, {
+    return request<PaymentRunImportResult>(`/organizations/${organizationId}/payment-runs/import-csv`, {
       method: 'POST',
       body: JSON.stringify(input),
     });
   },
   createPaymentRequest(
-    workspaceId: string,
+    organizationId: string,
     input: {
       destinationId: string;
       amountRaw: string;
@@ -388,35 +432,35 @@ export const api = {
       submitOrderNow?: boolean;
     },
   ) {
-    return request<PaymentRequest>(`/workspaces/${workspaceId}/payment-requests`, {
+    return request<PaymentRequest>(`/organizations/${organizationId}/payment-requests`, {
       method: 'POST',
       body: JSON.stringify(input),
     });
   },
-  getPaymentOrderDetail(workspaceId: string, paymentOrderId: string) {
-    return request<PaymentOrder>(`/workspaces/${workspaceId}/payment-orders/${paymentOrderId}`);
+  getPaymentOrderDetail(organizationId: string, paymentOrderId: string) {
+    return request<PaymentOrder>(`/organizations/${organizationId}/payment-orders/${paymentOrderId}`);
   },
-  submitPaymentOrder(workspaceId: string, paymentOrderId: string) {
-    return request<PaymentOrder>(`/workspaces/${workspaceId}/payment-orders/${paymentOrderId}/submit`, {
+  submitPaymentOrder(organizationId: string, paymentOrderId: string) {
+    return request<PaymentOrder>(`/organizations/${organizationId}/payment-orders/${paymentOrderId}/submit`, {
       method: 'POST',
       body: JSON.stringify({}),
     });
   },
-  cancelPaymentOrder(workspaceId: string, paymentOrderId: string) {
-    return request<PaymentOrder>(`/workspaces/${workspaceId}/payment-orders/${paymentOrderId}/cancel`, {
+  cancelPaymentOrder(organizationId: string, paymentOrderId: string) {
+    return request<PaymentOrder>(`/organizations/${organizationId}/payment-orders/${paymentOrderId}/cancel`, {
       method: 'POST',
       body: JSON.stringify({}),
     });
   },
   preparePaymentOrderExecution(
-    workspaceId: string,
+    organizationId: string,
     paymentOrderId: string,
     input?: {
       sourceTreasuryWalletId?: string;
     },
   ) {
     return request<PaymentExecutionPreparation>(
-      `/workspaces/${workspaceId}/payment-orders/${paymentOrderId}/prepare-execution`,
+      `/organizations/${organizationId}/payment-orders/${paymentOrderId}/prepare-execution`,
       {
         method: 'POST',
         body: JSON.stringify(input ?? {}),
@@ -424,14 +468,14 @@ export const api = {
     );
   },
   preparePaymentRunExecution(
-    workspaceId: string,
+    organizationId: string,
     paymentRunId: string,
     input?: {
       sourceTreasuryWalletId?: string;
     },
   ) {
     return request<PaymentRunExecutionPreparation>(
-      `/workspaces/${workspaceId}/payment-runs/${paymentRunId}/prepare-execution`,
+      `/organizations/${organizationId}/payment-runs/${paymentRunId}/prepare-execution`,
       {
         method: 'POST',
         body: JSON.stringify(input ?? {}),
@@ -439,7 +483,7 @@ export const api = {
     );
   },
   attachPaymentRunSignature(
-    workspaceId: string,
+    organizationId: string,
     paymentRunId: string,
     input: {
       submittedSignature: string;
@@ -447,18 +491,18 @@ export const api = {
     },
   ) {
     return request<{ executionRecords: unknown[]; paymentRun: PaymentRun }>(
-      `/workspaces/${workspaceId}/payment-runs/${paymentRunId}/attach-signature`,
+      `/organizations/${organizationId}/payment-runs/${paymentRunId}/attach-signature`,
       {
         method: 'POST',
         body: JSON.stringify(input),
       },
     );
   },
-  getPaymentRunProof(workspaceId: string, paymentRunId: string) {
-    return request<Record<string, unknown>>(`/workspaces/${workspaceId}/payment-runs/${paymentRunId}/proof`);
+  getPaymentRunProof(organizationId: string, paymentRunId: string) {
+    return request<Record<string, unknown>>(`/organizations/${organizationId}/payment-runs/${paymentRunId}/proof`);
   },
   attachPaymentOrderSignature(
-    workspaceId: string,
+    organizationId: string,
     paymentOrderId: string,
     input: {
       submittedSignature?: string;
@@ -468,18 +512,18 @@ export const api = {
     },
   ) {
     return request(
-      `/workspaces/${workspaceId}/payment-orders/${paymentOrderId}/attach-signature`,
+      `/organizations/${organizationId}/payment-orders/${paymentOrderId}/attach-signature`,
       {
         method: 'POST',
         body: JSON.stringify(input),
       },
     );
   },
-  getPaymentOrderProof(workspaceId: string, paymentOrderId: string) {
-    return request<PaymentProofPacket>(`/workspaces/${workspaceId}/payment-orders/${paymentOrderId}/proof`);
+  getPaymentOrderProof(organizationId: string, paymentOrderId: string) {
+    return request<PaymentProofPacket>(`/organizations/${organizationId}/payment-orders/${paymentOrderId}/proof`);
   },
   listCollections(
-    workspaceId: string,
+    organizationId: string,
     params?: { state?: string; collectionRunId?: string; limit?: number },
   ) {
     const qs = new URLSearchParams();
@@ -491,10 +535,10 @@ export const api = {
       limit: number;
       state: string | null;
       collectionRunId: string | null;
-    }>(`/workspaces/${workspaceId}/collections?${qs.toString()}`);
+    }>(`/organizations/${organizationId}/collections?${qs.toString()}`);
   },
   createCollection(
-    workspaceId: string,
+    organizationId: string,
     input: {
       collectionRunId?: string;
       receivingTreasuryWalletId: string;
@@ -510,20 +554,20 @@ export const api = {
       metadataJson?: Record<string, unknown>;
     },
   ) {
-    return request<CollectionRequest>(`/workspaces/${workspaceId}/collections`, {
+    return request<CollectionRequest>(`/organizations/${organizationId}/collections`, {
       method: 'POST',
       body: JSON.stringify(input),
     });
   },
-  listCollectionSources(workspaceId: string, params?: { limit?: number }) {
+  listCollectionSources(organizationId: string, params?: { limit?: number }) {
     const qs = new URLSearchParams();
     qs.set('limit', String(params?.limit ?? 100));
     return request<{ items: CollectionSource[]; limit: number }>(
-      `/workspaces/${workspaceId}/collection-sources?${qs.toString()}`,
+      `/organizations/${organizationId}/collection-sources?${qs.toString()}`,
     );
   },
   createCollectionSource(
-    workspaceId: string,
+    organizationId: string,
     input: {
       counterpartyId?: string;
       walletAddress: string;
@@ -535,13 +579,13 @@ export const api = {
       isActive?: boolean;
     },
   ) {
-    return request<CollectionSource>(`/workspaces/${workspaceId}/collection-sources`, {
+    return request<CollectionSource>(`/organizations/${organizationId}/collection-sources`, {
       method: 'POST',
       body: JSON.stringify(input),
     });
   },
   updateCollectionSource(
-    workspaceId: string,
+    organizationId: string,
     collectionSourceId: string,
     input: {
       counterpartyId?: string | null;
@@ -555,7 +599,7 @@ export const api = {
     },
   ) {
     return request<CollectionSource>(
-      `/workspaces/${workspaceId}/collection-sources/${collectionSourceId}`,
+      `/organizations/${organizationId}/collection-sources/${collectionSourceId}`,
       {
         method: 'PATCH',
         body: JSON.stringify(input),
@@ -563,49 +607,49 @@ export const api = {
     );
   },
   previewCollectionCsv(
-    workspaceId: string,
+    organizationId: string,
     input: { csv: string; receivingTreasuryWalletId?: string },
   ) {
     return request<CollectionCsvPreview>(
-      `/workspaces/${workspaceId}/collections/import-csv/preview`,
+      `/organizations/${organizationId}/collections/import-csv/preview`,
       {
         method: 'POST',
         body: JSON.stringify(input),
       },
     );
   },
-  getCollection(workspaceId: string, collectionRequestId: string) {
+  getCollection(organizationId: string, collectionRequestId: string) {
     return request<CollectionRequest>(
-      `/workspaces/${workspaceId}/collections/${collectionRequestId}`,
+      `/organizations/${organizationId}/collections/${collectionRequestId}`,
     );
   },
-  getCollectionProof(workspaceId: string, collectionRequestId: string) {
+  getCollectionProof(organizationId: string, collectionRequestId: string) {
     return request<CollectionProofPacket>(
-      `/workspaces/${workspaceId}/collections/${collectionRequestId}/proof`,
+      `/organizations/${organizationId}/collections/${collectionRequestId}/proof`,
     );
   },
-  downloadCollectionProofJson(workspaceId: string, collectionRequestId: string) {
+  downloadCollectionProofJson(organizationId: string, collectionRequestId: string) {
     return download(
-      `/workspaces/${workspaceId}/collections/${collectionRequestId}/proof`,
+      `/organizations/${organizationId}/collections/${collectionRequestId}/proof`,
       `collection-${collectionRequestId}-proof.json`,
     );
   },
-  cancelCollection(workspaceId: string, collectionRequestId: string) {
+  cancelCollection(organizationId: string, collectionRequestId: string) {
     return request<CollectionRequest>(
-      `/workspaces/${workspaceId}/collections/${collectionRequestId}/cancel`,
+      `/organizations/${organizationId}/collections/${collectionRequestId}/cancel`,
       {
         method: 'POST',
         body: JSON.stringify({}),
       },
     );
   },
-  listCollectionRuns(workspaceId: string) {
+  listCollectionRuns(organizationId: string) {
     return request<{ items: CollectionRunSummary[]; limit: number }>(
-      `/workspaces/${workspaceId}/collection-runs`,
+      `/organizations/${organizationId}/collection-runs`,
     );
   },
   importCollectionRunCsv(
-    workspaceId: string,
+    organizationId: string,
     input: {
       csv: string;
       runName?: string;
@@ -614,7 +658,7 @@ export const api = {
     },
   ) {
     return request<CollectionRunImportResult>(
-      `/workspaces/${workspaceId}/collection-runs/import-csv`,
+      `/organizations/${organizationId}/collection-runs/import-csv`,
       {
         method: 'POST',
         body: JSON.stringify(input),
@@ -622,30 +666,30 @@ export const api = {
     );
   },
   previewCollectionRunCsv(
-    workspaceId: string,
+    organizationId: string,
     input: { csv: string; receivingTreasuryWalletId?: string },
   ) {
     return request<CollectionRunCsvPreview>(
-      `/workspaces/${workspaceId}/collection-runs/import-csv/preview`,
+      `/organizations/${organizationId}/collection-runs/import-csv/preview`,
       {
         method: 'POST',
         body: JSON.stringify(input),
       },
     );
   },
-  getCollectionRun(workspaceId: string, collectionRunId: string) {
+  getCollectionRun(organizationId: string, collectionRunId: string) {
     return request<CollectionRunSummary>(
-      `/workspaces/${workspaceId}/collection-runs/${collectionRunId}`,
+      `/organizations/${organizationId}/collection-runs/${collectionRunId}`,
     );
   },
-  getCollectionRunProof(workspaceId: string, collectionRunId: string) {
+  getCollectionRunProof(organizationId: string, collectionRunId: string) {
     return request<CollectionRunProofPacket>(
-      `/workspaces/${workspaceId}/collection-runs/${collectionRunId}/proof`,
+      `/organizations/${organizationId}/collection-runs/${collectionRunId}/proof`,
     );
   },
-  downloadCollectionRunProofJson(workspaceId: string, collectionRunId: string) {
+  downloadCollectionRunProofJson(organizationId: string, collectionRunId: string) {
     return download(
-      `/workspaces/${workspaceId}/collection-runs/${collectionRunId}/proof`,
+      `/organizations/${organizationId}/collection-runs/${collectionRunId}/proof`,
       `collection-run-${collectionRunId}-proof.json`,
     );
   },

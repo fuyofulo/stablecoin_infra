@@ -1,6 +1,6 @@
 import { prisma } from './prisma.js';
 
-export type WorkspaceAuditEntityType =
+export type OrganizationAuditEntityType =
   | 'payment_order'
   | 'transfer_request'
   | 'approval'
@@ -9,8 +9,8 @@ export type WorkspaceAuditEntityType =
 
 type AuditItem = {
   auditId: string;
-  workspaceId: string;
-  entityType: WorkspaceAuditEntityType;
+  organizationId: string;
+  entityType: OrganizationAuditEntityType;
   entityId: string;
   eventType: string;
   actorType: string;
@@ -23,10 +23,10 @@ type AuditItem = {
   createdAt: Date;
 };
 
-export async function listWorkspaceAuditLog(args: {
-  workspaceId: string;
+export async function listOrganizationAuditLog(args: {
+  organizationId: string;
   limit?: number;
-  entityType?: WorkspaceAuditEntityType;
+  entityType?: OrganizationAuditEntityType;
 }) {
   const limit = args.limit ?? 100;
   const [
@@ -38,21 +38,21 @@ export async function listWorkspaceAuditLog(args: {
   ] = await Promise.all([
     !args.entityType || args.entityType === 'payment_order'
       ? prisma.paymentOrderEvent.findMany({
-          where: { workspaceId: args.workspaceId },
+          where: { organizationId: args.organizationId },
           orderBy: { createdAt: 'desc' },
           take: limit,
         })
       : [],
     !args.entityType || args.entityType === 'transfer_request'
       ? prisma.transferRequestEvent.findMany({
-          where: { workspaceId: args.workspaceId },
+          where: { organizationId: args.organizationId },
           orderBy: { createdAt: 'desc' },
           take: limit,
         })
       : [],
     !args.entityType || args.entityType === 'approval'
       ? prisma.approvalDecision.findMany({
-          where: { workspaceId: args.workspaceId },
+          where: { organizationId: args.organizationId },
           include: {
             actorUser: {
               select: {
@@ -68,7 +68,7 @@ export async function listWorkspaceAuditLog(args: {
       : [],
     !args.entityType || args.entityType === 'execution'
       ? prisma.executionRecord.findMany({
-          where: { workspaceId: args.workspaceId },
+          where: { organizationId: args.organizationId },
           include: {
             executorUser: {
               select: {
@@ -84,7 +84,7 @@ export async function listWorkspaceAuditLog(args: {
       : [],
     !args.entityType || args.entityType === 'exception'
       ? prisma.exceptionNote.findMany({
-          where: { workspaceId: args.workspaceId },
+          where: { organizationId: args.organizationId },
           include: {
             authorUser: {
               select: {
@@ -103,7 +103,7 @@ export async function listWorkspaceAuditLog(args: {
   const items: AuditItem[] = [
     ...paymentOrderEvents.map((event) => ({
       auditId: `payment_order_event:${event.paymentOrderEventId}`,
-      workspaceId: event.workspaceId,
+      organizationId: event.organizationId,
       entityType: 'payment_order' as const,
       entityId: event.paymentOrderId,
       eventType: event.eventType,
@@ -122,7 +122,7 @@ export async function listWorkspaceAuditLog(args: {
     })),
     ...transferRequestEvents.map((event) => ({
       auditId: `transfer_request_event:${event.transferRequestEventId}`,
-      workspaceId: event.workspaceId,
+      organizationId: event.organizationId,
       entityType: 'transfer_request' as const,
       entityId: event.transferRequestId,
       eventType: event.eventType,
@@ -142,7 +142,7 @@ export async function listWorkspaceAuditLog(args: {
     })),
     ...approvalDecisions.map((decision) => ({
       auditId: `approval_decision:${decision.approvalDecisionId}`,
-      workspaceId: decision.workspaceId,
+      organizationId: decision.organizationId,
       entityType: 'approval' as const,
       entityId: decision.transferRequestId,
       eventType: `approval_${decision.action}`,
@@ -161,7 +161,7 @@ export async function listWorkspaceAuditLog(args: {
     })),
     ...executionRecords.map((record) => ({
       auditId: `execution_record:${record.executionRecordId}`,
-      workspaceId: record.workspaceId,
+      organizationId: record.organizationId,
       entityType: 'execution' as const,
       entityId: record.transferRequestId,
       eventType: `execution_${record.state}`,
@@ -181,7 +181,7 @@ export async function listWorkspaceAuditLog(args: {
     })),
     ...exceptionNotes.map((note) => ({
       auditId: `exception_note:${note.exceptionNoteId}`,
-      workspaceId: note.workspaceId,
+      organizationId: note.organizationId,
       entityType: 'exception' as const,
       entityId: note.exceptionId,
       eventType: 'exception_note_created',
@@ -200,7 +200,7 @@ export async function listWorkspaceAuditLog(args: {
 
   return {
     servedAt: new Date().toISOString(),
-    workspaceId: args.workspaceId,
+    organizationId: args.organizationId,
     items: items
       .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
       .slice(0, limit),

@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { assertWorkspaceAccess, assertWorkspaceAdmin } from '../workspace-access.js';
+import { assertOrganizationAccess, assertOrganizationAdmin } from '../organization-access.js';
 import { fetchWalletBalances, SOLANA_CHAIN, USDC_ASSET } from '../solana.js';
 import { getSolUsdPrice } from '../pricing.js';
 import { createTreasuryWallet, listTreasuryWallets, updateTreasuryWallet } from '../treasury-wallets.js';
@@ -8,11 +8,11 @@ import { asyncRoute, listQuerySchema, sendCreated, sendList, sendJson, unwrapIte
 
 export const treasuryWalletsRouter = Router();
 
-const workspaceParamsSchema = z.object({
-  workspaceId: z.string().uuid(),
+const organizationParamsSchema = z.object({
+  organizationId: z.string().uuid(),
 });
 
-const treasuryWalletParamsSchema = workspaceParamsSchema.extend({
+const treasuryWalletParamsSchema = organizationParamsSchema.extend({
   treasuryWalletId: z.string().uuid(),
 });
 
@@ -43,21 +43,21 @@ const updateTreasuryWalletSchema = z.object({
   'At least one field must be updated',
 );
 
-treasuryWalletsRouter.get('/workspaces/:workspaceId/treasury-wallets', asyncRoute(async (req, res) => {
-  const { workspaceId } = workspaceParamsSchema.parse(req.params);
+treasuryWalletsRouter.get('/organizations/:organizationId/treasury-wallets', asyncRoute(async (req, res) => {
+  const { organizationId } = organizationParamsSchema.parse(req.params);
   const query = listTreasuryWalletsQuerySchema.parse(req.query);
-  await assertWorkspaceAccess(workspaceId, req.auth!);
-  sendList(res, unwrapItems(await listTreasuryWallets(workspaceId, query)), { limit: query.limit });
+  await assertOrganizationAccess(organizationId, req.auth!);
+  sendList(res, unwrapItems(await listTreasuryWallets(organizationId, query)), { limit: query.limit });
 }));
 
 // Live balances from Solana RPC. Served on-demand; the frontend refreshes on a
 // short interval. Callers should treat rpcError=non-null rows as "unknown".
 treasuryWalletsRouter.get(
-  '/workspaces/:workspaceId/treasury-wallets/balances',
+  '/organizations/:organizationId/treasury-wallets/balances',
   asyncRoute(async (req, res) => {
-    const { workspaceId } = workspaceParamsSchema.parse(req.params);
-    await assertWorkspaceAccess(workspaceId, req.auth!);
-    const wallets = unwrapItems(await listTreasuryWallets(workspaceId, { limit: 250 }));
+    const { organizationId } = organizationParamsSchema.parse(req.params);
+    await assertOrganizationAccess(organizationId, req.auth!);
+    const wallets = unwrapItems(await listTreasuryWallets(organizationId, { limit: 250 }));
     const [items, solUsdPrice] = await Promise.all([
       Promise.all(
         wallets.map(async (wallet) => {
@@ -86,19 +86,19 @@ treasuryWalletsRouter.get(
   }),
 );
 
-treasuryWalletsRouter.post('/workspaces/:workspaceId/treasury-wallets', asyncRoute(async (req, res) => {
-  const { workspaceId } = workspaceParamsSchema.parse(req.params);
-  await assertWorkspaceAdmin(workspaceId, req.auth!);
+treasuryWalletsRouter.post('/organizations/:organizationId/treasury-wallets', asyncRoute(async (req, res) => {
+  const { organizationId } = organizationParamsSchema.parse(req.params);
+  await assertOrganizationAdmin(organizationId, req.auth!);
   const input = createTreasuryWalletSchema.parse(req.body);
-  sendCreated(res, await createTreasuryWallet(workspaceId, input));
+  sendCreated(res, await createTreasuryWallet(organizationId, input));
 }));
 
 treasuryWalletsRouter.patch(
-  '/workspaces/:workspaceId/treasury-wallets/:treasuryWalletId',
+  '/organizations/:organizationId/treasury-wallets/:treasuryWalletId',
   asyncRoute(async (req, res) => {
-    const { workspaceId, treasuryWalletId } = treasuryWalletParamsSchema.parse(req.params);
-    await assertWorkspaceAdmin(workspaceId, req.auth!);
+    const { organizationId, treasuryWalletId } = treasuryWalletParamsSchema.parse(req.params);
+    await assertOrganizationAdmin(organizationId, req.auth!);
     const input = updateTreasuryWalletSchema.parse(req.body);
-    sendJson(res, await updateTreasuryWallet(workspaceId, treasuryWalletId, input));
+    sendJson(res, await updateTreasuryWallet(organizationId, treasuryWalletId, input));
   }),
 );

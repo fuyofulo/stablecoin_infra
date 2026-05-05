@@ -27,7 +27,7 @@ export function serializeExecutionRecord(
   return {
     executionRecordId: record.executionRecordId,
     transferRequestId: record.transferRequestId,
-    workspaceId: record.workspaceId,
+    organizationId: record.organizationId,
     submittedSignature: record.submittedSignature,
     executionSource: record.executionSource,
     executorUserId: record.executorUserId,

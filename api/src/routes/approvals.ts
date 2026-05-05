@@ -2,23 +2,23 @@ import { Router } from 'express';
 import type { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import {
-  getOrCreateWorkspaceApprovalPolicy,
+  getOrCreateOrganizationApprovalPolicy,
   normalizeApprovalPolicyRule,
   serializeApprovalPolicy,
 } from '../approval-policy.js';
 import { listApprovalInbox } from '../reconciliation.js';
 import { prisma } from '../prisma.js';
 import { createTransferRequestEvent } from '../transfer-request-events.js';
-import { assertWorkspaceAccess, assertWorkspaceAdmin } from '../workspace-access.js';
+import { assertOrganizationAccess, assertOrganizationAdmin } from '../organization-access.js';
 import { sendList } from '../route-helpers.js';
 
 export const approvalsRouter = Router();
 
-const workspaceParamsSchema = z.object({
-  workspaceId: z.string().uuid(),
+const organizationParamsSchema = z.object({
+  organizationId: z.string().uuid(),
 });
 
-const transferRequestParamsSchema = workspaceParamsSchema.extend({
+const transferRequestParamsSchema = organizationParamsSchema.extend({
   transferRequestId: z.string().uuid(),
 });
 
@@ -44,23 +44,23 @@ const approvalDecisionSchema = z.object({
   comment: z.string().trim().min(1).max(5000).optional(),
 });
 
-approvalsRouter.get('/workspaces/:workspaceId/approval-policy', async (req, res, next) => {
+approvalsRouter.get('/organizations/:organizationId/approval-policy', async (req, res, next) => {
   try {
-    const { workspaceId } = workspaceParamsSchema.parse(req.params);
-    await assertWorkspaceAccess(workspaceId, req.auth!);
-    const policy = await getOrCreateWorkspaceApprovalPolicy(workspaceId);
+    const { organizationId } = organizationParamsSchema.parse(req.params);
+    await assertOrganizationAccess(organizationId, req.auth!);
+    const policy = await getOrCreateOrganizationApprovalPolicy(organizationId);
     res.json(serializeApprovalPolicy(policy));
   } catch (error) {
     next(error);
   }
 });
 
-approvalsRouter.patch('/workspaces/:workspaceId/approval-policy', async (req, res, next) => {
+approvalsRouter.patch('/organizations/:organizationId/approval-policy', async (req, res, next) => {
   try {
-    const { workspaceId } = workspaceParamsSchema.parse(req.params);
-    await assertWorkspaceAdmin(workspaceId, req.auth!);
+    const { organizationId } = organizationParamsSchema.parse(req.params);
+    await assertOrganizationAdmin(organizationId, req.auth!);
     const input = approvalPolicyUpdateSchema.parse(req.body);
-    const existing = await getOrCreateWorkspaceApprovalPolicy(workspaceId);
+    const existing = await getOrCreateOrganizationApprovalPolicy(organizationId);
     const existingRules = (
       existing.ruleJson && typeof existing.ruleJson === 'object' && !Array.isArray(existing.ruleJson)
         ? existing.ruleJson
@@ -86,14 +86,14 @@ approvalsRouter.patch('/workspaces/:workspaceId/approval-policy', async (req, re
   }
 });
 
-approvalsRouter.get('/workspaces/:workspaceId/approval-inbox', async (req, res, next) => {
+approvalsRouter.get('/organizations/:organizationId/approval-inbox', async (req, res, next) => {
   try {
-    const { workspaceId } = workspaceParamsSchema.parse(req.params);
+    const { organizationId } = organizationParamsSchema.parse(req.params);
     const query = approvalInboxQuerySchema.parse(req.query);
-    await assertWorkspaceAccess(workspaceId, req.auth!);
+    await assertOrganizationAccess(organizationId, req.auth!);
 
     const result = await listApprovalInbox({
-      workspaceId,
+      organizationId,
       limit: query.limit,
       statuses:
         query.status === 'all'
@@ -114,15 +114,15 @@ approvalsRouter.get('/workspaces/:workspaceId/approval-inbox', async (req, res, 
 });
 
 approvalsRouter.post(
-  '/workspaces/:workspaceId/transfer-requests/:transferRequestId/approval-decisions',
+  '/organizations/:organizationId/transfer-requests/:transferRequestId/approval-decisions',
   async (req, res, next) => {
     try {
-      const { workspaceId, transferRequestId } = transferRequestParamsSchema.parse(req.params);
-      await assertWorkspaceAdmin(workspaceId, req.auth!);
+      const { organizationId, transferRequestId } = transferRequestParamsSchema.parse(req.params);
+      await assertOrganizationAdmin(organizationId, req.auth!);
       const input = approvalDecisionSchema.parse(req.body);
 
       const current = await prisma.transferRequest.findFirstOrThrow({
-        where: { workspaceId, transferRequestId },
+        where: { organizationId, transferRequestId },
       });
 
       if (current.status !== 'pending_approval' && current.status !== 'escalated') {
@@ -130,14 +130,14 @@ approvalsRouter.post(
       }
 
       const nextStatus = getDecisionTargetStatus(current.status, input.action);
-      const policy = await getOrCreateWorkspaceApprovalPolicy(workspaceId);
+      const policy = await getOrCreateOrganizationApprovalPolicy(organizationId);
 
       const updated = await prisma.$transaction(async (tx) => {
         const decision = await tx.approvalDecision.create({
           data: {
             approvalPolicyId: policy.approvalPolicyId,
             transferRequestId,
-            workspaceId,
+            organizationId,
             actorUserId: req.auth!.userId,
             actorType: 'user',
             action: input.action,
@@ -154,7 +154,7 @@ approvalsRouter.post(
 
         await createTransferRequestEvent(tx, {
           transferRequestId,
-          workspaceId,
+          organizationId,
           eventType: 'approval_decision',
           actorType: 'user',
           actorId: req.auth!.userId,

@@ -15,17 +15,17 @@ import { buildPaymentOrderProofPacket } from '../payment-order-proof.js';
 import { renderPaymentOrderProofMarkdown } from '../payment-proof-markdown.js';
 import { isPaymentOrderState } from '../payment-order-state.js';
 import { isSolanaSignatureLike } from '../solana.js';
-import { assertWorkspaceAccess, assertWorkspaceAdmin } from '../workspace-access.js';
+import { assertOrganizationAccess, assertOrganizationAdmin } from '../organization-access.js';
 import { actorFromAuth } from '../actor.js';
 import { asyncRoute, sendCreated, sendJson, sendList, unwrapItems } from '../route-helpers.js';
 
 export const paymentOrdersRouter = Router();
 
-const workspaceParamsSchema = z.object({
-  workspaceId: z.string().uuid(),
+const organizationParamsSchema = z.object({
+  organizationId: z.string().uuid(),
 });
 
-const paymentOrderParamsSchema = workspaceParamsSchema.extend({
+const paymentOrderParamsSchema = organizationParamsSchema.extend({
   paymentOrderId: z.string().uuid(),
 });
 
@@ -90,12 +90,12 @@ const proofQuerySchema = z.object({
   format: z.enum(['json', 'markdown']).default('json'),
 });
 
-paymentOrdersRouter.get('/workspaces/:workspaceId/payment-orders', asyncRoute(async (req, res) => {
-    const { workspaceId } = workspaceParamsSchema.parse(req.params);
+paymentOrdersRouter.get('/organizations/:organizationId/payment-orders', asyncRoute(async (req, res) => {
+    const { organizationId } = organizationParamsSchema.parse(req.params);
     const query = listPaymentOrdersQuerySchema.parse(req.query);
-    await assertWorkspaceAccess(workspaceId, req.auth!);
+    await assertOrganizationAccess(organizationId, req.auth!);
 
-    const result = await listPaymentOrders(workspaceId, {
+    const result = await listPaymentOrders(organizationId, {
       limit: query.limit,
       state: query.state,
       paymentRunId: query.paymentRunId,
@@ -107,14 +107,14 @@ paymentOrdersRouter.get('/workspaces/:workspaceId/payment-orders', asyncRoute(as
     });
 }));
 
-paymentOrdersRouter.post('/workspaces/:workspaceId/payment-orders', asyncRoute(async (req, res) => {
-    const { workspaceId } = workspaceParamsSchema.parse(req.params);
-    await assertWorkspaceAdmin(workspaceId, req.auth!);
+paymentOrdersRouter.post('/organizations/:organizationId/payment-orders', asyncRoute(async (req, res) => {
+    const { organizationId } = organizationParamsSchema.parse(req.params);
+    await assertOrganizationAdmin(organizationId, req.auth!);
     const input = createPaymentOrderSchema.parse(req.body);
     const actor = actorFromAuth(req.auth!);
 
     const detail = await createPaymentOrder({
-      workspaceId,
+      organizationId,
       ...actor,
       destinationId: input.destinationId,
       sourceTreasuryWalletId: input.sourceTreasuryWalletId,
@@ -133,21 +133,21 @@ paymentOrdersRouter.post('/workspaces/:workspaceId/payment-orders', asyncRoute(a
     sendCreated(res, detail);
 }));
 
-paymentOrdersRouter.get('/workspaces/:workspaceId/payment-orders/:paymentOrderId', asyncRoute(async (req, res) => {
-    const { workspaceId, paymentOrderId } = paymentOrderParamsSchema.parse(req.params);
-    await assertWorkspaceAccess(workspaceId, req.auth!);
-    sendJson(res, await getPaymentOrderDetail(workspaceId, paymentOrderId));
+paymentOrdersRouter.get('/organizations/:organizationId/payment-orders/:paymentOrderId', asyncRoute(async (req, res) => {
+    const { organizationId, paymentOrderId } = paymentOrderParamsSchema.parse(req.params);
+    await assertOrganizationAccess(organizationId, req.auth!);
+    sendJson(res, await getPaymentOrderDetail(organizationId, paymentOrderId));
 }));
 
-paymentOrdersRouter.patch('/workspaces/:workspaceId/payment-orders/:paymentOrderId', async (req, res, next) => {
+paymentOrdersRouter.patch('/organizations/:organizationId/payment-orders/:paymentOrderId', async (req, res, next) => {
   try {
-    const { workspaceId, paymentOrderId } = paymentOrderParamsSchema.parse(req.params);
-    await assertWorkspaceAdmin(workspaceId, req.auth!);
+    const { organizationId, paymentOrderId } = paymentOrderParamsSchema.parse(req.params);
+    await assertOrganizationAdmin(organizationId, req.auth!);
     const input = updatePaymentOrderSchema.parse(req.body);
     const actor = actorFromAuth(req.auth!);
 
     res.json(await updatePaymentOrder({
-      workspaceId,
+      organizationId,
       paymentOrderId,
       ...actor,
       input: {
@@ -160,14 +160,14 @@ paymentOrdersRouter.patch('/workspaces/:workspaceId/payment-orders/:paymentOrder
   }
 });
 
-paymentOrdersRouter.post('/workspaces/:workspaceId/payment-orders/:paymentOrderId/submit', async (req, res, next) => {
+paymentOrdersRouter.post('/organizations/:organizationId/payment-orders/:paymentOrderId/submit', async (req, res, next) => {
   try {
-    const { workspaceId, paymentOrderId } = paymentOrderParamsSchema.parse(req.params);
-    await assertWorkspaceAdmin(workspaceId, req.auth!);
+    const { organizationId, paymentOrderId } = paymentOrderParamsSchema.parse(req.params);
+    await assertOrganizationAdmin(organizationId, req.auth!);
     const actor = actorFromAuth(req.auth!);
 
     res.json(await submitPaymentOrder({
-      workspaceId,
+      organizationId,
       paymentOrderId,
       ...actor,
     }));
@@ -176,14 +176,14 @@ paymentOrdersRouter.post('/workspaces/:workspaceId/payment-orders/:paymentOrderI
   }
 });
 
-paymentOrdersRouter.post('/workspaces/:workspaceId/payment-orders/:paymentOrderId/cancel', async (req, res, next) => {
+paymentOrdersRouter.post('/organizations/:organizationId/payment-orders/:paymentOrderId/cancel', async (req, res, next) => {
   try {
-    const { workspaceId, paymentOrderId } = paymentOrderParamsSchema.parse(req.params);
-    await assertWorkspaceAdmin(workspaceId, req.auth!);
+    const { organizationId, paymentOrderId } = paymentOrderParamsSchema.parse(req.params);
+    await assertOrganizationAdmin(organizationId, req.auth!);
     const actor = actorFromAuth(req.auth!);
 
     res.json(await cancelPaymentOrder({
-      workspaceId,
+      organizationId,
       paymentOrderId,
       ...actor,
     }));
@@ -193,16 +193,16 @@ paymentOrdersRouter.post('/workspaces/:workspaceId/payment-orders/:paymentOrderI
 });
 
 paymentOrdersRouter.post(
-  '/workspaces/:workspaceId/payment-orders/:paymentOrderId/prepare-execution',
+  '/organizations/:organizationId/payment-orders/:paymentOrderId/prepare-execution',
   async (req, res, next) => {
     try {
-      const { workspaceId, paymentOrderId } = paymentOrderParamsSchema.parse(req.params);
-      await assertWorkspaceAdmin(workspaceId, req.auth!);
+      const { organizationId, paymentOrderId } = paymentOrderParamsSchema.parse(req.params);
+      await assertOrganizationAdmin(organizationId, req.auth!);
       const input = prepareExecutionSchema.parse(req.body);
       const actor = actorFromAuth(req.auth!);
 
       const prepared = await preparePaymentOrderExecution({
-        workspaceId,
+        organizationId,
         paymentOrderId,
         ...actor,
         sourceTreasuryWalletId: input.sourceTreasuryWalletId,
@@ -216,16 +216,16 @@ paymentOrdersRouter.post(
 );
 
 paymentOrdersRouter.post(
-  '/workspaces/:workspaceId/payment-orders/:paymentOrderId/create-execution',
+  '/organizations/:organizationId/payment-orders/:paymentOrderId/create-execution',
   async (req, res, next) => {
     try {
-      const { workspaceId, paymentOrderId } = paymentOrderParamsSchema.parse(req.params);
-      await assertWorkspaceAdmin(workspaceId, req.auth!);
+      const { organizationId, paymentOrderId } = paymentOrderParamsSchema.parse(req.params);
+      await assertOrganizationAdmin(organizationId, req.auth!);
       const input = createExecutionSchema.parse(req.body);
       const actor = actorFromAuth(req.auth!);
 
       const executionRecord = await createPaymentOrderExecution({
-        workspaceId,
+        organizationId,
         paymentOrderId,
         ...actor,
         executionSource: input.executionSource,
@@ -241,16 +241,16 @@ paymentOrdersRouter.post(
 );
 
 paymentOrdersRouter.post(
-  '/workspaces/:workspaceId/payment-orders/:paymentOrderId/attach-signature',
+  '/organizations/:organizationId/payment-orders/:paymentOrderId/attach-signature',
   async (req, res, next) => {
     try {
-      const { workspaceId, paymentOrderId } = paymentOrderParamsSchema.parse(req.params);
-      await assertWorkspaceAdmin(workspaceId, req.auth!);
+      const { organizationId, paymentOrderId } = paymentOrderParamsSchema.parse(req.params);
+      await assertOrganizationAdmin(organizationId, req.auth!);
       const input = attachSignatureSchema.parse(req.body);
       const actor = actorFromAuth(req.auth!);
 
       const executionRecord = await attachPaymentOrderSignature({
-        workspaceId,
+        organizationId,
         paymentOrderId,
         ...actor,
         submittedSignature: input.submittedSignature,
@@ -267,13 +267,13 @@ paymentOrdersRouter.post(
 );
 
 paymentOrdersRouter.get(
-  '/workspaces/:workspaceId/payment-orders/:paymentOrderId/proof',
+  '/organizations/:organizationId/payment-orders/:paymentOrderId/proof',
   async (req, res, next) => {
     try {
-      const { workspaceId, paymentOrderId } = paymentOrderParamsSchema.parse(req.params);
+      const { organizationId, paymentOrderId } = paymentOrderParamsSchema.parse(req.params);
       const query = proofQuerySchema.parse(req.query);
-      await assertWorkspaceAccess(workspaceId, req.auth!);
-      const proof = await buildPaymentOrderProofPacket(workspaceId, paymentOrderId);
+      await assertOrganizationAccess(organizationId, req.auth!);
+      const proof = await buildPaymentOrderProofPacket(organizationId, paymentOrderId);
       if (query.format === 'markdown') {
         res.setHeader('content-type', 'text/markdown; charset=utf-8');
         res.setHeader('content-disposition', `attachment; filename="payment-order-${paymentOrderId}-proof.md"`);

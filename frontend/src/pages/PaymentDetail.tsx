@@ -147,7 +147,7 @@ function downloadJson(filename: string, data: unknown) {
 }
 
 export function PaymentDetailPage() {
-  const { workspaceId, paymentOrderId } = useParams<{ workspaceId: string; paymentOrderId: string }>();
+  const { organizationId, paymentOrderId } = useParams<{ organizationId: string; paymentOrderId: string }>();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
 
@@ -161,9 +161,9 @@ export function PaymentDetailPage() {
   useEffect(() => setPrepared(null), [selectedSourceAddressId]);
 
   const orderQuery = useQuery({
-    queryKey: ['payment-order', workspaceId, paymentOrderId] as const,
-    queryFn: () => api.getPaymentOrderDetail(workspaceId!, paymentOrderId!),
-    enabled: Boolean(workspaceId && paymentOrderId),
+    queryKey: ['payment-order', organizationId, paymentOrderId] as const,
+    queryFn: () => api.getPaymentOrderDetail(organizationId!, paymentOrderId!),
+    enabled: Boolean(organizationId && paymentOrderId),
     refetchInterval: (query) => {
       if (typeof document !== 'undefined' && document.hidden) return false;
       const s = query.state.data?.derivedState;
@@ -173,9 +173,9 @@ export function PaymentDetailPage() {
   });
 
   const addressesQuery = useQuery({
-    queryKey: ['addresses', workspaceId] as const,
-    queryFn: () => api.listTreasuryWallets(workspaceId!),
-    enabled: Boolean(workspaceId),
+    queryKey: ['addresses', organizationId] as const,
+    queryFn: () => api.listTreasuryWallets(organizationId!),
+    enabled: Boolean(organizationId),
     refetchInterval: 30_000,
   });
 
@@ -187,10 +187,10 @@ export function PaymentDetailPage() {
     || '';
 
   const submitMutation = useMutation({
-    mutationFn: () => api.submitPaymentOrder(workspaceId!, paymentOrderId!),
+    mutationFn: () => api.submitPaymentOrder(organizationId!, paymentOrderId!),
     onSuccess: async () => {
       success('Submitted for approval.');
-      await queryClient.invalidateQueries({ queryKey: ['payment-order', workspaceId, paymentOrderId] });
+      await queryClient.invalidateQueries({ queryKey: ['payment-order', organizationId, paymentOrderId] });
     },
     onError: (err) => toastError(err instanceof Error ? err.message : 'Could not submit.'),
   });
@@ -199,11 +199,11 @@ export function PaymentDetailPage() {
     mutationFn: () => {
       const transferRequestId = orderQuery.data?.transferRequestId;
       if (!transferRequestId) throw new Error('Approval request not ready yet — try again in a moment.');
-      return api.createApprovalDecision(workspaceId!, transferRequestId, { action: 'approve' });
+      return api.createApprovalDecision(organizationId!, transferRequestId, { action: 'approve' });
     },
     onSuccess: async () => {
       success('Approved. Ready to sign.');
-      await queryClient.invalidateQueries({ queryKey: ['payment-order', workspaceId, paymentOrderId] });
+      await queryClient.invalidateQueries({ queryKey: ['payment-order', organizationId, paymentOrderId] });
     },
     onError: (err) => toastError(err instanceof Error ? err.message : 'Could not approve.'),
   });
@@ -215,14 +215,14 @@ export function PaymentDetailPage() {
       if (!sourceAddressRow?.address) throw new Error('Source wallet is still loading.');
       let packet = prepared;
       if (!packet || packet.signerWallet !== sourceAddressRow.address) {
-        const preparation = await api.preparePaymentOrderExecution(workspaceId!, paymentOrderId!, {
+        const preparation = await api.preparePaymentOrderExecution(organizationId!, paymentOrderId!, {
           sourceTreasuryWalletId: effectiveSourceAddressId,
         });
         packet = preparation.executionPacket;
         setPrepared(packet);
       }
       const signature = await signAndSubmitPreparedPayment(packet!, selectedWalletId);
-      await api.attachPaymentOrderSignature(workspaceId!, paymentOrderId!, {
+      await api.attachPaymentOrderSignature(organizationId!, paymentOrderId!, {
         submittedSignature: signature,
         submittedAt: new Date().toISOString(),
       });
@@ -230,7 +230,7 @@ export function PaymentDetailPage() {
     },
     onSuccess: async (signature) => {
       success(`Signed · ${shortenAddress(signature, 8, 8)}`);
-      await queryClient.invalidateQueries({ queryKey: ['payment-order', workspaceId, paymentOrderId] });
+      await queryClient.invalidateQueries({ queryKey: ['payment-order', organizationId, paymentOrderId] });
     },
     onError: (err) => {
       const message = err instanceof Error ? err.message : 'Could not sign payment.';
@@ -243,7 +243,7 @@ export function PaymentDetailPage() {
   });
 
   const proofMutation = useMutation({
-    mutationFn: () => api.getPaymentOrderProof(workspaceId!, paymentOrderId!),
+    mutationFn: () => api.getPaymentOrderProof(organizationId!, paymentOrderId!),
     onSuccess: (proof) => {
       downloadJson(`payment-proof-${paymentOrderId}.json`, proof);
       success('Proof packet downloaded.');
@@ -252,15 +252,15 @@ export function PaymentDetailPage() {
   });
 
   const cancelMutation = useMutation({
-    mutationFn: () => api.cancelPaymentOrder(workspaceId!, paymentOrderId!),
+    mutationFn: () => api.cancelPaymentOrder(organizationId!, paymentOrderId!),
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ['payment-orders', workspaceId] });
-      navigate(`/workspaces/${workspaceId}/payments`);
+      await queryClient.invalidateQueries({ queryKey: ['payment-orders', organizationId] });
+      navigate(`/organizations/${organizationId}/payments`);
     },
     onError: (err) => toastError(err instanceof Error ? err.message : 'Could not cancel.'),
   });
 
-  if (!workspaceId || !paymentOrderId) {
+  if (!organizationId || !paymentOrderId) {
     return (
       <main className="page-frame" data-layout="rd">
         <div className="rd-page-container">
@@ -290,7 +290,7 @@ export function PaymentDetailPage() {
     return (
       <main className="page-frame" data-layout="rd">
         <div className="rd-page-container">
-          <Link to={`/workspaces/${workspaceId}/payments`} className="rd-back">
+          <Link to={`/organizations/${organizationId}/payments`} className="rd-back">
             <span className="rd-back-arrow">←</span>
             <span>Payments</span>
           </Link>
@@ -321,7 +321,7 @@ export function PaymentDetailPage() {
   return (
     <main className="page-frame" data-layout="rd">
       <div className="rd-page-container">
-        <Link to={`/workspaces/${workspaceId}/payments`} className="rd-back">
+        <Link to={`/organizations/${organizationId}/payments`} className="rd-back">
           <span className="rd-back-arrow" aria-hidden>
             ←
           </span>

@@ -11,6 +11,8 @@ import { resetRateLimitBuckets } from '../src/rate-limit.js';
 const TRUNCATE_SQL = `
 TRUNCATE TABLE
   auth_sessions,
+  wallet_challenges,
+  user_wallets,
   idempotency_records,
   organization_memberships,
   approval_decisions,
@@ -32,7 +34,7 @@ TRUNCATE TABLE
   destinations,
   counterparties,
   treasury_wallets,
-  workspaces,
+  
   organizations,
   users
 RESTART IDENTITY CASCADE
@@ -97,10 +99,10 @@ test('public health, capabilities, and OpenAPI endpoints expose the lean API sur
   assert.equal(openApiResponse.status, 200);
   const openApi = await openApiResponse.json();
   assert.equal(openApi.openapi, '3.1.0');
-  assert.ok(openApi.paths['/workspaces/{workspaceId}/payment-requests']);
-  assert.ok(openApi.paths['/workspaces/{workspaceId}/payment-orders']);
-  assert.equal(openApi.paths['/workspaces/{workspaceId}/api-keys'], undefined);
-  assert.equal(openApi.paths['/workspaces/{workspaceId}/agent/tasks'], undefined);
+  assert.ok(openApi.paths['/organizations/{organizationId}/payment-requests']);
+  assert.ok(openApi.paths['/organizations/{organizationId}/payment-orders']);
+  assert.equal(openApi.paths['/organizations/{organizationId}/api-keys'], undefined);
+  assert.equal(openApi.paths['/organizations/{organizationId}/agent/tasks'], undefined);
 });
 
 test('public routes enforce configured rate limits', async () => {
@@ -127,7 +129,7 @@ test('public routes enforce configured rate limits', async () => {
   }
 });
 
-test('session auth supports organization, workspace, address-book, and policy setup', async () => {
+test('session auth supports organization, address-book, and policy setup', async () => {
   const register = await post('/auth/register', {
     email: 'ops@example.com',
     password: 'DemoPass123!',
@@ -135,6 +137,7 @@ test('session auth supports organization, workspace, address-book, and policy se
   });
   assert.equal(register.status, 'authenticated');
   assert.ok(register.sessionToken);
+  await verifyRegisteredEmail(register);
 
   const organization = await post(
     '/organizations',
@@ -143,15 +146,8 @@ test('session auth supports organization, workspace, address-book, and policy se
   );
   assert.equal(organization.organizationName, 'Acme Treasury');
 
-  const workspace = await post(
-    `/organizations/${organization.organizationId}/workspaces`,
-    { workspaceName: 'USDC Ops' },
-    register.sessionToken,
-  );
-  assert.equal(workspace.workspaceName, 'USDC Ops');
-
   const treasuryWallet = await post(
-    `/workspaces/${workspace.workspaceId}/treasury-wallets`,
+    `/organizations/${organization.organizationId}/treasury-wallets`,
     {
       chain: 'solana',
       address: Keypair.generate().publicKey.toBase58(),
@@ -162,7 +158,7 @@ test('session auth supports organization, workspace, address-book, and policy se
   assert.equal(treasuryWallet.displayName, 'Ops Vault');
 
   const counterparty = await post(
-    `/workspaces/${workspace.workspaceId}/counterparties`,
+    `/organizations/${organization.organizationId}/counterparties`,
     { displayName: 'Fuyo LLC' },
     register.sessionToken,
   );
@@ -170,7 +166,7 @@ test('session auth supports organization, workspace, address-book, and policy se
 
   const destinationWallet = Keypair.generate().publicKey.toBase58();
   const destination = await post(
-    `/workspaces/${workspace.workspaceId}/destinations`,
+    `/organizations/${organization.organizationId}/destinations`,
     {
       walletAddress: destinationWallet,
       label: 'Fuyo payout wallet',
@@ -182,10 +178,10 @@ test('session auth supports organization, workspace, address-book, and policy se
   assert.equal(destination.label, 'Fuyo payout wallet');
   assert.equal(destination.trustState, 'trusted');
 
-  const policy = await get(`/workspaces/${workspace.workspaceId}/approval-policy`, register.sessionToken);
+  const policy = await get(`/organizations/${organization.organizationId}/approval-policy`, register.sessionToken);
   assert.equal(policy.isActive, true);
 
-  const inbox = await get(`/workspaces/${workspace.workspaceId}/approval-inbox`, register.sessionToken);
+  const inbox = await get(`/organizations/${organization.organizationId}/approval-inbox`, register.sessionToken);
   assert.deepEqual(inbox.items, []);
 
   const session = await get('/auth/session', register.sessionToken);
@@ -212,6 +208,7 @@ test('auth registration and login require the right password', async () => {
     displayName: 'Auth User',
   });
   assert.equal(register.status, 'authenticated');
+  await verifyRegisteredEmail(register);
 
   const duplicateRegister = await fetch(`${baseUrl}/auth/register`, {
     method: 'POST',
@@ -245,6 +242,48 @@ test('auth registration and login require the right password', async () => {
   assert.equal(login.user.email, 'auth@example.com');
 });
 
+test('email verification gates organization setup and wallet registration is user-scoped', async () => {
+  const register = await post('/auth/register', {
+    email: 'onboarding@example.com',
+    password: 'DemoPass123!',
+    displayName: 'Onboarding User',
+  });
+  assert.equal(register.user.emailVerifiedAt, null);
+
+  const blockedOrganization = await fetch(`${baseUrl}/organizations`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      ...authHeaders(register.sessionToken),
+    },
+    body: JSON.stringify({ organizationName: 'Blocked Org' }),
+  });
+  assert.equal(blockedOrganization.status, 403);
+
+  await verifyRegisteredEmail(register);
+
+  const organization = await post('/organizations', { organizationName: 'Verified Org' }, register.sessionToken);
+  assert.equal(organization.organizationName, 'Verified Org');
+
+  const embeddedWallet = await post(
+    '/user-wallets/embedded',
+    {
+      walletAddress: Keypair.generate().publicKey.toBase58(),
+      provider: 'privy',
+      providerWalletId: 'privy-wallet-1',
+      label: 'Embedded signer',
+    },
+    register.sessionToken,
+  );
+  assert.equal(embeddedWallet.walletType, 'privy_embedded');
+  assert.equal(embeddedWallet.provider, 'privy');
+  assert.ok(embeddedWallet.verifiedAt);
+
+  const wallets = await get('/user-wallets', register.sessionToken);
+  assert.equal(wallets.items.length, 1);
+  assert.equal(wallets.items[0].userWalletId, embeddedWallet.userWalletId);
+});
+
 test('service token protection only applies to internal routes', async () => {
   const originalServiceToken = config.controlPlaneServiceToken;
   const originalNodeEnv = config.nodeEnv;
@@ -259,6 +298,7 @@ test('service token protection only applies to internal routes', async () => {
       displayName: 'Service Token Check',
     });
     assert.equal(register.status, 'authenticated');
+    await verifyRegisteredEmail(register);
 
     const organizations = await get('/organizations', register.sessionToken);
     assert.deepEqual(organizations.items, []);
@@ -299,6 +339,13 @@ async function post(path: string, body: unknown, token?: string) {
     assert.fail(`${path} returned ${response.status}: ${await response.text()}`);
   }
   return response.json();
+}
+
+async function verifyRegisteredEmail(register: { sessionToken: string; devEmailVerificationCode?: string | null }) {
+  const code = register.devEmailVerificationCode;
+  assert.ok(code, 'registration should return a demo email verification code until email delivery exists');
+  const result = await post('/auth/verify-email', { code }, register.sessionToken);
+  assert.ok(result.user.emailVerifiedAt);
 }
 
 function authHeaders(token: string) {

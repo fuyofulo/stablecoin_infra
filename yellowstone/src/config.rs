@@ -9,7 +9,7 @@ struct FileConfig {
     clickhouse_database: String,
     clickhouse_user: String,
     control_plane_api_url: String,
-    workspace_refresh_interval_seconds: u64,
+    organization_refresh_interval_seconds: u64,
 }
 
 pub struct AppConfig {

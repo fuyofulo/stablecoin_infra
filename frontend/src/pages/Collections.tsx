@@ -96,7 +96,7 @@ function usdcToRaw(value: string): string {
 }
 
 export function CollectionsPage({ session: _session }: { session: AuthenticatedSession }) {
-  const { workspaceId } = useParams<{ workspaceId: string }>();
+  const { organizationId } = useParams<{ organizationId: string }>();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { success, error: toastError } = useToast();
@@ -107,39 +107,39 @@ export function CollectionsPage({ session: _session }: { session: AuthenticatedS
   const [filter, setFilter] = useState<'all' | 'open' | 'collected' | 'needs_review'>('all');
 
   const collectionsQuery = useQuery({
-    queryKey: ['collections', workspaceId] as const,
-    queryFn: () => api.listCollections(workspaceId!),
-    enabled: Boolean(workspaceId),
+    queryKey: ['collections', organizationId] as const,
+    queryFn: () => api.listCollections(organizationId!),
+    enabled: Boolean(organizationId),
     refetchInterval: 10_000,
   });
   const collectionRunsQuery = useQuery({
-    queryKey: ['collection-runs', workspaceId] as const,
-    queryFn: () => api.listCollectionRuns(workspaceId!),
-    enabled: Boolean(workspaceId),
+    queryKey: ['collection-runs', organizationId] as const,
+    queryFn: () => api.listCollectionRuns(organizationId!),
+    enabled: Boolean(organizationId),
     refetchInterval: 10_000,
   });
   const walletsQuery = useQuery({
-    queryKey: ['treasury-wallets', workspaceId] as const,
-    queryFn: () => api.listTreasuryWallets(workspaceId!),
-    enabled: Boolean(workspaceId),
+    queryKey: ['treasury-wallets', organizationId] as const,
+    queryFn: () => api.listTreasuryWallets(organizationId!),
+    enabled: Boolean(organizationId),
   });
   const counterpartiesQuery = useQuery({
-    queryKey: ['counterparties', workspaceId] as const,
-    queryFn: () => api.listCounterparties(workspaceId!),
-    enabled: Boolean(workspaceId),
+    queryKey: ['counterparties', organizationId] as const,
+    queryFn: () => api.listCounterparties(organizationId!),
+    enabled: Boolean(organizationId),
   });
   const collectionSourcesQuery = useQuery({
-    queryKey: ['collection-sources', workspaceId] as const,
-    queryFn: () => api.listCollectionSources(workspaceId!),
-    enabled: Boolean(workspaceId),
+    queryKey: ['collection-sources', organizationId] as const,
+    queryFn: () => api.listCollectionSources(organizationId!),
+    enabled: Boolean(organizationId),
   });
 
-  if (!workspaceId) {
+  if (!organizationId) {
     return (
       <main className="page-frame">
         <div className="rd-state">
-          <h2 className="rd-state-title">Workspace unavailable</h2>
-          <p className="rd-state-body">Pick a workspace from the sidebar.</p>
+          <h2 className="rd-state-title">Organization unavailable</h2>
+          <p className="rd-state-body">Pick a organization from the sidebar.</p>
         </div>
       </main>
     );
@@ -168,7 +168,7 @@ export function CollectionsPage({ session: _session }: { session: AuthenticatedS
         tone: statusToneForCollection(c.derivedState),
         origin: 'single',
         createdAt: c.createdAt,
-        to: `/workspaces/${workspaceId}/collections/${c.collectionRequestId}`,
+        to: `/organizations/${organizationId}/collections/${c.collectionRequestId}`,
       })),
       ...runs.map<UnifiedRow>((r) => ({
         kind: 'run',
@@ -184,11 +184,11 @@ export function CollectionsPage({ session: _session }: { session: AuthenticatedS
         origin: 'run',
         originLabel: `Batch · ${r.summary.total} rows`,
         createdAt: r.createdAt,
-        to: `/workspaces/${workspaceId}/collection-runs/${r.collectionRunId}`,
+        to: `/organizations/${organizationId}/collection-runs/${r.collectionRunId}`,
       })),
     ];
     return list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-  }, [standalone, runs, workspaceId]);
+  }, [standalone, runs, organizationId]);
 
   const filteredRows = useMemo(() => {
     let out = rows;
@@ -408,7 +408,7 @@ export function CollectionsPage({ session: _session }: { session: AuthenticatedS
               <li
                 key={r.collectionRunId}
                 onClick={() =>
-                  navigate(`/workspaces/${workspaceId}/collection-runs/${r.collectionRunId}`)
+                  navigate(`/organizations/${organizationId}/collection-runs/${r.collectionRunId}`)
                 }
                 style={{
                   cursor: 'pointer',
@@ -441,7 +441,7 @@ export function CollectionsPage({ session: _session }: { session: AuthenticatedS
 
       {createOpen ? (
         <CreateCollectionDialog
-          workspaceId={workspaceId}
+          organizationId={organizationId}
           wallets={wallets}
           counterparties={counterparties}
           collectionSources={collectionSources}
@@ -449,9 +449,9 @@ export function CollectionsPage({ session: _session }: { session: AuthenticatedS
           onSuccess={async () => {
             setCreateOpen(false);
             success('Collection created. Waiting for payer.');
-            await queryClient.invalidateQueries({ queryKey: ['collections', workspaceId] });
+            await queryClient.invalidateQueries({ queryKey: ['collections', organizationId] });
             await queryClient.invalidateQueries({
-              queryKey: ['collection-sources', workspaceId],
+              queryKey: ['collection-sources', organizationId],
             });
           }}
           onError={(message) => toastError(message)}
@@ -460,14 +460,14 @@ export function CollectionsPage({ session: _session }: { session: AuthenticatedS
 
       {importOpen ? (
         <ImportCollectionCsvDialog
-          workspaceId={workspaceId}
+          organizationId={organizationId}
           wallets={wallets}
           onClose={() => setImportOpen(false)}
           onSuccess={async (runName, rowCount) => {
             setImportOpen(false);
             success(`Imported "${runName}" with ${rowCount} rows.`);
-            await queryClient.invalidateQueries({ queryKey: ['collection-runs', workspaceId] });
-            await queryClient.invalidateQueries({ queryKey: ['collections', workspaceId] });
+            await queryClient.invalidateQueries({ queryKey: ['collection-runs', organizationId] });
+            await queryClient.invalidateQueries({ queryKey: ['collections', organizationId] });
           }}
           onError={(message) => toastError(message)}
         />
@@ -477,7 +477,7 @@ export function CollectionsPage({ session: _session }: { session: AuthenticatedS
 }
 
 function CreateCollectionDialog(props: {
-  workspaceId: string;
+  organizationId: string;
   wallets: TreasuryWallet[];
   counterparties: Counterparty[];
   collectionSources: CollectionSource[];
@@ -485,7 +485,7 @@ function CreateCollectionDialog(props: {
   onSuccess: () => void;
   onError: (message: string) => void;
 }) {
-  const { workspaceId, wallets, counterparties, collectionSources, onClose, onSuccess, onError } =
+  const { organizationId, wallets, counterparties, collectionSources, onClose, onSuccess, onError } =
     props;
   const queryClient = useQueryClient();
   const { success } = useToast();
@@ -530,7 +530,7 @@ function CreateCollectionDialog(props: {
       if (payerMode === 'new' && !newPayerAddress.trim()) {
         throw new Error('Enter the payer wallet address or switch the picker back to "Any payer".');
       }
-      return api.createCollection(workspaceId, {
+      return api.createCollection(organizationId, {
         receivingTreasuryWalletId,
         counterpartyId: String(form.get('counterpartyId') ?? '') || undefined,
         collectionSourceId: payerMode === 'existing' ? selectedSourceId : undefined,
@@ -775,14 +775,14 @@ function CreateCollectionDialog(props: {
       </div>
       {addSourceOpen ? (
         <AddCollectionSourceDialog
-          workspaceId={workspaceId}
+          organizationId={organizationId}
           counterparties={counterparties}
           onClose={() => setAddSourceOpen(false)}
           onSuccess={() => {
             setAddSourceOpen(false);
             success('Payer source saved.');
             queryClient.invalidateQueries({
-              queryKey: ['collection-sources', workspaceId],
+              queryKey: ['collection-sources', organizationId],
             });
           }}
           onError={(message) => onError(message)}
@@ -793,13 +793,13 @@ function CreateCollectionDialog(props: {
 }
 
 function ImportCollectionCsvDialog(props: {
-  workspaceId: string;
+  organizationId: string;
   wallets: TreasuryWallet[];
   onClose: () => void;
   onSuccess: (runName: string, rowCount: number) => void;
   onError: (message: string) => void;
 }) {
-  const { workspaceId, wallets, onClose, onSuccess, onError } = props;
+  const { organizationId, wallets, onClose, onSuccess, onError } = props;
   const [step, setStep] = useState<'edit' | 'preview'>('edit');
   const [csvText, setCsvText] = useState('');
   const [runName, setRunName] = useState('');
@@ -819,7 +819,7 @@ function ImportCollectionCsvDialog(props: {
     mutationFn: async () => {
       const csv = csvText.trim();
       if (!csv) throw new Error('Paste at least one CSV row.');
-      const result = await api.importCollectionRunCsv(workspaceId, {
+      const result = await api.importCollectionRunCsv(organizationId, {
         csv,
         runName: runName.trim() || undefined,
         receivingTreasuryWalletId: receivingWalletId || undefined,

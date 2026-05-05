@@ -2,15 +2,15 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { queryClickHouse } from '../clickhouse.js';
 import { config } from '../config.js';
-import { listWorkspaceExceptions } from '../reconciliation.js';
+import { listOrganizationExceptions } from '../reconciliation.js';
 import { prisma } from '../prisma.js';
-import { assertWorkspaceAccess } from '../workspace-access.js';
-import { listWorkspaceAuditLog } from '../workspace-audit-log.js';
+import { assertOrganizationAccess } from '../organization-access.js';
+import { listOrganizationAuditLog } from '../organization-audit-log.js';
 
 export const opsRouter = Router();
 
-const workspaceParamsSchema = z.object({
-  workspaceId: z.string().uuid(),
+const organizationParamsSchema = z.object({
+  organizationId: z.string().uuid(),
 });
 
 const auditLogQuerySchema = z.object({
@@ -37,14 +37,14 @@ type MatchHealthRow = {
   p95_chain_to_match_ms: string | number | null;
 };
 
-opsRouter.get('/workspaces/:workspaceId/members', async (req, res, next) => {
+opsRouter.get('/organizations/:organizationId/members', async (req, res, next) => {
   try {
-    const { workspaceId } = workspaceParamsSchema.parse(req.params);
-    const access = await assertWorkspaceAccess(workspaceId, req.auth!);
+    const { organizationId } = organizationParamsSchema.parse(req.params);
+    const access = await assertOrganizationAccess(organizationId, req.auth!);
 
     const items = await prisma.organizationMembership.findMany({
       where: {
-        organizationId: access.workspace.organizationId,
+        organizationId: access.organization.organizationId,
         status: 'active',
       },
       include: {
@@ -75,14 +75,14 @@ opsRouter.get('/workspaces/:workspaceId/members', async (req, res, next) => {
   }
 });
 
-opsRouter.get('/workspaces/:workspaceId/audit-log', async (req, res, next) => {
+opsRouter.get('/organizations/:organizationId/audit-log', async (req, res, next) => {
   try {
-    const { workspaceId } = workspaceParamsSchema.parse(req.params);
+    const { organizationId } = organizationParamsSchema.parse(req.params);
     const query = auditLogQuerySchema.parse(req.query);
-    await assertWorkspaceAccess(workspaceId, req.auth!);
+    await assertOrganizationAccess(organizationId, req.auth!);
 
-    res.json(await listWorkspaceAuditLog({
-      workspaceId,
+    res.json(await listOrganizationAuditLog({
+      organizationId,
       limit: query.limit,
       entityType: query.entityType,
     }));
@@ -91,10 +91,10 @@ opsRouter.get('/workspaces/:workspaceId/audit-log', async (req, res, next) => {
   }
 });
 
-opsRouter.get('/workspaces/:workspaceId/ops-health', async (req, res, next) => {
+opsRouter.get('/organizations/:organizationId/ops-health', async (req, res, next) => {
   try {
-    const { workspaceId } = workspaceParamsSchema.parse(req.params);
-    await assertWorkspaceAccess(workspaceId, req.auth!);
+    const { organizationId } = organizationParamsSchema.parse(req.params);
+    await assertOrganizationAccess(organizationId, req.auth!);
 
     await prisma.$queryRaw`SELECT 1`;
 
@@ -135,7 +135,7 @@ opsRouter.get('/workspaces/:workspaceId/ops-health', async (req, res, next) => {
         WITH recent AS (
           SELECT observed_event_time, matched_at, updated_at
           FROM ${config.clickhouseDatabase}.settlement_matches
-          WHERE workspace_id = toUUID('${workspaceId}')
+          WHERE organization_id = toUUID('${organizationId}')
           ORDER BY updated_at DESC
           LIMIT 200
         )
@@ -153,7 +153,7 @@ opsRouter.get('/workspaces/:workspaceId/ops-health', async (req, res, next) => {
         FROM recent
         FORMAT JSONEachRow
       `),
-      listWorkspaceExceptions({ workspaceId, limit: 5000 }),
+      listOrganizationExceptions({ organizationId, limit: 5000 }),
     ]);
 
     const tx = txRows[0] ?? null;

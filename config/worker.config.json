@@ -4,5 +4,5 @@
   "clickhouseDatabase": "usdc_ops",
   "clickhouseUser": "default",
   "controlPlaneApiUrl": "https://api.decimal.finance",
-  "workspaceRefreshIntervalSeconds": 60
+  "organizationRefreshIntervalSeconds": 60
 }

@@ -62,12 +62,12 @@
 }
 
 :root[data-theme='dark'] .sidebar-brand strong,
-:root[data-theme='dark'] .sidebar-workspace-name {
+:root[data-theme='dark'] .sidebar-organization-name {
   color: var(--text);
 }
 
 :root[data-theme='dark'] .sidebar-brand-text span,
-:root[data-theme='dark'] .sidebar-workspace-org,
+:root[data-theme='dark'] .sidebar-organization-org,
 :root[data-theme='dark'] .sidebar-section-label {
   color: var(--text-muted);
 }

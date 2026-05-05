@@ -1,4 +1,4 @@
-use crate::control_plane::WorkspaceTransferRequestMatch;
+use crate::control_plane::OrganizationTransferRequestMatch;
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 
@@ -31,7 +31,7 @@ pub struct RequestFillState {
 
 #[derive(Clone)]
 pub struct BookRequest<'a> {
-    pub request: &'a WorkspaceTransferRequestMatch,
+    pub request: &'a OrganizationTransferRequestMatch,
     pub fill_state: RequestFillState,
 }
 
@@ -136,10 +136,10 @@ mod tests {
         id: &str,
         requested_at: DateTime<Utc>,
         amount_raw: i128,
-    ) -> WorkspaceTransferRequestMatch {
-        WorkspaceTransferRequestMatch {
+    ) -> OrganizationTransferRequestMatch {
+        OrganizationTransferRequestMatch {
             transfer_request_id: id.to_string(),
-            workspace_id: "workspace-1".to_string(),
+            organization_id: "organization-1".to_string(),
             destination_wallet_address: "Wallet111".to_string(),
             amount_raw,
             requested_at,

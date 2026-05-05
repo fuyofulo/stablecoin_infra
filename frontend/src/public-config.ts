@@ -2,13 +2,16 @@ import frontendPublicConfig from '../../config/frontend.public.json';
 
 type PublicConfig = {
   apiBaseUrl: string;
+  localApiBaseUrl?: string;
   solanaRpcUrl: string;
 };
 
 const config = frontendPublicConfig as PublicConfig;
 
 export function getPublicApiBaseUrl() {
-  const value = String(config.apiBaseUrl ?? '').trim();
+  const value = shouldUseLocalApiBaseUrl()
+    ? String(config.localApiBaseUrl ?? '').trim()
+    : String(config.apiBaseUrl ?? '').trim();
   if (!value) {
     throw new Error('config/frontend.public.json must define apiBaseUrl.');
   }
@@ -21,4 +24,12 @@ export function getPublicSolanaRpcUrl() {
     return 'https://api.mainnet-beta.solana.com';
   }
   return value;
+}
+
+function shouldUseLocalApiBaseUrl() {
+  if (typeof window === 'undefined') {
+    return false;
+  }
+
+  return window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
 }

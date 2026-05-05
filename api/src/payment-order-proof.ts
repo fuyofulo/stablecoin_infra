@@ -7,13 +7,13 @@ type LatestExecution = NonNullable<PaymentOrderDetail['reconciliationDetail']> e
   ? Latest
   : null;
 
-export async function buildPaymentOrderProofPacket(workspaceId: string, paymentOrderId: string) {
-  const detail = await getPaymentOrderDetail(workspaceId, paymentOrderId);
+export async function buildPaymentOrderProofPacket(organizationId: string, paymentOrderId: string) {
+  const detail = await getPaymentOrderDetail(organizationId, paymentOrderId);
   const reconciliation = detail.reconciliationDetail;
   const match = reconciliation?.match ?? null;
   const latestExecution = reconciliation?.latestExecution ?? null;
   const reconciliationExplanation = detail.transferRequestId
-    ? await getReconciliationExplanation(workspaceId, detail.transferRequestId)
+    ? await getReconciliationExplanation(organizationId, detail.transferRequestId)
     : null;
   const proofStatus = deriveProofStatus(detail.derivedState, reconciliation?.requestDisplayState ?? null);
   const readiness = deriveProofReadiness({
@@ -28,7 +28,7 @@ export async function buildPaymentOrderProofPacket(workspaceId: string, paymentO
   const packetBody = {
     packetType: 'stablecoin_payment_proof',
     version: 1,
-    workspaceId,
+    organizationId,
     status: proofStatus,
     readiness,
     intent: {

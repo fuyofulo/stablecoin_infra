@@ -13,20 +13,20 @@ import {
   previewCollectionRunCsv,
 } from '../collections.js';
 import { buildCollectionProofPacket, buildCollectionRunProofPacket } from '../collection-proof.js';
-import { assertWorkspaceAccess, assertWorkspaceAdmin } from '../workspace-access.js';
+import { assertOrganizationAccess, assertOrganizationAdmin } from '../organization-access.js';
 import { asyncRoute, sendCreated, sendJson, sendList, unwrapItems } from '../route-helpers.js';
 
 export const collectionsRouter = Router();
 
-const workspaceParamsSchema = z.object({
-  workspaceId: z.string().uuid(),
+const organizationParamsSchema = z.object({
+  organizationId: z.string().uuid(),
 });
 
-const collectionRequestParamsSchema = workspaceParamsSchema.extend({
+const collectionRequestParamsSchema = organizationParamsSchema.extend({
   collectionRequestId: z.string().uuid(),
 });
 
-const collectionRunParamsSchema = workspaceParamsSchema.extend({
+const collectionRunParamsSchema = organizationParamsSchema.extend({
   collectionRunId: z.string().uuid(),
 });
 
@@ -67,12 +67,12 @@ const collectionRunProofQuerySchema = z.object({
   detail: z.enum(['summary', 'compact', 'full']).default('summary'),
 });
 
-collectionsRouter.get('/workspaces/:workspaceId/collections', asyncRoute(async (req, res) => {
-  const { workspaceId } = workspaceParamsSchema.parse(req.params);
+collectionsRouter.get('/organizations/:organizationId/collections', asyncRoute(async (req, res) => {
+  const { organizationId } = organizationParamsSchema.parse(req.params);
   const query = listCollectionRequestsQuerySchema.parse(req.query);
-  await assertWorkspaceAccess(workspaceId, req.auth!);
+  await assertOrganizationAccess(organizationId, req.auth!);
 
-  const result = await listCollectionRequests(workspaceId, {
+  const result = await listCollectionRequests(organizationId, {
     limit: query.limit,
     state: query.state,
     collectionRunId: query.collectionRunId,
@@ -84,13 +84,13 @@ collectionsRouter.get('/workspaces/:workspaceId/collections', asyncRoute(async (
   });
 }));
 
-collectionsRouter.post('/workspaces/:workspaceId/collections', asyncRoute(async (req, res) => {
-  const { workspaceId } = workspaceParamsSchema.parse(req.params);
-  await assertWorkspaceAdmin(workspaceId, req.auth!);
+collectionsRouter.post('/organizations/:organizationId/collections', asyncRoute(async (req, res) => {
+  const { organizationId } = organizationParamsSchema.parse(req.params);
+  await assertOrganizationAdmin(organizationId, req.auth!);
   const input = createCollectionRequestSchema.parse(req.body);
 
   sendCreated(res, await createCollectionRequest({
-    workspaceId,
+    organizationId,
     actorUserId: req.auth!.userId,
     collectionRunId: input.collectionRunId,
     receivingTreasuryWalletId: input.receivingTreasuryWalletId,
@@ -107,58 +107,58 @@ collectionsRouter.post('/workspaces/:workspaceId/collections', asyncRoute(async 
   }));
 }));
 
-collectionsRouter.post('/workspaces/:workspaceId/collections/import-csv/preview', asyncRoute(async (req, res) => {
-  const { workspaceId } = workspaceParamsSchema.parse(req.params);
-  await assertWorkspaceAccess(workspaceId, req.auth!);
+collectionsRouter.post('/organizations/:organizationId/collections/import-csv/preview', asyncRoute(async (req, res) => {
+  const { organizationId } = organizationParamsSchema.parse(req.params);
+  await assertOrganizationAccess(organizationId, req.auth!);
   const input = z.object({
     csv: z.string().min(1),
     receivingTreasuryWalletId: z.string().uuid().optional(),
   }).parse(req.body);
 
   sendJson(res, await previewCollectionRequestsCsv({
-    workspaceId,
+    organizationId,
     csv: input.csv,
     defaultReceivingTreasuryWalletId: input.receivingTreasuryWalletId,
   }));
 }));
 
-collectionsRouter.get('/workspaces/:workspaceId/collections/:collectionRequestId', asyncRoute(async (req, res) => {
-  const { workspaceId, collectionRequestId } = collectionRequestParamsSchema.parse(req.params);
-  await assertWorkspaceAccess(workspaceId, req.auth!);
+collectionsRouter.get('/organizations/:organizationId/collections/:collectionRequestId', asyncRoute(async (req, res) => {
+  const { organizationId, collectionRequestId } = collectionRequestParamsSchema.parse(req.params);
+  await assertOrganizationAccess(organizationId, req.auth!);
 
-  sendJson(res, await getCollectionRequestDetail(workspaceId, collectionRequestId));
+  sendJson(res, await getCollectionRequestDetail(organizationId, collectionRequestId));
 }));
 
-collectionsRouter.get('/workspaces/:workspaceId/collections/:collectionRequestId/proof', asyncRoute(async (req, res) => {
-  const { workspaceId, collectionRequestId } = collectionRequestParamsSchema.parse(req.params);
-  await assertWorkspaceAccess(workspaceId, req.auth!);
-  sendJson(res, await buildCollectionProofPacket(workspaceId, collectionRequestId));
+collectionsRouter.get('/organizations/:organizationId/collections/:collectionRequestId/proof', asyncRoute(async (req, res) => {
+  const { organizationId, collectionRequestId } = collectionRequestParamsSchema.parse(req.params);
+  await assertOrganizationAccess(organizationId, req.auth!);
+  sendJson(res, await buildCollectionProofPacket(organizationId, collectionRequestId));
 }));
 
-collectionsRouter.post('/workspaces/:workspaceId/collections/:collectionRequestId/cancel', asyncRoute(async (req, res) => {
-  const { workspaceId, collectionRequestId } = collectionRequestParamsSchema.parse(req.params);
-  await assertWorkspaceAdmin(workspaceId, req.auth!);
+collectionsRouter.post('/organizations/:organizationId/collections/:collectionRequestId/cancel', asyncRoute(async (req, res) => {
+  const { organizationId, collectionRequestId } = collectionRequestParamsSchema.parse(req.params);
+  await assertOrganizationAdmin(organizationId, req.auth!);
 
   sendJson(res, await cancelCollectionRequest({
-    workspaceId,
+    organizationId,
     collectionRequestId,
     actorUserId: req.auth!.userId,
   }));
 }));
 
-collectionsRouter.get('/workspaces/:workspaceId/collection-runs', asyncRoute(async (req, res) => {
-  const { workspaceId } = workspaceParamsSchema.parse(req.params);
-  await assertWorkspaceAccess(workspaceId, req.auth!);
-  sendList(res, unwrapItems(await listCollectionRuns(workspaceId)), { limit: 100 });
+collectionsRouter.get('/organizations/:organizationId/collection-runs', asyncRoute(async (req, res) => {
+  const { organizationId } = organizationParamsSchema.parse(req.params);
+  await assertOrganizationAccess(organizationId, req.auth!);
+  sendList(res, unwrapItems(await listCollectionRuns(organizationId)), { limit: 100 });
 }));
 
-collectionsRouter.post('/workspaces/:workspaceId/collection-runs/import-csv', asyncRoute(async (req, res) => {
-  const { workspaceId } = workspaceParamsSchema.parse(req.params);
-  await assertWorkspaceAdmin(workspaceId, req.auth!);
+collectionsRouter.post('/organizations/:organizationId/collection-runs/import-csv', asyncRoute(async (req, res) => {
+  const { organizationId } = organizationParamsSchema.parse(req.params);
+  await assertOrganizationAdmin(organizationId, req.auth!);
   const input = collectionRunCsvSchema.parse(req.body);
 
   sendCreated(res, await importCollectionRunFromCsv({
-    workspaceId,
+    organizationId,
     actorUserId: req.auth!.userId,
     csv: input.csv,
     runName: input.runName,
@@ -167,30 +167,30 @@ collectionsRouter.post('/workspaces/:workspaceId/collection-runs/import-csv', as
   }));
 }));
 
-collectionsRouter.post('/workspaces/:workspaceId/collection-runs/import-csv/preview', asyncRoute(async (req, res) => {
-  const { workspaceId } = workspaceParamsSchema.parse(req.params);
-  await assertWorkspaceAccess(workspaceId, req.auth!);
+collectionsRouter.post('/organizations/:organizationId/collection-runs/import-csv/preview', asyncRoute(async (req, res) => {
+  const { organizationId } = organizationParamsSchema.parse(req.params);
+  await assertOrganizationAccess(organizationId, req.auth!);
   const input = collectionRunCsvSchema.pick({
     csv: true,
     receivingTreasuryWalletId: true,
   }).parse(req.body);
 
   sendJson(res, await previewCollectionRunCsv({
-    workspaceId,
+    organizationId,
     csv: input.csv,
     receivingTreasuryWalletId: input.receivingTreasuryWalletId,
   }));
 }));
 
-collectionsRouter.get('/workspaces/:workspaceId/collection-runs/:collectionRunId', asyncRoute(async (req, res) => {
-  const { workspaceId, collectionRunId } = collectionRunParamsSchema.parse(req.params);
-  await assertWorkspaceAccess(workspaceId, req.auth!);
-  sendJson(res, await getCollectionRunDetail(workspaceId, collectionRunId));
+collectionsRouter.get('/organizations/:organizationId/collection-runs/:collectionRunId', asyncRoute(async (req, res) => {
+  const { organizationId, collectionRunId } = collectionRunParamsSchema.parse(req.params);
+  await assertOrganizationAccess(organizationId, req.auth!);
+  sendJson(res, await getCollectionRunDetail(organizationId, collectionRunId));
 }));
 
-collectionsRouter.get('/workspaces/:workspaceId/collection-runs/:collectionRunId/proof', asyncRoute(async (req, res) => {
-  const { workspaceId, collectionRunId } = collectionRunParamsSchema.parse(req.params);
+collectionsRouter.get('/organizations/:organizationId/collection-runs/:collectionRunId/proof', asyncRoute(async (req, res) => {
+  const { organizationId, collectionRunId } = collectionRunParamsSchema.parse(req.params);
   const query = collectionRunProofQuerySchema.parse(req.query);
-  await assertWorkspaceAccess(workspaceId, req.auth!);
-  sendJson(res, await buildCollectionRunProofPacket(workspaceId, collectionRunId, { detail: query.detail }));
+  await assertOrganizationAccess(organizationId, req.auth!);
+  sendJson(res, await buildCollectionRunProofPacket(organizationId, collectionRunId, { detail: query.detail }));
 }));

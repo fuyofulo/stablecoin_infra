@@ -17,7 +17,7 @@ export type ApprovalReason = {
   message: string;
 };
 
-export const DEFAULT_APPROVAL_POLICY_NAME = 'Default workspace policy';
+export const DEFAULT_APPROVAL_POLICY_NAME = 'Default organization policy';
 
 export const DEFAULT_APPROVAL_POLICY_RULE: ApprovalPolicyRule = approvalPolicyRuleSchema.parse({});
 
@@ -30,7 +30,7 @@ export function normalizeApprovalPolicyRule(ruleJson: unknown): ApprovalPolicyRu
 export function serializeApprovalPolicy(policy: ApprovalPolicy) {
   return {
     approvalPolicyId: policy.approvalPolicyId,
-    workspaceId: policy.workspaceId,
+    organizationId: policy.organizationId,
     policyName: policy.policyName,
     isActive: policy.isActive,
     ruleJson: normalizeApprovalPolicyRule(policy.ruleJson),
@@ -39,12 +39,12 @@ export function serializeApprovalPolicy(policy: ApprovalPolicy) {
   };
 }
 
-export async function getOrCreateWorkspaceApprovalPolicy(workspaceId: string, client: PolicyClient = prisma) {
+export async function getOrCreateOrganizationApprovalPolicy(organizationId: string, client: PolicyClient = prisma) {
   const policy = await client.approvalPolicy.upsert({
-    where: { workspaceId },
+    where: { organizationId },
     update: {},
     create: {
-      workspaceId,
+      organizationId,
       policyName: DEFAULT_APPROVAL_POLICY_NAME,
       isActive: true,
       ruleJson: DEFAULT_APPROVAL_POLICY_RULE as Prisma.InputJsonValue,
@@ -99,14 +99,14 @@ export function evaluateApprovalPolicy(args: {
   if (!isInternal && rules.requireApprovalForExternal) {
     reasons.push({
       code: 'external_transfer_requires_approval',
-      message: 'External destinations require approval under the active workspace policy',
+      message: 'External destinations require approval under the active organization policy',
     });
   }
 
   if (isInternal && rules.requireApprovalForInternal) {
     reasons.push({
       code: 'internal_transfer_requires_approval',
-      message: 'Internal destinations require approval under the active workspace policy',
+      message: 'Internal destinations require approval under the active organization policy',
     });
   }
 
