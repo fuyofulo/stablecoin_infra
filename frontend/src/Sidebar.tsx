@@ -383,7 +383,7 @@ export function AppSidebar({
 
             <div className="ax-nav-group">
               <div className="ax-nav-group-label">Registry</div>
-              <NavLinkItem to={`${base}/wallets`} icon={icons.wallet} label="Wallets" tourKey="wallets" />
+              <NavLinkItem to={`${base}/wallets`} icon={icons.wallet} label="Treasury accounts" tourKey="wallets" />
               <NavLinkItem
                 to={`${base}/counterparties`}
                 icon={icons.counterparty}
