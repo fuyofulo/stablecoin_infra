@@ -13,6 +13,7 @@ import {
   getSquadsConfigProposal,
   getSquadsTreasuryDetail,
   getSquadsTreasuryStatus,
+  listOrganizationSquadsProposals,
   listSquadsConfigProposals,
   syncSquadsTreasuryMembers,
 } from '../squads-treasury.js';
@@ -193,6 +194,16 @@ treasuryWalletsRouter.get(
     const { organizationId, treasuryWalletId } = treasuryWalletParamsSchema.parse(req.params);
     await assertOrganizationAccess(organizationId, req.auth!);
     sendJson(res, await getSquadsTreasuryStatus(organizationId, treasuryWalletId));
+  }),
+);
+
+treasuryWalletsRouter.get(
+  '/organizations/:organizationId/squads/proposals',
+  asyncRoute(async (req, res) => {
+    const { organizationId } = organizationParamsSchema.parse(req.params);
+    await assertOrganizationAccess(organizationId, req.auth!);
+    const query = listSquadsConfigProposalsQuerySchema.parse(req.query);
+    sendList(res, unwrapItems(await listOrganizationSquadsProposals(organizationId, req.auth!.userId, query)));
   }),
 );
 

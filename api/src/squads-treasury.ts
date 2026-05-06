@@ -335,6 +335,63 @@ export async function listSquadsConfigProposals(
   return { items };
 }
 
+// Aggregates Squads config proposals across every Squads treasury in the
+// organization that the actor is a member of. Treasuries the actor isn't
+// a member of are skipped silently (403 not_squads_member from the per-
+// treasury list is swallowed). Returns each proposal annotated with its
+// treasury context so the org-level UI can group / link.
+export async function listOrganizationSquadsProposals(
+  organizationId: string,
+  actorUserId: string,
+  input: ListSquadsConfigProposalsInput = {},
+) {
+  const treasuries = await prisma.treasuryWallet.findMany({
+    where: { organizationId, source: SQUADS_SOURCE, isActive: true },
+    select: {
+      treasuryWalletId: true,
+      address: true,
+      displayName: true,
+      sourceRef: true,
+      propertiesJson: true,
+    },
+    orderBy: { createdAt: 'asc' },
+  });
+
+  const items: Array<
+    Awaited<ReturnType<typeof listSquadsConfigProposals>>['items'][number]
+    & { treasuryWallet: { treasuryWalletId: string; address: string; displayName: string | null; multisigPda: string | null } }
+  > = [];
+
+  for (const treasury of treasuries) {
+    try {
+      const result = await listSquadsConfigProposals(
+        organizationId,
+        treasury.treasuryWalletId,
+        actorUserId,
+        input,
+      );
+      for (const proposal of result.items) {
+        items.push({
+          ...proposal,
+          treasuryWallet: {
+            treasuryWalletId: treasury.treasuryWalletId,
+            address: treasury.address,
+            displayName: treasury.displayName,
+            multisigPda: treasury.sourceRef,
+          },
+        });
+      }
+    } catch (err) {
+      if (err instanceof ApiError && err.code === 'not_squads_member') {
+        continue;
+      }
+      throw err;
+    }
+  }
+
+  return { items };
+}
+
 export async function getSquadsConfigProposal(
   organizationId: string,
   treasuryWalletId: string,
