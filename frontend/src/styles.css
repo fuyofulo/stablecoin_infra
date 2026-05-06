@@ -798,7 +798,8 @@ a {
 .page-actions,
 .action-cluster {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  flex-shrink: 0;
   gap: 10px;
   align-items: center;
 }
