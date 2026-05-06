@@ -21,9 +21,12 @@ import {
   USDC_DECIMALS,
   USDC_MINT,
   deriveUsdcAtaForWallet,
+  fetchWalletBalances,
   getSolanaConnection,
+  getSolanaDevnetConnection,
   waitForSignatureVisible,
 } from '../solana.js';
+import { LAMPORTS_PER_SOL } from '@solana/web3.js';
 
 export const userWalletsRouter = Router();
 
@@ -450,6 +453,112 @@ userWalletsRouter.post(
         asset: input.asset,
         amountRaw: input.amountRaw,
         recipient: recipientPubkey.toBase58(),
+        userWalletId: wallet.userWalletId,
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+// Live balances for the caller's personal wallets — SOL lamports + USDC
+// raw via the configured network's RPC. Mirrors the
+// /treasury-wallets/balances shape so the frontend can reuse its
+// formatting helpers. Polls in parallel; surfaces per-wallet rpcError
+// instead of failing the whole list when one wallet is unreachable.
+userWalletsRouter.get(
+  ['/personal-wallets/balances', '/user-wallets/balances'],
+  async (req, res, next) => {
+    try {
+      const wallets = await prisma.personalWallet.findMany({
+        where: { userId: req.auth!.userId, status: 'active', chain: 'solana' },
+        orderBy: { createdAt: 'asc' },
+      });
+
+      const items = await Promise.all(
+        wallets.map(async (wallet) => {
+          const usdcAtaAddress = (() => {
+            try {
+              return deriveUsdcAtaForWallet(wallet.walletAddress);
+            } catch {
+              return null;
+            }
+          })();
+          const balances = await fetchWalletBalances({
+            walletAddress: wallet.walletAddress,
+            usdcAtaAddress,
+          });
+          return {
+            userWalletId: wallet.userWalletId,
+            walletAddress: wallet.walletAddress,
+            label: wallet.label,
+            walletType: wallet.walletType,
+            provider: wallet.provider,
+            usdcAtaAddress,
+            ...balances,
+          };
+        }),
+      );
+
+      res.json({
+        items,
+        fetchedAt: new Date().toISOString(),
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+const airdropSolSchema = z.object({
+  amountSol: z.number().positive().max(2).optional(),
+});
+
+// Devnet SOL airdrop. Always hits the devnet RPC connection
+// (SOLANA_DEVNET_RPC_URL), never the configured network connection —
+// a mainnet airdrop request would just be a hard error from the RPC,
+// and we want this to remain useful for testing even when the app is
+// running in mainnet mode.
+//
+// Devnet airdrops are rate-limited per IP/wallet by Solana's network;
+// hitting that limit returns a 429-shaped error from the RPC which we
+// surface as-is. Default amount is 1 SOL; max is 2 SOL per call (the
+// public devnet faucet's hard ceiling).
+userWalletsRouter.post(
+  ['/personal-wallets/:userWalletId/airdrop-sol', '/user-wallets/:userWalletId/airdrop-sol'],
+  async (req, res, next) => {
+    try {
+      const { userWalletId } = userWalletParamsSchema.parse(req.params);
+      const input = airdropSolSchema.parse(req.body ?? {});
+      const wallet = await prisma.personalWallet.findFirst({
+        where: { userWalletId, userId: req.auth!.userId, status: 'active' },
+      });
+      if (!wallet) {
+        throw notFound('Personal wallet not found');
+      }
+      if (wallet.chain !== 'solana') {
+        throw badRequest('Airdrop only supported for Solana wallets.');
+      }
+
+      const amountSol = input.amountSol ?? 1;
+      const lamports = Math.floor(amountSol * LAMPORTS_PER_SOL);
+      const connection = getSolanaDevnetConnection();
+      const pubkey = new PublicKey(wallet.walletAddress);
+
+      const signature = await connection.requestAirdrop(pubkey, lamports);
+      // Best-effort visibility wait so the caller's next balance check
+      // sees the new SOL. Devnet airdrop typically lands in 1-3s.
+      try {
+        await waitForSignatureVisible(connection, signature, { timeoutMs: 8_000 });
+      } catch {
+        // swallow — signature is what matters; airdrop errored on chain
+        // is rare and the user can verify the signature themselves
+      }
+
+      res.json({
+        signature,
+        amountSol,
+        walletAddress: wallet.walletAddress,
         userWalletId: wallet.userWalletId,
       });
     } catch (error) {

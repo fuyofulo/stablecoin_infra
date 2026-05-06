@@ -247,6 +247,40 @@ export const api = {
       body: JSON.stringify(input),
     });
   },
+  // Live balances for the caller's personal wallets via the configured
+  // network. SOL in lamports, USDC raw (6 decimals). rpcError per row
+  // surfaces transient RPC failures without breaking the whole list.
+  listPersonalWalletBalances() {
+    return request<{
+      fetchedAt: string;
+      items: Array<{
+        userWalletId: string;
+        walletAddress: string;
+        label: string | null;
+        walletType: string;
+        provider: string | null;
+        usdcAtaAddress: string | null;
+        solLamports: string;
+        usdcRaw: string | null;
+        rpcError: string | null;
+      }>;
+    }>('/personal-wallets/balances');
+  },
+  // Devnet SOL airdrop. Backend always uses SOLANA_DEVNET_RPC_URL
+  // regardless of the app's configured network, so this works for
+  // testing even when the app is running mainnet mode. Default 1 SOL,
+  // max 2 SOL per call (network's hard cap).
+  airdropSolToPersonalWallet(userWalletId: string, input: { amountSol?: number } = {}) {
+    return request<{
+      signature: string;
+      amountSol: number;
+      walletAddress: string;
+      userWalletId: string;
+    }>(`/personal-wallets/${userWalletId}/airdrop-sol`, {
+      method: 'POST',
+      body: JSON.stringify(input),
+    });
+  },
   // Drain / partial-transfer from a personal Privy wallet. Backend
   // builds the instruction, signs via Privy, submits, best-effort
   // confirms. asset='sol' -> amountRaw is lamports; asset='usdc' ->

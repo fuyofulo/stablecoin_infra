@@ -757,6 +757,24 @@ function ProfilePage({ session }: { session: AuthenticatedSession }) {
   const [createPersonalWalletOpen, setCreatePersonalWalletOpen] = useState(false);
   const [createOrgOpen, setCreateOrgOpen] = useState(false);
   const [transferWallet, setTransferWallet] = useState<UserWallet | null>(null);
+  const [airdropWallet, setAirdropWallet] = useState<UserWallet | null>(null);
+
+  const personalWalletBalancesQuery = useQuery({
+    queryKey: ['personal-wallet-balances'] as const,
+    queryFn: () => api.listPersonalWalletBalances(),
+    refetchInterval: 15_000,
+  });
+  const balancesByWalletId = useMemo(() => {
+    const map = new Map<string, { solLamports: string; usdcRaw: string | null; rpcError: string | null }>();
+    for (const b of personalWalletBalancesQuery.data?.items ?? []) {
+      map.set(b.userWalletId, {
+        solLamports: b.solLamports,
+        usdcRaw: b.usdcRaw,
+        rpcError: b.rpcError,
+      });
+    }
+    return map;
+  }, [personalWalletBalancesQuery.data]);
 
   const personalWalletsQuery = useQuery({
     queryKey: ['personal-wallets'] as const,
@@ -792,6 +810,17 @@ function ProfilePage({ session }: { session: AuthenticatedSession }) {
       await queryClient.invalidateQueries({ queryKey: ['personal-wallets'] });
     },
     onError: (err) => toastError(err instanceof Error ? err.message : 'Unable to create personal wallet.'),
+  });
+
+  const airdropMutation = useMutation({
+    mutationFn: (input: { userWalletId: string; amountSol: number }) =>
+      api.airdropSolToPersonalWallet(input.userWalletId, { amountSol: input.amountSol }),
+    onSuccess: async (result) => {
+      success(`Airdropped ${result.amountSol} devnet SOL.`);
+      setAirdropWallet(null);
+      await queryClient.invalidateQueries({ queryKey: ['personal-wallet-balances'] });
+    },
+    onError: (err) => toastError(err instanceof Error ? err.message : 'Airdrop failed.'),
   });
 
   const transferOutMutation = useMutation({
@@ -885,64 +914,88 @@ function ProfilePage({ session }: { session: AuthenticatedSession }) {
             <table className="rd-table">
               <thead>
                 <tr>
-                  <th style={{ width: '24%' }}>Name</th>
-                  <th style={{ width: '28%' }}>Address</th>
-                  <th style={{ width: '14%' }}>Provider</th>
-                  <th style={{ width: '14%' }}>Status</th>
-                  <th style={{ width: '10%' }}>Created</th>
-                  <th style={{ width: '10%', textAlign: 'right' }}>&nbsp;</th>
+                  <th style={{ width: '20%' }}>Name</th>
+                  <th style={{ width: '22%' }}>Address</th>
+                  <th className="rd-num" style={{ width: '12%' }}>SOL</th>
+                  <th className="rd-num" style={{ width: '12%' }}>USDC</th>
+                  <th style={{ width: '12%' }}>Status</th>
+                  <th style={{ width: '22%', textAlign: 'right' }}>&nbsp;</th>
                 </tr>
               </thead>
               <tbody>
-                {personalWallets.map((wallet) => (
-                  <tr key={wallet.userWalletId}>
-                    <td>
-                      <span className="rd-payee-name">
-                        {wallet.label ?? 'Untitled wallet'}
-                      </span>
-                    </td>
-                    <td>
-                      <a
-                        href={orbAccountUrl(wallet.walletAddress)}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="rd-addr-link"
-                        title={wallet.walletAddress}
-                      >
-                        {shortenAddress(wallet.walletAddress)}
-                      </a>
-                    </td>
-                    <td>
-                      <span style={{ color: 'var(--ax-text-muted)' }}>
-                        {wallet.provider ?? wallet.walletType}
-                      </span>
-                    </td>
-                    <td>
-                      <span
-                        className={
-                          wallet.verifiedAt ? 'rd-pill rd-pill-success' : 'rd-pill rd-pill-warning'
-                        }
-                      >
-                        {wallet.verifiedAt ? 'verified' : 'pending'}
-                      </span>
-                    </td>
-                    <td style={{ color: 'var(--ax-text-muted)', fontSize: 13 }}>
-                      {formatProfileDate(wallet.createdAt)}
-                    </td>
-                    <td style={{ textAlign: 'right' }}>
-                      {wallet.walletType === 'privy_embedded' ? (
-                        <button
-                          type="button"
-                          className="button button-secondary"
-                          style={{ padding: '4px 10px', fontSize: 12 }}
-                          onClick={() => setTransferWallet(wallet)}
+                {personalWallets.map((wallet) => {
+                  const bal = balancesByWalletId.get(wallet.userWalletId);
+                  return (
+                    <tr key={wallet.userWalletId}>
+                      <td>
+                        <div className="rd-payee-main">
+                          <span className="rd-payee-name">
+                            {wallet.label ?? 'Untitled wallet'}
+                          </span>
+                          <span className="rd-payee-ref" style={{ color: 'var(--ax-text-muted)' }}>
+                            {wallet.provider ?? wallet.walletType}
+                          </span>
+                        </div>
+                      </td>
+                      <td>
+                        <a
+                          href={orbAccountUrl(wallet.walletAddress)}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="rd-addr-link"
+                          title={wallet.walletAddress}
                         >
-                          Transfer
-                        </button>
-                      ) : null}
-                    </td>
-                  </tr>
-                ))}
+                          {shortenAddress(wallet.walletAddress)}
+                        </a>
+                      </td>
+                      <td className="rd-num">
+                        {bal ? (
+                          <span>{formatSolFromLamports(bal.solLamports)}</span>
+                        ) : (
+                          <span style={{ color: 'var(--ax-text-faint)' }}>—</span>
+                        )}
+                      </td>
+                      <td className="rd-num">
+                        {bal?.usdcRaw === null || bal?.usdcRaw === undefined ? (
+                          <span style={{ color: 'var(--ax-text-faint)' }}>—</span>
+                        ) : (
+                          <span>{formatRawUsdcCompact(bal.usdcRaw)}</span>
+                        )}
+                      </td>
+                      <td>
+                        <span
+                          className={
+                            wallet.verifiedAt ? 'rd-pill rd-pill-success' : 'rd-pill rd-pill-warning'
+                          }
+                        >
+                          {wallet.verifiedAt ? 'verified' : 'pending'}
+                        </span>
+                      </td>
+                      <td style={{ textAlign: 'right' }}>
+                        {wallet.walletType === 'privy_embedded' ? (
+                          <div style={{ display: 'inline-flex', gap: 6, justifyContent: 'flex-end' }}>
+                            <button
+                              type="button"
+                              className="button button-secondary"
+                              style={{ padding: '4px 10px', fontSize: 12 }}
+                              onClick={() => setAirdropWallet(wallet)}
+                            >
+                              Airdrop
+                            </button>
+                            <button
+                              type="button"
+                              className="button button-secondary"
+                              style={{ padding: '4px 10px', fontSize: 12 }}
+                              onClick={() => setTransferWallet(wallet)}
+                            >
+                              Transfer
+                            </button>
+                          </div>
+                        ) : null}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           )}
@@ -1037,6 +1090,19 @@ function ProfilePage({ session }: { session: AuthenticatedSession }) {
           }
         />
       ) : null}
+      {airdropWallet ? (
+        <AirdropDialog
+          wallet={airdropWallet}
+          pending={airdropMutation.isPending}
+          onClose={() => airdropMutation.isPending ? undefined : setAirdropWallet(null)}
+          onSubmit={(amountSol) =>
+            airdropMutation.mutate({
+              userWalletId: airdropWallet.userWalletId,
+              amountSol,
+            })
+          }
+        />
+      ) : null}
       {createOrgOpen ? (
         <CreateOrganizationDialog
           pending={createOrganizationMutation.isPending}
@@ -1051,6 +1117,24 @@ function ProfilePage({ session }: { session: AuthenticatedSession }) {
 function formatProfileDate(iso: string): string {
   const d = new Date(iso);
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+const PROFILE_LAMPORTS_PER_SOL = 1_000_000_000n;
+
+// Lamports (string from API) -> human SOL with 4 decimal places.
+// Inline duplicate of the same helper in pages/Wallets.tsx; small enough
+// to not warrant hoisting yet.
+function formatSolFromLamports(lamports: string): string {
+  let value: bigint;
+  try {
+    value = BigInt(lamports);
+  } catch {
+    return '0.0000';
+  }
+  const whole = value / PROFILE_LAMPORTS_PER_SOL;
+  const fractional = value % PROFILE_LAMPORTS_PER_SOL;
+  const fracPadded = fractional.toString().padStart(9, '0').slice(0, 4);
+  return `${whole.toString()}.${fracPadded}`;
 }
 
 function CreateOrganizationDialog(props: {
@@ -1349,6 +1433,186 @@ function TransferOutDialog(props: {
             </button>
           </div>
         </form>
+      </div>
+    </div>
+  );
+}
+
+// AirdropDialog
+//
+// Devnet-only. SOL is requested directly via the backend airdrop
+// endpoint (which always uses SOLANA_DEVNET_RPC_URL). USDC is not
+// natively airdroppable on devnet — Circle's USDC test mint is
+// faucet-controlled by Circle, so we just deep-link to their faucet
+// with the wallet address pre-copied.
+function AirdropDialog(props: {
+  wallet: UserWallet;
+  pending: boolean;
+  onClose: () => void;
+  onSubmit: (amountSol: number) => void;
+}) {
+  const { wallet, pending, onClose, onSubmit } = props;
+  const [amountSol, setAmountSol] = useState('1');
+  const [error, setError] = useState<string | null>(null);
+  const { success } = useToast();
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape' && !pending) onClose();
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose, pending]);
+
+  const handleSubmit = (e: FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    const parsed = Number(amountSol);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      setError('Enter a positive amount.');
+      return;
+    }
+    if (parsed > 2) {
+      setError('Solana devnet caps airdrops at 2 SOL per call.');
+      return;
+    }
+    onSubmit(parsed);
+  };
+
+  const copyAddress = async () => {
+    try {
+      await navigator.clipboard.writeText(wallet.walletAddress);
+      success('Wallet address copied.');
+    } catch {
+      // ignore — user can copy from the input below as a fallback
+    }
+  };
+
+  return (
+    <div
+      className="rd-dialog-backdrop"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="rd-airdrop-title"
+    >
+      <div className="rd-dialog" style={{ maxWidth: 500 }}>
+        <h2 id="rd-airdrop-title" className="rd-dialog-title">
+          Airdrop devnet funds
+        </h2>
+        <p className="rd-dialog-body">
+          Top up this wallet on Solana devnet for testing. SOL is delivered through Decimal's devnet RPC; USDC has to be requested from Circle's faucet directly.
+        </p>
+
+        <div
+          style={{
+            padding: 12,
+            background: 'var(--ax-surface-1)',
+            borderRadius: 6,
+            marginBottom: 16,
+            fontSize: 13,
+          }}
+        >
+          <div style={{ color: 'var(--ax-text-muted)', marginBottom: 4 }}>Wallet</div>
+          <div>
+            <strong>{wallet.label ?? 'Untitled wallet'}</strong>
+          </div>
+          <div style={{ fontFamily: 'monospace', fontSize: 12, color: 'var(--ax-text-muted)' }}>
+            {wallet.walletAddress}
+          </div>
+        </div>
+
+        <form onSubmit={handleSubmit} style={{ marginBottom: 20 }}>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              marginBottom: 8,
+            }}
+          >
+            <strong style={{ fontSize: 14 }}>SOL</strong>
+            <span style={{ color: 'var(--ax-text-muted)', fontSize: 12 }}>devnet RPC · max 2 per call</span>
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <input
+              value={amountSol}
+              onChange={(e) => setAmountSol(e.target.value)}
+              inputMode="decimal"
+              placeholder="1"
+              autoComplete="off"
+              autoFocus
+              style={{ flex: 1 }}
+            />
+            <button
+              type="submit"
+              className="button button-primary"
+              disabled={pending}
+              aria-busy={pending}
+            >
+              {pending ? 'Airdropping…' : 'Airdrop SOL'}
+            </button>
+          </div>
+          {error ? (
+            <div
+              style={{
+                marginTop: 8,
+                color: 'var(--ax-danger)',
+                fontSize: 13,
+              }}
+            >
+              {error}
+            </div>
+          ) : null}
+        </form>
+
+        <div
+          style={{
+            paddingTop: 16,
+            borderTop: '1px solid var(--ax-border)',
+          }}
+        >
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              marginBottom: 8,
+            }}
+          >
+            <strong style={{ fontSize: 14 }}>USDC</strong>
+            <span style={{ color: 'var(--ax-text-muted)', fontSize: 12 }}>via Circle faucet</span>
+          </div>
+          <p
+            style={{
+              margin: '0 0 12px',
+              fontSize: 13,
+              color: 'var(--ax-text-muted)',
+              lineHeight: 1.5,
+            }}
+          >
+            Circle owns the devnet USDC test mint, so we can't airdrop it from here. Copy this wallet's address and paste it into Circle's faucet, choose Solana, request USDC.
+          </p>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button type="button" className="button button-secondary" onClick={copyAddress}>
+              Copy address
+            </button>
+            <a
+              href="https://faucet.circle.com/"
+              target="_blank"
+              rel="noreferrer"
+              className="button button-secondary"
+              style={{ textDecoration: 'none' }}
+            >
+              Open Circle faucet ↗
+            </a>
+          </div>
+        </div>
+
+        <div className="rd-dialog-actions" style={{ marginTop: 20 }}>
+          <button type="button" className="button button-secondary" onClick={onClose} disabled={pending}>
+            Close
+          </button>
+        </div>
       </div>
     </div>
   );

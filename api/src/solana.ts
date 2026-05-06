@@ -27,6 +27,21 @@ export function getSolanaConnection(): Connection {
   return connectionSingleton;
 }
 
+let devnetConnectionSingleton: Connection | null = null;
+
+/**
+ * Connection pinned to the devnet RPC URL, regardless of the app's
+ * primary SOLANA_NETWORK. Used for operations that only make sense on
+ * devnet (airdrop) so they keep working even when the app itself is
+ * running in mainnet mode.
+ */
+export function getSolanaDevnetConnection(): Connection {
+  if (!devnetConnectionSingleton) {
+    devnetConnectionSingleton = new Connection(config.solanaDevnetRpcUrl, 'confirmed');
+  }
+  return devnetConnectionSingleton;
+}
+
 /**
  * Poll getSignatureStatuses until the signature is at least 'confirmed'
  * (or 'finalized'), or until the timeout elapses. Blockhash-agnostic

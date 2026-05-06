@@ -27,7 +27,15 @@ type DecimalConfig = {
   port: number;
   publicApiUrl: string | null;
   publicFrontendUrl: string | null;
+  solanaNetwork: SolanaNetwork;
   solanaRpcUrl: string;
+  /**
+   * Always-devnet RPC URL. Used for devnet-only operations (airdrop)
+   * regardless of which network the rest of the app is configured for.
+   * Falls back to the public devnet endpoint if SOLANA_DEVNET_RPC_URL
+   * is unset.
+   */
+  solanaDevnetRpcUrl: string;
   clickhouseUrl: string;
   clickhouseDatabase: string;
   corsOrigins: string[];
@@ -49,6 +57,8 @@ type DecimalConfig = {
   squadsProgramTreasury: string | null;
 };
 
+export type SolanaNetwork = 'devnet' | 'mainnet';
+
 export const config: DecimalConfig = buildConfig();
 
 function buildConfig(): DecimalConfig {
@@ -56,6 +66,9 @@ function buildConfig(): DecimalConfig {
   const isProduction = nodeEnv === 'production';
   const fileConfig = loadApiFileConfig();
   const controlPlaneServiceToken = (process.env.CONTROL_PLANE_SERVICE_TOKEN ?? '').trim();
+  const solanaNetwork = getSolanaNetwork();
+  const solanaRpcUrl = (process.env.SOLANA_RPC_URL?.trim() || defaultSolanaRpcUrl(solanaNetwork));
+  const solanaDevnetRpcUrl = (process.env.SOLANA_DEVNET_RPC_URL?.trim() || 'https://api.devnet.solana.com');
 
   const nextConfig: DecimalConfig = {
     nodeEnv,
@@ -64,7 +77,9 @@ function buildConfig(): DecimalConfig {
     port: fileConfig.port ?? 3100,
     publicApiUrl: normalizeOptionalUrl(fileConfig.publicApiUrl),
     publicFrontendUrl: normalizeOptionalUrl(fileConfig.publicFrontendUrl),
-    solanaRpcUrl: process.env.SOLANA_RPC_URL ?? 'https://api.mainnet-beta.solana.com',
+    solanaNetwork,
+    solanaRpcUrl,
+    solanaDevnetRpcUrl,
     clickhouseUrl: fileConfig.clickhouseUrl ?? 'http://127.0.0.1:8123',
     clickhouseDatabase: fileConfig.clickhouseDatabase ?? 'usdc_ops',
     corsOrigins: normalizeStringArray(fileConfig.corsOrigins),
@@ -92,6 +107,18 @@ function buildConfig(): DecimalConfig {
 
   validateConfig(nextConfig);
   return nextConfig;
+}
+
+export function getSolanaNetwork(): SolanaNetwork {
+  const raw = (process.env.SOLANA_NETWORK ?? 'mainnet').trim().toLowerCase();
+  if (raw !== 'devnet' && raw !== 'mainnet') {
+    throw new Error(`Invalid SOLANA_NETWORK="${raw}". Use 'devnet' or 'mainnet'.`);
+  }
+  return raw;
+}
+
+function defaultSolanaRpcUrl(network: SolanaNetwork) {
+  return network === 'devnet' ? 'https://api.devnet.solana.com' : 'https://api.mainnet-beta.solana.com';
 }
 
 function loadApiFileConfig(): FileConfig {
