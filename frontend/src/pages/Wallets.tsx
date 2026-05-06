@@ -67,32 +67,25 @@ export function WalletsPage({ session }: { session: AuthenticatedSession }) {
   });
 
   const createMutation = useMutation({
-    // Two-step: create a Privy-managed signing wallet, then register its
-    // address as a treasury wallet for this organization. Manual address
-    // entry is intentionally not exposed for now — re-add when external
-    // wallet imports are needed.
-    mutationFn: async (form: FormData) => {
-      const displayName = String(form.get('displayName') ?? '').trim();
-      if (!displayName) {
-        throw new Error('Wallet name is required.');
-      }
-      const managed = await api.createManagedWallet({
-        provider: 'privy',
-        label: displayName,
-      });
-      return api.createTreasuryWallet(organizationId!, {
-        address: managed.walletAddress,
-        displayName,
-      });
-    },
+    // Treasury accounts are organization-owned wallets. Their address can
+    // be a Squads multisig, a personal wallet the user already has, or any
+    // other Solana address the org controls. We do NOT auto-create a Privy
+    // wallet here — personal wallets live on the Profile page, and the
+    // user can later authorize one of them to act for this treasury via
+    // the wallet authorization flow.
+    mutationFn: (form: FormData) =>
+      api.createTreasuryWallet(organizationId!, {
+        address: String(form.get('address') ?? '').trim(),
+        displayName: String(form.get('displayName') ?? '').trim() || undefined,
+        notes: String(form.get('notes') ?? '').trim() || undefined,
+      }),
     onSuccess: async () => {
-      success('Wallet created.');
+      success('Treasury account added.');
       setAddOpen(false);
       await queryClient.invalidateQueries({ queryKey: ['treasury-wallet-balances', organizationId] });
       await queryClient.invalidateQueries({ queryKey: ['addresses', organizationId] });
-      await queryClient.invalidateQueries({ queryKey: ['user-wallets'] });
     },
-    onError: (err) => toastError(err instanceof Error ? err.message : 'Unable to create wallet.'),
+    onError: (err) => toastError(err instanceof Error ? err.message : 'Unable to add treasury account.'),
   });
 
   const rows = balancesQuery.data?.items ?? [];
@@ -131,12 +124,12 @@ export function WalletsPage({ session }: { session: AuthenticatedSession }) {
     <main className="page-frame">
       <header className="page-header">
         <div>
-          <p className="eyebrow">Treasury</p>
-          <h1>Your wallets</h1>
+          <p className="eyebrow">Registry</p>
+          <h1>Treasury accounts</h1>
           <p>
             {solUsdPrice === null
-              ? 'Every Solana wallet you control in this organization. Balances refresh every 15 seconds.'
-              : `Every Solana wallet you control in this organization · SOL @ $${formatUsd(solUsdPrice)} · refreshes every 15s.`}
+              ? 'Organization-owned Solana wallets that Decimal monitors and reconciles. Balances refresh every 15 seconds.'
+              : `Organization-owned Solana wallets that Decimal monitors and reconciles · SOL @ $${formatUsd(solUsdPrice)} · refreshes every 15s.`}
           </p>
         </div>
         <div className="page-actions">
@@ -151,7 +144,7 @@ export function WalletsPage({ session }: { session: AuthenticatedSession }) {
             {balancesQuery.isFetching ? 'Refreshing…' : 'Refresh'}
           </button>
           <button type="button" className="button button-primary" onClick={() => setAddOpen(true)}>
-            + Add wallet
+            + Add treasury account
           </button>
         </div>
       </header>
@@ -185,12 +178,12 @@ export function WalletsPage({ session }: { session: AuthenticatedSession }) {
             </div>
           ) : rows.length === 0 ? (
             <div className="rd-empty-cell" style={{ padding: '64px 24px' }}>
-              <strong>No wallets yet</strong>
+              <strong>Add an organization treasury account</strong>
               <p style={{ margin: '0 0 16px' }}>
-                Add a Solana wallet to start receiving balances and making payments.
+                This is the wallet Decimal monitors and reconciles. Personal signing wallets live on your profile.
               </p>
               <button type="button" className="button button-primary" onClick={() => setAddOpen(true)}>
-                + Add wallet
+                + Add treasury account
               </button>
             </div>
           ) : (
@@ -287,7 +280,6 @@ function AddWalletDialog(props: {
   onSubmit: (form: FormData) => void;
 }) {
   const { pending, onClose, onSubmit } = props;
-  const [step, setStep] = useState<'select' | 'create'>('select');
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -304,90 +296,40 @@ function AddWalletDialog(props: {
       aria-modal="true"
       aria-labelledby="rd-add-wallet-title"
     >
-      <div className="rd-dialog" style={{ maxWidth: 540 }}>
-        {step === 'select' ? (
-          <>
-            <h2 id="rd-add-wallet-title" className="rd-dialog-title">
-              Add wallet
-            </h2>
-            <p className="rd-dialog-body">
-              Choose a custody provider to create a new wallet.
-            </p>
-            <div className="provider-grid" style={{ marginTop: 8 }}>
-              <button
-                className="provider-card"
-                type="button"
-                onClick={() => setStep('create')}
-              >
-                <span className="provider-icon provider-icon-logo" data-provider="privy" aria-hidden />
-                <span className="provider-card-main">
-                  <strong>Privy</strong>
-                  <small>Embedded Solana wallet managed through Privy. Keys never leave the browser.</small>
-                </span>
-              </button>
-            </div>
-            <div className="rd-dialog-actions" style={{ marginTop: 20 }}>
-              <button type="button" className="button button-secondary" onClick={onClose}>
-                Cancel
-              </button>
-            </div>
-          </>
-        ) : (
-          <>
-            <h2 id="rd-add-wallet-title" className="rd-dialog-title">
-              New wallet
-            </h2>
-            <p className="rd-dialog-body">
-              Connect this provider and create its first wallet in one step.
-            </p>
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                onSubmit(new FormData(e.currentTarget));
-              }}
-            >
-              <div className="provider-modal-summary" style={{ marginBottom: 16 }}>
-                <span
-                  className="provider-icon provider-icon-large provider-icon-logo"
-                  data-provider="privy"
-                  aria-hidden
-                />
-                <div>
-                  <strong>Privy</strong>
-                  <p>Embedded Solana wallet managed through Privy.</p>
-                </div>
-              </div>
-              <label className="field">
-                Wallet name
-                <input
-                  name="displayName"
-                  required
-                  placeholder="Ops vault"
-                  autoComplete="off"
-                  autoFocus
-                />
-              </label>
-              <div className="rd-dialog-actions" style={{ marginTop: 20 }}>
-                <button
-                  type="button"
-                  className="button button-secondary"
-                  onClick={() => setStep('select')}
-                  disabled={pending}
-                >
-                  Back
-                </button>
-                <button
-                  type="submit"
-                  className="button button-primary"
-                  disabled={pending}
-                  aria-busy={pending}
-                >
-                  {pending ? 'Creating…' : 'Create wallet'}
-                </button>
-              </div>
-            </form>
-          </>
-        )}
+      <div className="rd-dialog" style={{ maxWidth: 480 }}>
+        <h2 id="rd-add-wallet-title" className="rd-dialog-title">
+          Add treasury account
+        </h2>
+        <p className="rd-dialog-body">
+          Register an organization-owned Solana wallet. This can be a Squads multisig, an existing wallet, or any address the organization controls. Decimal will monitor balances and reconcile against it.
+        </p>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            onSubmit(new FormData(e.currentTarget));
+          }}
+        >
+          <label className="field">
+            Account name
+            <input name="displayName" placeholder="Ops vault" autoComplete="off" autoFocus />
+          </label>
+          <label className="field">
+            Solana address
+            <input name="address" required placeholder="Wallet address" autoComplete="off" />
+          </label>
+          <label className="field">
+            Notes
+            <input name="notes" placeholder="Optional context" autoComplete="off" />
+          </label>
+          <div className="rd-dialog-actions" style={{ marginTop: 20 }}>
+            <button type="button" className="button button-secondary" onClick={onClose}>
+              Cancel
+            </button>
+            <button type="submit" className="button button-primary" disabled={pending} aria-busy={pending}>
+              {pending ? 'Adding…' : 'Add treasury account'}
+            </button>
+          </div>
+        </form>
       </div>
     </div>
   );
