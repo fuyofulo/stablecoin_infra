@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { after, before, beforeEach, test } from 'node:test';
 import { AddressInfo } from 'node:net';
+import * as multisig from '@sqds/multisig';
 import { Keypair, PublicKey, TransactionInstruction, TransactionMessage, VersionedTransaction } from '@solana/web3.js';
 import { createApp } from '../src/app.js';
 import { config } from '../src/config.js';
@@ -542,6 +543,19 @@ test('Squads treasury creation prepares a signable transaction and persists the 
   await verifyRegisteredEmail(register);
 
   const organization = await post('/organizations', { organizationName: 'Squads Treasury Org' }, register.sessionToken);
+  const approver = await post('/auth/register', {
+    email: 'squads-approver@example.com',
+    password: 'DemoPass123!',
+    displayName: 'Squads Approver',
+  });
+  await verifyRegisteredEmail(approver);
+  const approverInvite = await post(
+    `/organizations/${organization.organizationId}/invites`,
+    { email: 'squads-approver@example.com', role: 'member' },
+    register.sessionToken,
+  );
+  await post(`/invites/${approverInvite.inviteToken}/accept`, {}, approver.sessionToken);
+
   const creatorWalletAddress = Keypair.generate().publicKey.toBase58();
   const approverWalletAddress = Keypair.generate().publicKey.toBase58();
   const creatorWallet = await post(
@@ -562,7 +576,7 @@ test('Squads treasury creation prepares a signable transaction and persists the 
       providerWalletId: 'privy-squads-approver',
       label: 'Approver signer',
     },
-    register.sessionToken,
+    approver.sessionToken,
   );
 
   let onchainMultisig: {
@@ -574,6 +588,17 @@ test('Squads treasury creation prepares a signable transaction and persists the 
     staleTransactionIndex: { toString(): string };
     members: Array<{ key: PublicKey; permissions: { mask: number } }>;
   } | null = null;
+  const proposalsByPda = new Map<string, {
+    transactionIndex: { toString(): string };
+    status: { __kind: string };
+    approved: PublicKey[];
+    rejected: PublicKey[];
+    cancelled: PublicKey[];
+  }>();
+  const configTransactionsByPda = new Map<string, {
+    index: { toString(): string };
+    actions: multisig.types.ConfigAction[];
+  }>();
   setSquadsTreasuryRuntimeForTests({
     getProgramTreasury: async () => Keypair.generate().publicKey,
     getLatestBlockhash: async () => ({
@@ -584,6 +609,8 @@ test('Squads treasury creation prepares a signable transaction and persists the 
       assert.ok(onchainMultisig, 'test multisig should be configured before confirmation');
       return onchainMultisig;
     },
+    loadProposal: async (proposalPda) => proposalsByPda.get(proposalPda.toBase58()) ?? null,
+    loadConfigTransaction: async (configTransactionPda) => configTransactionsByPda.get(configTransactionPda.toBase58()) ?? null,
   });
 
   const intent = await post(
@@ -727,15 +754,72 @@ test('Squads treasury creation prepares a signable transaction and persists the 
     addMemberIntent.intent.actions.map((action: { kind: string }) => action.kind),
     ['add_member', 'change_threshold'],
   );
+  proposalsByPda.set(addMemberIntent.intent.proposalPda, {
+    transactionIndex: { toString: () => '1' },
+    status: { __kind: 'Active' },
+    approved: [publicKeyFromString(creatorWalletAddress)],
+    rejected: [],
+    cancelled: [],
+  });
+  configTransactionsByPda.set(addMemberIntent.intent.configTransactionPda, {
+    index: { toString: () => '1' },
+    actions: [
+      {
+        __kind: 'AddMember',
+        newMember: {
+          key: publicKeyFromString(newMemberWalletAddress),
+          permissions: multisig.types.Permissions.fromPermissions([multisig.types.Permission.Vote]),
+        },
+      },
+      { __kind: 'ChangeThreshold', newThreshold: 3 },
+    ],
+  });
+  onchainMultisig.transactionIndex = { toString: () => '1' };
+
+  const pendingProposals = await get(
+    `/organizations/${organization.organizationId}/treasury-wallets/${treasuryWallet.treasuryWalletId}/squads/config-proposals`,
+    approver.sessionToken,
+  );
+  assert.equal(pendingProposals.items.length, 1);
+  assert.equal(pendingProposals.items[0].status, 'active');
+  assert.equal(pendingProposals.items[0].transactionIndex, '1');
+  assert.equal(pendingProposals.items[0].approvals.length, 1);
+  assert.equal(pendingProposals.items[0].approvals[0].walletAddress, creatorWalletAddress);
+  assert.deepEqual(
+    pendingProposals.items[0].pendingVoters.map((member: { walletAddress: string }) => member.walletAddress),
+    [approverWalletAddress],
+  );
+
+  const singleProposal = await get(
+    `/organizations/${organization.organizationId}/treasury-wallets/${treasuryWallet.treasuryWalletId}/squads/config-proposals/1`,
+    approver.sessionToken,
+  );
+  assert.equal(singleProposal.proposalPda, addMemberIntent.intent.proposalPda);
+
+  const blockedNonMemberProposalRead = await fetch(
+    `${baseUrl}/organizations/${organization.organizationId}/treasury-wallets/${treasuryWallet.treasuryWalletId}/squads/config-proposals`,
+    {
+      headers: authHeaders(invitedMember.sessionToken),
+    },
+  );
+  assert.equal(blockedNonMemberProposalRead.status, 403);
+  assert.equal((await blockedNonMemberProposalRead.json()).code, 'not_squads_member');
 
   const approvalIntent = await post(
     `/organizations/${organization.organizationId}/treasury-wallets/${treasuryWallet.treasuryWalletId}/squads/config-proposals/1/approve-intent`,
     { memberPersonalWalletId: approverWallet.userWalletId },
-    register.sessionToken,
+    approver.sessionToken,
   );
   assert.equal(approvalIntent.intent.kind, 'config_proposal_approval');
   assert.equal(approvalIntent.intent.transactionIndex, '1');
   assert.equal(approvalIntent.transaction.requiredSigner, approverWalletAddress);
+  proposalsByPda.set(addMemberIntent.intent.proposalPda, {
+    transactionIndex: { toString: () => '1' },
+    status: { __kind: 'Approved' },
+    approved: [publicKeyFromString(creatorWalletAddress), publicKeyFromString(approverWalletAddress)],
+    rejected: [],
+    cancelled: [],
+  });
 
   const executeIntent = await post(
     `/organizations/${organization.organizationId}/treasury-wallets/${treasuryWallet.treasuryWalletId}/squads/config-proposals/1/execute-intent`,
@@ -745,6 +829,13 @@ test('Squads treasury creation prepares a signable transaction and persists the 
   assert.equal(executeIntent.intent.kind, 'config_proposal_execution');
   assert.equal(executeIntent.intent.transactionIndex, '1');
   assert.equal(executeIntent.transaction.requiredSigner, creatorWalletAddress);
+  proposalsByPda.set(addMemberIntent.intent.proposalPda, {
+    transactionIndex: { toString: () => '1' },
+    status: { __kind: 'Executed' },
+    approved: [publicKeyFromString(creatorWalletAddress), publicKeyFromString(approverWalletAddress)],
+    rejected: [],
+    cancelled: [],
+  });
 
   onchainMultisig.threshold = 3;
   onchainMultisig.transactionIndex = { toString: () => '1' };
@@ -771,6 +862,13 @@ test('Squads treasury creation prepares a signable transaction and persists the 
     register.sessionToken,
   );
   assert.equal(syncedAuthorizations.items.length, 3);
+
+  const allProposals = await get(
+    `/organizations/${organization.organizationId}/treasury-wallets/${treasuryWallet.treasuryWalletId}/squads/config-proposals?status=all`,
+    invitedMember.sessionToken,
+  );
+  assert.equal(allProposals.items.length, 1);
+  assert.equal(allProposals.items[0].status, 'executed');
 
   const changeThresholdIntent = await post(
     `/organizations/${organization.organizationId}/treasury-wallets/${treasuryWallet.treasuryWalletId}/squads/config-proposals/change-threshold-intent`,

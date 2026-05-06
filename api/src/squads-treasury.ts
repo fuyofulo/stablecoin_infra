@@ -1,7 +1,7 @@
 import type { Prisma } from '@prisma/client';
 import * as multisig from '@sqds/multisig';
 import { Keypair, PublicKey, TransactionMessage, VersionedTransaction, type TransactionInstruction } from '@solana/web3.js';
-import { badRequest, notFound } from './api-errors.js';
+import { ApiError, badRequest, notFound } from './api-errors.js';
 import { config } from './config.js';
 import { prisma } from './prisma.js';
 import { deriveUsdcAtaForWallet, getSolanaConnection, SOLANA_CHAIN, USDC_ASSET } from './solana.js';
@@ -25,17 +25,50 @@ type SquadsMultisigAccountLike = {
   staleTransactionIndex: { toString(): string };
   members: Array<{ key: PublicKey; permissions: { mask: number } }>;
 };
+type SquadsProposalAccountLike = {
+  transactionIndex: { toString(): string };
+  status: { __kind: string };
+  approved: PublicKey[];
+  rejected: PublicKey[];
+  cancelled: PublicKey[];
+};
+type SquadsConfigTransactionAccountLike = {
+  index: { toString(): string };
+  actions: multisig.types.ConfigAction[];
+};
 
 type SquadsTreasuryRuntime = {
   getLatestBlockhash: () => Promise<{ blockhash: string; lastValidBlockHeight: number }>;
   getProgramTreasury: (programId: PublicKey) => Promise<PublicKey>;
   loadMultisig: (multisigPda: PublicKey) => Promise<SquadsMultisigAccountLike>;
+  loadProposal: (proposalPda: PublicKey) => Promise<SquadsProposalAccountLike | null>;
+  loadConfigTransaction: (configTransactionPda: PublicKey) => Promise<SquadsConfigTransactionAccountLike | null>;
 };
 
 const defaultRuntime: SquadsTreasuryRuntime = {
   getLatestBlockhash: () => getSolanaConnection().getLatestBlockhash(),
   getProgramTreasury: (programId) => resolveSquadsProgramTreasury(programId),
   loadMultisig: (multisigPda) => multisig.accounts.Multisig.fromAccountAddress(getSolanaConnection(), multisigPda),
+  loadProposal: async (proposalPda) => {
+    try {
+      return await multisig.accounts.Proposal.fromAccountAddress(getSolanaConnection(), proposalPda);
+    } catch (error) {
+      if (isMissingSquadsAccountError(error)) {
+        return null;
+      }
+      throw error;
+    }
+  },
+  loadConfigTransaction: async (configTransactionPda) => {
+    try {
+      return await multisig.accounts.ConfigTransaction.fromAccountAddress(getSolanaConnection(), configTransactionPda);
+    } catch (error) {
+      if (isMissingSquadsAccountError(error)) {
+        return null;
+      }
+      throw error;
+    }
+  },
 };
 
 let runtime: SquadsTreasuryRuntime = defaultRuntime;
@@ -72,6 +105,11 @@ export type CreateSquadsChangeThresholdProposalInput = {
   newThreshold: number;
   memo?: string | null;
   autoApprove?: boolean;
+};
+
+export type ListSquadsConfigProposalsInput = {
+  status?: 'pending' | 'all' | 'closed';
+  limit?: number;
 };
 
 export async function createSquadsTreasuryIntent(
@@ -269,6 +307,54 @@ export async function createSquadsConfigProposalExecuteIntent(
     kind: 'config_proposal_execution',
     actions: [],
   });
+}
+
+export async function listSquadsConfigProposals(
+  organizationId: string,
+  treasuryWalletId: string,
+  actorUserId: string,
+  input: ListSquadsConfigProposalsInput = {},
+) {
+  const { programId, multisigPda, multisigAccount } = await loadSquadsTreasury(organizationId, treasuryWalletId);
+  await assertActorIsSquadsMember(organizationId, multisigAccount, actorUserId);
+
+  const statusFilter = input.status ?? 'pending';
+  const limit = Math.min(Math.max(input.limit ?? 50, 1), 100);
+  const staleTransactionIndex = parseTransactionIndex(multisigAccount.staleTransactionIndex.toString());
+  const currentTransactionIndex = parseTransactionIndex(multisigAccount.transactionIndex.toString());
+  const items = [];
+
+  for (let index = currentTransactionIndex; index > staleTransactionIndex && items.length < limit; index -= 1n) {
+    const proposal = await loadSquadsConfigProposal(organizationId, treasuryWalletId, programId, multisigPda, multisigAccount, index);
+    if (!proposal || !matchesProposalStatusFilter(proposal.status, statusFilter)) {
+      continue;
+    }
+    items.push(proposal);
+  }
+
+  return { items };
+}
+
+export async function getSquadsConfigProposal(
+  organizationId: string,
+  treasuryWalletId: string,
+  actorUserId: string,
+  transactionIndex: string,
+) {
+  const { programId, multisigPda, multisigAccount } = await loadSquadsTreasury(organizationId, treasuryWalletId);
+  await assertActorIsSquadsMember(organizationId, multisigAccount, actorUserId);
+  const proposal = await loadSquadsConfigProposal(
+    organizationId,
+    treasuryWalletId,
+    programId,
+    multisigPda,
+    multisigAccount,
+    parseTransactionIndex(transactionIndex),
+  );
+  if (!proposal) {
+    throw notFound('Squads config proposal not found');
+  }
+  return proposal;
 }
 
 export async function syncSquadsTreasuryMembers(organizationId: string, treasuryWalletId: string) {
@@ -690,6 +776,77 @@ function buildSquadsSignableResponse(args: {
       recentBlockhash: args.latestBlockhash.blockhash,
       lastValidBlockHeight: args.latestBlockhash.lastValidBlockHeight,
     },
+  };
+}
+
+async function loadSquadsConfigProposal(
+  organizationId: string,
+  treasuryWalletId: string,
+  programId: PublicKey,
+  multisigPda: PublicKey,
+  multisigAccount: SquadsMultisigAccountLike,
+  transactionIndex: bigint,
+) {
+  const [configTransactionPda] = multisig.getTransactionPda({
+    multisigPda,
+    index: transactionIndex,
+    programId,
+  });
+  const [proposalPda] = multisig.getProposalPda({
+    multisigPda,
+    transactionIndex,
+    programId,
+  });
+  const [proposal, configTransaction] = await Promise.all([
+    runtime.loadProposal(proposalPda),
+    runtime.loadConfigTransaction(configTransactionPda),
+  ]);
+  if (!proposal || !configTransaction) {
+    return null;
+  }
+
+  const approvals = addressesFromPublicKeys(proposal.approved);
+  const rejections = addressesFromPublicKeys(proposal.rejected);
+  const cancellations = addressesFromPublicKeys(proposal.cancelled);
+  const voterMembers = multisigAccount.members
+    .filter((member) => (member.permissions.mask & SQUADS_PERMISSION_MAP.vote) === SQUADS_PERMISSION_MAP.vote)
+    .map((member) => ({
+      walletAddress: member.key.toBase58(),
+      permissions: permissionNamesFromMask(member.permissions.mask),
+    }));
+  const decidedVoters = new Set([...approvals, ...rejections]);
+  const pendingVoters = voterMembers.filter((member) => !decidedVoters.has(member.walletAddress));
+  const executeMembers = multisigAccount.members
+    .filter((member) => (member.permissions.mask & SQUADS_PERMISSION_MAP.execute) === SQUADS_PERMISSION_MAP.execute)
+    .map((member) => member.key.toBase58());
+  const allLinkedAddresses = uniqueStrings([
+    ...approvals,
+    ...rejections,
+    ...cancellations,
+    ...pendingVoters.map((member) => member.walletAddress),
+    ...executeMembers,
+    ...configTransaction.actions.flatMap(configActionWalletAddresses),
+  ]);
+  const linkedMembers = await loadDetailedMembersByWalletAddresses(organizationId, treasuryWalletId, allLinkedAddresses);
+
+  return {
+    transactionIndex: transactionIndex.toString(),
+    configTransactionPda: configTransactionPda.toBase58(),
+    proposalPda: proposalPda.toBase58(),
+    status: normalizeProposalStatus(proposal.status),
+    threshold: Number(multisigAccount.threshold),
+    staleTransactionIndex: multisigAccount.staleTransactionIndex.toString(),
+    actions: serializeConfigActions(configTransaction.actions),
+    approvals: approvals.map((walletAddress) => serializeProposalDecision(walletAddress, linkedMembers)),
+    rejections: rejections.map((walletAddress) => serializeProposalDecision(walletAddress, linkedMembers)),
+    cancellations: cancellations.map((walletAddress) => serializeProposalDecision(walletAddress, linkedMembers)),
+    pendingVoters: pendingVoters.map((member) => ({
+      walletAddress: member.walletAddress,
+      permissions: member.permissions,
+      ...serializeProposalMemberLink(member.walletAddress, linkedMembers),
+    })),
+    canExecuteWalletAddresses: executeMembers,
+    createdAtSlot: null,
   };
 }
 
@@ -1145,6 +1302,38 @@ function assertOnchainMemberPermission(
   }
 }
 
+async function assertActorIsSquadsMember(
+  organizationId: string,
+  multisigAccount: SquadsMultisigAccountLike,
+  actorUserId: string,
+) {
+  const actorWallets = await prisma.personalWallet.findMany({
+    where: {
+      userId: actorUserId,
+      status: 'active',
+      chain: SOLANA_CHAIN,
+      user: {
+        memberships: {
+          some: {
+            organizationId,
+            status: 'active',
+          },
+        },
+      },
+    },
+    select: {
+      walletAddress: true,
+    },
+  });
+  const actorWalletAddresses = new Set(actorWallets.map((wallet) => wallet.walletAddress));
+  const memberAddresses = multisigAccount.members.map((member) => member.key.toBase58());
+  const visibleMemberAddresses = memberAddresses.filter((walletAddress) => actorWalletAddresses.has(walletAddress));
+  if (!visibleMemberAddresses.length) {
+    throw new ApiError(403, 'not_squads_member', "You're not a member of this Squads treasury.");
+  }
+  return { memberAddresses: visibleMemberAddresses };
+}
+
 function validateConfigActionsAgainstCurrentMembers(
   multisigAccount: SquadsMultisigAccountLike,
   actions: multisig.types.ConfigAction[],
@@ -1213,6 +1402,83 @@ function serializeConfigActions(actions: multisig.types.ConfigAction[]) {
   });
 }
 
+function configActionWalletAddresses(action: multisig.types.ConfigAction) {
+  if (multisig.types.isConfigActionAddMember(action)) {
+    return [action.newMember.key.toBase58()];
+  }
+  if (multisig.types.isConfigActionRemoveMember(action)) {
+    return [action.oldMember.toBase58()];
+  }
+  return [];
+}
+
+function addressesFromPublicKeys(values: PublicKey[]) {
+  return values.map((value) => value.toBase58());
+}
+
+function uniqueStrings(values: string[]) {
+  return [...new Set(values)];
+}
+
+type DetailedSquadsMemberMap = Awaited<ReturnType<typeof loadDetailedMembersByWalletAddresses>>;
+
+function serializeProposalDecision(walletAddress: string, linkedMembers: DetailedSquadsMemberMap) {
+  return {
+    walletAddress,
+    decidedAtSlot: null,
+    ...serializeProposalMemberLink(walletAddress, linkedMembers),
+  };
+}
+
+function serializeProposalMemberLink(walletAddress: string, linkedMembers: DetailedSquadsMemberMap) {
+  const linked = linkedMembers.get(walletAddress);
+  return {
+    personalWallet: linked?.personalWallet
+      ? {
+        userWalletId: linked.personalWallet.userWalletId,
+        userId: linked.personalWallet.userId,
+        label: linked.personalWallet.label,
+      }
+      : null,
+    organizationMembership: linked?.organizationMembership
+      ? {
+        membershipId: linked.organizationMembership.membershipId,
+        role: linked.organizationMembership.role,
+        user: linked.organizationMembership.user,
+      }
+      : null,
+  };
+}
+
+function normalizeProposalStatus(status: { __kind: string }) {
+  switch (status.__kind) {
+    case 'Draft':
+      return 'draft';
+    case 'Active':
+      return 'active';
+    case 'Approved':
+      return 'approved';
+    case 'Executed':
+      return 'executed';
+    case 'Cancelled':
+      return 'cancelled';
+    case 'Rejected':
+      return 'rejected';
+    case 'Executing':
+      return 'approved';
+    default:
+      return status.__kind.toLowerCase();
+  }
+}
+
+function matchesProposalStatusFilter(status: string, filter: 'pending' | 'all' | 'closed') {
+  if (filter === 'all') {
+    return true;
+  }
+  const isClosed = status === 'executed' || status === 'cancelled' || status === 'rejected';
+  return filter === 'closed' ? isClosed : !isClosed && status !== 'draft';
+}
+
 function deriveMemberLinkStatus(linked: {
   walletStatus: string;
   membershipStatus: string | null;
@@ -1250,6 +1516,13 @@ function mergeSquadsMetadata(value: unknown, nextSquads: Prisma.InputJsonObject)
       ...nextSquads,
     },
   } satisfies Prisma.InputJsonObject;
+}
+
+function isMissingSquadsAccountError(error: unknown) {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  return /account.*not.*found|could not find account|no account info/i.test(error.message);
 }
 
 function readSquadsMetadata(value: unknown) {

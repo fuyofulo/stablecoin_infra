@@ -10,8 +10,10 @@ import {
   createSquadsConfigProposalApprovalIntent,
   createSquadsConfigProposalExecuteIntent,
   createSquadsTreasuryIntent,
+  getSquadsConfigProposal,
   getSquadsTreasuryDetail,
   getSquadsTreasuryStatus,
+  listSquadsConfigProposals,
   syncSquadsTreasuryMembers,
 } from '../squads-treasury.js';
 import { createTreasuryWallet, listTreasuryWallets, updateTreasuryWallet } from '../treasury-wallets.js';
@@ -85,6 +87,11 @@ const squadsConfigProposalParamsSchema = treasuryWalletParamsSchema.extend({
 const squadsConfigProposalMemberSchema = z.object({
   memberPersonalWalletId: z.string().uuid(),
   memo: z.string().optional().nullable(),
+});
+
+const listSquadsConfigProposalsQuerySchema = z.object({
+  status: z.enum(['pending', 'all', 'closed']).optional(),
+  limit: z.coerce.number().int().min(1).max(100).optional(),
 });
 
 const updateTreasuryWalletSchema = z.object({
@@ -189,6 +196,25 @@ treasuryWalletsRouter.get(
   }),
 );
 
+treasuryWalletsRouter.get(
+  '/organizations/:organizationId/treasury-wallets/:treasuryWalletId/squads/config-proposals',
+  asyncRoute(async (req, res) => {
+    const { organizationId, treasuryWalletId } = treasuryWalletParamsSchema.parse(req.params);
+    await assertOrganizationAccess(organizationId, req.auth!);
+    const query = listSquadsConfigProposalsQuerySchema.parse(req.query);
+    sendList(res, unwrapItems(await listSquadsConfigProposals(organizationId, treasuryWalletId, req.auth!.userId, query)));
+  }),
+);
+
+treasuryWalletsRouter.get(
+  '/organizations/:organizationId/treasury-wallets/:treasuryWalletId/squads/config-proposals/:transactionIndex',
+  asyncRoute(async (req, res) => {
+    const { organizationId, treasuryWalletId, transactionIndex } = squadsConfigProposalParamsSchema.parse(req.params);
+    await assertOrganizationAccess(organizationId, req.auth!);
+    sendJson(res, await getSquadsConfigProposal(organizationId, treasuryWalletId, req.auth!.userId, transactionIndex));
+  }),
+);
+
 treasuryWalletsRouter.post(
   '/organizations/:organizationId/treasury-wallets/:treasuryWalletId/squads/config-proposals/add-member-intent',
   asyncRoute(async (req, res) => {
@@ -213,7 +239,7 @@ treasuryWalletsRouter.post(
   '/organizations/:organizationId/treasury-wallets/:treasuryWalletId/squads/config-proposals/:transactionIndex/approve-intent',
   asyncRoute(async (req, res) => {
     const { organizationId, treasuryWalletId, transactionIndex } = squadsConfigProposalParamsSchema.parse(req.params);
-    await assertOrganizationAdmin(organizationId, req.auth!);
+    await assertOrganizationAccess(organizationId, req.auth!);
     const input = squadsConfigProposalMemberSchema.parse(req.body);
     sendCreated(res, await createSquadsConfigProposalApprovalIntent(organizationId, treasuryWalletId, req.auth!.userId, {
       transactionIndex,
@@ -226,7 +252,7 @@ treasuryWalletsRouter.post(
   '/organizations/:organizationId/treasury-wallets/:treasuryWalletId/squads/config-proposals/:transactionIndex/execute-intent',
   asyncRoute(async (req, res) => {
     const { organizationId, treasuryWalletId, transactionIndex } = squadsConfigProposalParamsSchema.parse(req.params);
-    await assertOrganizationAdmin(organizationId, req.auth!);
+    await assertOrganizationAccess(organizationId, req.auth!);
     const input = squadsConfigProposalMemberSchema.pick({ memberPersonalWalletId: true }).parse(req.body);
     sendCreated(res, await createSquadsConfigProposalExecuteIntent(organizationId, treasuryWalletId, req.auth!.userId, {
       transactionIndex,

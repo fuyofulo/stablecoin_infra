@@ -111,6 +111,8 @@ capabilitiesRouter.get('/capabilities', (_req, res) => {
           'POST /organizations/:organizationId/treasury-wallets/squads/confirm',
           'GET /organizations/:organizationId/treasury-wallets/:treasuryWalletId/squads/detail',
           'GET /organizations/:organizationId/treasury-wallets/:treasuryWalletId/squads/status',
+          'GET /organizations/:organizationId/treasury-wallets/:treasuryWalletId/squads/config-proposals',
+          'GET /organizations/:organizationId/treasury-wallets/:treasuryWalletId/squads/config-proposals/:transactionIndex',
           'POST /organizations/:organizationId/treasury-wallets/:treasuryWalletId/squads/config-proposals/add-member-intent',
           'POST /organizations/:organizationId/treasury-wallets/:treasuryWalletId/squads/config-proposals/change-threshold-intent',
           'POST /organizations/:organizationId/treasury-wallets/:treasuryWalletId/squads/config-proposals/:transactionIndex/approve-intent',
