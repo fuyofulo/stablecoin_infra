@@ -38,6 +38,7 @@ import type {
   ConfirmSquadsTreasuryRequest,
   CreateSquadsTreasuryIntentRequest,
   CreateSquadsTreasuryIntentResponse,
+  SquadsTreasuryDetail,
   SquadsTreasuryStatus,
   TreasuryWallet,
   ManagedWalletProvider,
@@ -576,6 +577,11 @@ export const api = {
   getSquadsTreasuryStatus(organizationId: string, treasuryWalletId: string) {
     return request<SquadsTreasuryStatus>(
       `/organizations/${organizationId}/treasury-wallets/${treasuryWalletId}/squads/status`,
+    );
+  },
+  getSquadsTreasuryDetail(organizationId: string, treasuryWalletId: string) {
+    return request<SquadsTreasuryDetail>(
+      `/organizations/${organizationId}/treasury-wallets/${treasuryWalletId}/squads/detail`,
     );
   },
 

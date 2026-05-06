@@ -304,6 +304,79 @@ export type ConfirmSquadsTreasuryRequest = {
   vaultIndex?: number;
 };
 
+export type SquadsMemberLinkStatus =
+  | 'linked'
+  | 'unlinked'
+  | 'wallet_inactive'
+  | 'not_org_member'
+  | 'authorization_missing';
+
+export type SquadsDetailMember = {
+  walletAddress: string;
+  permissionsMask: number;
+  permissions: SquadsPermission[];
+  linkStatus: SquadsMemberLinkStatus;
+  personalWallet: {
+    userWalletId: string;
+    userId: string;
+    chain: string;
+    walletAddress: string;
+    walletType: string;
+    provider: string | null;
+    label: string | null;
+    status: string;
+    verifiedAt: string | null;
+    lastUsedAt: string | null;
+  } | null;
+  organizationMembership: {
+    membershipId: string;
+    role: string;
+    status: string;
+    createdAt: string;
+    user: {
+      userId: string;
+      email: string;
+      displayName: string;
+      avatarUrl: string | null;
+    };
+  } | null;
+  localAuthorization: {
+    walletAuthorizationId: string;
+    role: string;
+    scope: string;
+    status: string;
+    revokedAt: string | null;
+    metadataJson: Record<string, unknown> | null;
+    createdAt: string;
+  } | null;
+};
+
+export type SquadsTreasuryDetail = {
+  treasuryWallet: TreasuryWallet;
+  squads: {
+    provider: SquadsTreasuryProvider;
+    programId: string;
+    multisigPda: string;
+    vaultPda: string;
+    vaultIndex: number;
+    configAuthority: string | null;
+    isAutonomous: boolean;
+    threshold: number;
+    timeLockSeconds: number;
+    transactionIndex: string;
+    staleTransactionIndex: string;
+    members: SquadsDetailMember[];
+    capabilities: {
+      canInitiate: boolean;
+      canVote: boolean;
+      canExecute: boolean;
+      canCreateConfigProposals: boolean;
+      canCreatePaymentProposals: boolean;
+    };
+    localStateMatchesChain: boolean;
+  };
+};
+
 export type SquadsTreasuryStatus = {
   treasuryWalletId: string;
   provider: SquadsTreasuryProvider;

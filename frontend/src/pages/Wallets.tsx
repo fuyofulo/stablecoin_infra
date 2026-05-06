@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate, useParams } from 'react-router';
+import { Link, useNavigate, useParams } from 'react-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api';
 import type {
@@ -273,7 +273,16 @@ export function WalletsPage({ session: _session }: { session: AuthenticatedSessi
                     <td>
                       <div className="rd-payee-main">
                         <span className="rd-payee-name" style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-                          {row.displayName ?? 'Untitled wallet'}
+                          {isSquads ? (
+                            <Link
+                              to={`/organizations/${organizationId}/wallets/${row.treasuryWalletId}`}
+                              style={{ color: 'inherit', textDecoration: 'underline', textUnderlineOffset: 3, textDecorationColor: 'rgba(255,255,255,0.25)' }}
+                            >
+                              {row.displayName ?? 'Untitled wallet'}
+                            </Link>
+                          ) : (
+                            <span>{row.displayName ?? 'Untitled wallet'}</span>
+                          )}
                           {isSquads ? (
                             <span
                               className="rd-pill rd-pill-info"
