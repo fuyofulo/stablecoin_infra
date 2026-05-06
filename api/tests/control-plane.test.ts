@@ -665,6 +665,24 @@ test('Squads treasury creation prepares a signable transaction and persists the 
   assert.equal(status.multisigPda, intent.intent.multisigPda);
   assert.equal(status.vaultPda, intent.intent.vaultPda);
   assert.equal(status.localStateMatchesChain, true);
+
+  const detail = await get(
+    `/organizations/${organization.organizationId}/treasury-wallets/${treasuryWallet.treasuryWalletId}/squads/detail`,
+    register.sessionToken,
+  );
+  assert.equal(detail.treasuryWallet.treasuryWalletId, treasuryWallet.treasuryWalletId);
+  assert.equal(detail.squads.provider, 'squads_v4');
+  assert.equal(detail.squads.isAutonomous, true);
+  assert.equal(detail.squads.threshold, 2);
+  assert.equal(detail.squads.members.length, 2);
+  assert.equal(detail.squads.capabilities.canInitiate, true);
+  assert.equal(detail.squads.capabilities.canVote, true);
+  assert.equal(detail.squads.capabilities.canExecute, true);
+  const creatorDetail = detail.squads.members.find((member: { walletAddress: string }) => member.walletAddress === creatorWalletAddress);
+  assert.equal(creatorDetail.linkStatus, 'linked');
+  assert.equal(creatorDetail.personalWallet.userWalletId, creatorWallet.userWalletId);
+  assert.equal(creatorDetail.organizationMembership.user.email, 'squads-treasury@example.com');
+  assert.equal(creatorDetail.localAuthorization.role, 'squads_member');
 });
 
 test('Privy personal wallet signing endpoint signs only transactions requiring that wallet', async () => {

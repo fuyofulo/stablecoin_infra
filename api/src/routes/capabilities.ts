@@ -109,6 +109,7 @@ capabilitiesRouter.get('/capabilities', (_req, res) => {
           'GET /organizations/:organizationId/treasury-wallets',
           'POST /organizations/:organizationId/treasury-wallets/squads/create-intent',
           'POST /organizations/:organizationId/treasury-wallets/squads/confirm',
+          'GET /organizations/:organizationId/treasury-wallets/:treasuryWalletId/squads/detail',
           'GET /organizations/:organizationId/treasury-wallets/:treasuryWalletId/squads/status',
           'GET /organizations/:organizationId/wallet-authorizations',
           'POST /organizations/:organizationId/wallet-authorizations',

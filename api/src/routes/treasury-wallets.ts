@@ -6,6 +6,7 @@ import { getSolUsdPrice } from '../pricing.js';
 import {
   confirmSquadsTreasuryCreation,
   createSquadsTreasuryIntent,
+  getSquadsTreasuryDetail,
   getSquadsTreasuryStatus,
 } from '../squads-treasury.js';
 import { createTreasuryWallet, listTreasuryWallets, updateTreasuryWallet } from '../treasury-wallets.js';
@@ -137,6 +138,15 @@ treasuryWalletsRouter.post(
     await assertOrganizationAdmin(organizationId, req.auth!);
     const input = confirmSquadsTreasurySchema.parse(req.body);
     sendCreated(res, await confirmSquadsTreasuryCreation(organizationId, req.auth!.userId, input));
+  }),
+);
+
+treasuryWalletsRouter.get(
+  '/organizations/:organizationId/treasury-wallets/:treasuryWalletId/squads/detail',
+  asyncRoute(async (req, res) => {
+    const { organizationId, treasuryWalletId } = treasuryWalletParamsSchema.parse(req.params);
+    await assertOrganizationAccess(organizationId, req.auth!);
+    sendJson(res, await getSquadsTreasuryDetail(organizationId, treasuryWalletId));
   }),
 );
 

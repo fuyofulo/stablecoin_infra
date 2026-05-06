@@ -289,6 +289,71 @@ export async function getSquadsTreasuryStatus(organizationId: string, treasuryWa
   };
 }
 
+export async function getSquadsTreasuryDetail(organizationId: string, treasuryWalletId: string) {
+  const wallet = await prisma.treasuryWallet.findFirst({
+    where: { organizationId, treasuryWalletId },
+  });
+  if (!wallet) {
+    throw notFound('Treasury wallet not found');
+  }
+  if (wallet.source !== SQUADS_SOURCE || !wallet.sourceRef) {
+    throw badRequest('Treasury wallet is not a Squads v4 treasury.');
+  }
+
+  const programId = new PublicKey(config.squadsProgramId);
+  const multisigPda = new PublicKey(wallet.sourceRef);
+  const multisigAccount = await runtime.loadMultisig(multisigPda);
+  const metadata = readSquadsMetadata(wallet.propertiesJson);
+  const vaultIndex = typeof metadata?.vaultIndex === 'number' ? metadata.vaultIndex : config.squadsDefaultVaultIndex;
+  const vaultPda = multisig.getVaultPda({ multisigPda, index: vaultIndex, programId })[0];
+  const onchainMembers = serializeOnchainMembers(multisigAccount.members);
+  const linkedMembers = await loadDetailedMembersByWalletAddresses(
+    organizationId,
+    treasuryWalletId,
+    onchainMembers.map((member) => member.walletAddress),
+  );
+
+  return {
+    treasuryWallet: serializeSquadsTreasuryWallet(wallet),
+    squads: {
+      provider: SQUADS_SOURCE,
+      programId: programId.toBase58(),
+      multisigPda: multisigPda.toBase58(),
+      vaultPda: vaultPda.toBase58(),
+      vaultIndex,
+      configAuthority: publicKeysEqual(multisigAccount.configAuthority, PublicKey.default)
+        ? null
+        : multisigAccount.configAuthority.toBase58(),
+      isAutonomous: publicKeysEqual(multisigAccount.configAuthority, PublicKey.default),
+      threshold: Number(multisigAccount.threshold),
+      timeLockSeconds: Number(multisigAccount.timeLock),
+      transactionIndex: multisigAccount.transactionIndex.toString(),
+      staleTransactionIndex: multisigAccount.staleTransactionIndex.toString(),
+      members: onchainMembers.map((member) => {
+        const linked = linkedMembers.get(member.walletAddress);
+        return {
+          ...member,
+          linkStatus: deriveMemberLinkStatus(linked),
+          personalWallet: linked?.personalWallet ?? null,
+          organizationMembership: linked?.organizationMembership ?? null,
+          localAuthorization: linked?.localAuthorization ?? null,
+        };
+      }),
+      capabilities: {
+        canInitiate: onchainMembers.some((member) => member.permissions.includes('initiate')),
+        canVote: onchainMembers.some((member) => member.permissions.includes('vote')),
+        canExecute: onchainMembers.some((member) => member.permissions.includes('execute')),
+        canCreateConfigProposals: true,
+        canCreatePaymentProposals: true,
+      },
+      localStateMatchesChain:
+        wallet.address === vaultPda.toBase58()
+        && metadata?.multisigPda === multisigPda.toBase58()
+        && metadata?.vaultPda === vaultPda.toBase58(),
+    },
+  };
+}
+
 export function serializeSquadsTreasuryWallet(wallet: {
   treasuryWalletId: string;
   organizationId: string;
@@ -494,6 +559,106 @@ async function loadMembersByWalletAddresses(organizationId: string, walletAddres
     }));
 }
 
+async function loadDetailedMembersByWalletAddresses(
+  organizationId: string,
+  treasuryWalletId: string,
+  walletAddresses: string[],
+) {
+  const wallets = await prisma.personalWallet.findMany({
+    where: {
+      chain: SOLANA_CHAIN,
+      walletAddress: { in: walletAddresses },
+    },
+    include: {
+      user: {
+        select: {
+          userId: true,
+          email: true,
+          displayName: true,
+          avatarUrl: true,
+          memberships: {
+            where: { organizationId },
+            select: {
+              membershipId: true,
+              role: true,
+              status: true,
+              createdAt: true,
+            },
+            take: 1,
+          },
+        },
+      },
+      walletAuthorizations: {
+        where: {
+          organizationId,
+          treasuryWalletId,
+          role: 'squads_member',
+        },
+        select: {
+          walletAuthorizationId: true,
+          role: true,
+          scope: true,
+          status: true,
+          revokedAt: true,
+          metadataJson: true,
+          createdAt: true,
+        },
+        take: 1,
+      },
+    },
+  });
+
+  return new Map(wallets.map((wallet) => {
+    const membership = wallet.user.memberships[0] ?? null;
+    const authorization = wallet.walletAuthorizations[0] ?? null;
+    return [
+      wallet.walletAddress,
+      {
+        walletStatus: wallet.status,
+        membershipStatus: membership?.status ?? null,
+        authorizationStatus: authorization?.status ?? null,
+        personalWallet: {
+          userWalletId: wallet.userWalletId,
+          userId: wallet.userId,
+          chain: wallet.chain,
+          walletAddress: wallet.walletAddress,
+          walletType: wallet.walletType,
+          provider: wallet.provider,
+          label: wallet.label,
+          status: wallet.status,
+          verifiedAt: wallet.verifiedAt?.toISOString() ?? null,
+          lastUsedAt: wallet.lastUsedAt?.toISOString() ?? null,
+        },
+        organizationMembership: membership
+          ? {
+            membershipId: membership.membershipId,
+            role: membership.role,
+            status: membership.status,
+            createdAt: membership.createdAt.toISOString(),
+            user: {
+              userId: wallet.user.userId,
+              email: wallet.user.email,
+              displayName: wallet.user.displayName,
+              avatarUrl: wallet.user.avatarUrl,
+            },
+          }
+          : null,
+        localAuthorization: authorization
+          ? {
+            walletAuthorizationId: authorization.walletAuthorizationId,
+            role: authorization.role,
+            scope: authorization.scope,
+            status: authorization.status,
+            revokedAt: authorization.revokedAt?.toISOString() ?? null,
+            metadataJson: authorization.metadataJson,
+            createdAt: authorization.createdAt.toISOString(),
+          }
+          : null,
+      },
+    ];
+  }));
+}
+
 async function resolveSquadsProgramTreasury(programId: PublicKey) {
   if (config.squadsProgramTreasury) {
     return new PublicKey(config.squadsProgramTreasury);
@@ -532,6 +697,26 @@ function permissionNamesFromMask(mask: number): SquadsPermissionName[] {
   return (Object.keys(SQUADS_PERMISSION_MAP) as SquadsPermissionName[]).filter(
     (permission) => (mask & SQUADS_PERMISSION_MAP[permission]) === SQUADS_PERMISSION_MAP[permission],
   );
+}
+
+function deriveMemberLinkStatus(linked: {
+  walletStatus: string;
+  membershipStatus: string | null;
+  authorizationStatus: string | null;
+} | undefined) {
+  if (!linked) {
+    return 'unlinked';
+  }
+  if (linked.walletStatus !== 'active') {
+    return 'wallet_inactive';
+  }
+  if (linked.membershipStatus !== 'active') {
+    return 'not_org_member';
+  }
+  if (linked.authorizationStatus !== 'active') {
+    return 'authorization_missing';
+  }
+  return 'linked';
 }
 
 function readSquadsMetadata(value: unknown) {
