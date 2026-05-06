@@ -683,6 +683,109 @@ test('Squads treasury creation prepares a signable transaction and persists the 
   assert.equal(creatorDetail.personalWallet.userWalletId, creatorWallet.userWalletId);
   assert.equal(creatorDetail.organizationMembership.user.email, 'squads-treasury@example.com');
   assert.equal(creatorDetail.localAuthorization.role, 'squads_member');
+
+  const invitedMember = await post('/auth/register', {
+    email: 'squads-new-member@example.com',
+    password: 'DemoPass123!',
+    displayName: 'Squads New Member',
+  });
+  await verifyRegisteredEmail(invitedMember);
+  const invite = await post(
+    `/organizations/${organization.organizationId}/invites`,
+    { email: 'squads-new-member@example.com', role: 'member' },
+    register.sessionToken,
+  );
+  await post(`/invites/${invite.inviteToken}/accept`, {}, invitedMember.sessionToken);
+  const newMemberWalletAddress = Keypair.generate().publicKey.toBase58();
+  const newMemberWallet = await post(
+    '/personal-wallets/embedded',
+    {
+      walletAddress: newMemberWalletAddress,
+      provider: 'privy',
+      providerWalletId: 'privy-squads-new-member',
+      label: 'New member signer',
+    },
+    invitedMember.sessionToken,
+  );
+
+  const addMemberIntent = await post(
+    `/organizations/${organization.organizationId}/treasury-wallets/${treasuryWallet.treasuryWalletId}/squads/config-proposals/add-member-intent`,
+    {
+      creatorPersonalWalletId: creatorWallet.userWalletId,
+      newMemberPersonalWalletId: newMemberWallet.userWalletId,
+      permissions: ['vote'],
+      newThreshold: 3,
+    },
+    register.sessionToken,
+  );
+  assert.equal(addMemberIntent.intent.provider, 'squads_v4');
+  assert.equal(addMemberIntent.intent.kind, 'config_proposal_create');
+  assert.equal(addMemberIntent.intent.transactionIndex, '1');
+  assert.equal(addMemberIntent.transaction.requiredSigner, creatorWalletAddress);
+  assert.equal(addMemberIntent.intent.actions.length, 2);
+  assert.deepEqual(
+    addMemberIntent.intent.actions.map((action: { kind: string }) => action.kind),
+    ['add_member', 'change_threshold'],
+  );
+
+  const approvalIntent = await post(
+    `/organizations/${organization.organizationId}/treasury-wallets/${treasuryWallet.treasuryWalletId}/squads/config-proposals/1/approve-intent`,
+    { memberPersonalWalletId: approverWallet.userWalletId },
+    register.sessionToken,
+  );
+  assert.equal(approvalIntent.intent.kind, 'config_proposal_approval');
+  assert.equal(approvalIntent.intent.transactionIndex, '1');
+  assert.equal(approvalIntent.transaction.requiredSigner, approverWalletAddress);
+
+  const executeIntent = await post(
+    `/organizations/${organization.organizationId}/treasury-wallets/${treasuryWallet.treasuryWalletId}/squads/config-proposals/1/execute-intent`,
+    { memberPersonalWalletId: creatorWallet.userWalletId },
+    register.sessionToken,
+  );
+  assert.equal(executeIntent.intent.kind, 'config_proposal_execution');
+  assert.equal(executeIntent.intent.transactionIndex, '1');
+  assert.equal(executeIntent.transaction.requiredSigner, creatorWalletAddress);
+
+  onchainMultisig.threshold = 3;
+  onchainMultisig.transactionIndex = { toString: () => '1' };
+  onchainMultisig.members = [
+    { key: publicKeyFromString(creatorWalletAddress), permissions: { mask: 7 } },
+    { key: publicKeyFromString(approverWalletAddress), permissions: { mask: 2 } },
+    { key: publicKeyFromString(newMemberWalletAddress), permissions: { mask: 2 } },
+  ];
+
+  const syncedDetail = await post(
+    `/organizations/${organization.organizationId}/treasury-wallets/${treasuryWallet.treasuryWalletId}/squads/sync-members`,
+    {},
+    register.sessionToken,
+  );
+  assert.equal(syncedDetail.squads.threshold, 3);
+  assert.equal(syncedDetail.squads.members.length, 3);
+  const syncedNewMember = syncedDetail.squads.members.find((member: { walletAddress: string }) => member.walletAddress === newMemberWalletAddress);
+  assert.equal(syncedNewMember.linkStatus, 'linked');
+  assert.equal(syncedNewMember.personalWallet.userWalletId, newMemberWallet.userWalletId);
+  assert.deepEqual(syncedNewMember.permissions, ['vote']);
+
+  const syncedAuthorizations = await get(
+    `/organizations/${organization.organizationId}/wallet-authorizations?treasuryWalletId=${treasuryWallet.treasuryWalletId}`,
+    register.sessionToken,
+  );
+  assert.equal(syncedAuthorizations.items.length, 3);
+
+  const changeThresholdIntent = await post(
+    `/organizations/${organization.organizationId}/treasury-wallets/${treasuryWallet.treasuryWalletId}/squads/config-proposals/change-threshold-intent`,
+    {
+      creatorPersonalWalletId: creatorWallet.userWalletId,
+      newThreshold: 2,
+    },
+    register.sessionToken,
+  );
+  assert.equal(changeThresholdIntent.intent.kind, 'config_proposal_create');
+  assert.equal(changeThresholdIntent.intent.transactionIndex, '2');
+  assert.deepEqual(
+    changeThresholdIntent.intent.actions.map((action: { kind: string }) => action.kind),
+    ['change_threshold'],
+  );
 });
 
 test('Privy personal wallet signing endpoint signs only transactions requiring that wallet', async () => {

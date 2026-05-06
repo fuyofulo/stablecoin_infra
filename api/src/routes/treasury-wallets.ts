@@ -5,9 +5,14 @@ import { fetchWalletBalances, SOLANA_CHAIN, USDC_ASSET } from '../solana.js';
 import { getSolUsdPrice } from '../pricing.js';
 import {
   confirmSquadsTreasuryCreation,
+  createSquadsAddMemberProposalIntent,
+  createSquadsChangeThresholdProposalIntent,
+  createSquadsConfigProposalApprovalIntent,
+  createSquadsConfigProposalExecuteIntent,
   createSquadsTreasuryIntent,
   getSquadsTreasuryDetail,
   getSquadsTreasuryStatus,
+  syncSquadsTreasuryMembers,
 } from '../squads-treasury.js';
 import { createTreasuryWallet, listTreasuryWallets, updateTreasuryWallet } from '../treasury-wallets.js';
 import { asyncRoute, listQuerySchema, sendCreated, sendList, sendJson, unwrapItems } from '../route-helpers.js';
@@ -55,6 +60,31 @@ const confirmSquadsTreasurySchema = z.object({
   createKey: z.string().min(1),
   multisigPda: z.string().min(1),
   vaultIndex: z.number().int().min(0).max(255).optional(),
+});
+
+const createSquadsAddMemberProposalSchema = z.object({
+  creatorPersonalWalletId: z.string().uuid(),
+  newMemberPersonalWalletId: z.string().uuid(),
+  permissions: z.array(squadsPermissionSchema).min(1),
+  newThreshold: z.number().int().min(1).max(65_535).optional(),
+  memo: z.string().optional().nullable(),
+  autoApprove: z.boolean().optional(),
+});
+
+const createSquadsChangeThresholdProposalSchema = z.object({
+  creatorPersonalWalletId: z.string().uuid(),
+  newThreshold: z.number().int().min(1).max(65_535),
+  memo: z.string().optional().nullable(),
+  autoApprove: z.boolean().optional(),
+});
+
+const squadsConfigProposalParamsSchema = treasuryWalletParamsSchema.extend({
+  transactionIndex: z.string().regex(/^\d+$/),
+});
+
+const squadsConfigProposalMemberSchema = z.object({
+  memberPersonalWalletId: z.string().uuid(),
+  memo: z.string().optional().nullable(),
 });
 
 const updateTreasuryWalletSchema = z.object({
@@ -156,6 +186,61 @@ treasuryWalletsRouter.get(
     const { organizationId, treasuryWalletId } = treasuryWalletParamsSchema.parse(req.params);
     await assertOrganizationAccess(organizationId, req.auth!);
     sendJson(res, await getSquadsTreasuryStatus(organizationId, treasuryWalletId));
+  }),
+);
+
+treasuryWalletsRouter.post(
+  '/organizations/:organizationId/treasury-wallets/:treasuryWalletId/squads/config-proposals/add-member-intent',
+  asyncRoute(async (req, res) => {
+    const { organizationId, treasuryWalletId } = treasuryWalletParamsSchema.parse(req.params);
+    await assertOrganizationAdmin(organizationId, req.auth!);
+    const input = createSquadsAddMemberProposalSchema.parse(req.body);
+    sendCreated(res, await createSquadsAddMemberProposalIntent(organizationId, treasuryWalletId, req.auth!.userId, input));
+  }),
+);
+
+treasuryWalletsRouter.post(
+  '/organizations/:organizationId/treasury-wallets/:treasuryWalletId/squads/config-proposals/change-threshold-intent',
+  asyncRoute(async (req, res) => {
+    const { organizationId, treasuryWalletId } = treasuryWalletParamsSchema.parse(req.params);
+    await assertOrganizationAdmin(organizationId, req.auth!);
+    const input = createSquadsChangeThresholdProposalSchema.parse(req.body);
+    sendCreated(res, await createSquadsChangeThresholdProposalIntent(organizationId, treasuryWalletId, req.auth!.userId, input));
+  }),
+);
+
+treasuryWalletsRouter.post(
+  '/organizations/:organizationId/treasury-wallets/:treasuryWalletId/squads/config-proposals/:transactionIndex/approve-intent',
+  asyncRoute(async (req, res) => {
+    const { organizationId, treasuryWalletId, transactionIndex } = squadsConfigProposalParamsSchema.parse(req.params);
+    await assertOrganizationAdmin(organizationId, req.auth!);
+    const input = squadsConfigProposalMemberSchema.parse(req.body);
+    sendCreated(res, await createSquadsConfigProposalApprovalIntent(organizationId, treasuryWalletId, req.auth!.userId, {
+      transactionIndex,
+      ...input,
+    }));
+  }),
+);
+
+treasuryWalletsRouter.post(
+  '/organizations/:organizationId/treasury-wallets/:treasuryWalletId/squads/config-proposals/:transactionIndex/execute-intent',
+  asyncRoute(async (req, res) => {
+    const { organizationId, treasuryWalletId, transactionIndex } = squadsConfigProposalParamsSchema.parse(req.params);
+    await assertOrganizationAdmin(organizationId, req.auth!);
+    const input = squadsConfigProposalMemberSchema.pick({ memberPersonalWalletId: true }).parse(req.body);
+    sendCreated(res, await createSquadsConfigProposalExecuteIntent(organizationId, treasuryWalletId, req.auth!.userId, {
+      transactionIndex,
+      ...input,
+    }));
+  }),
+);
+
+treasuryWalletsRouter.post(
+  '/organizations/:organizationId/treasury-wallets/:treasuryWalletId/squads/sync-members',
+  asyncRoute(async (req, res) => {
+    const { organizationId, treasuryWalletId } = treasuryWalletParamsSchema.parse(req.params);
+    await assertOrganizationAdmin(organizationId, req.auth!);
+    sendJson(res, await syncSquadsTreasuryMembers(organizationId, treasuryWalletId));
   }),
 );
 

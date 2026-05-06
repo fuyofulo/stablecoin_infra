@@ -1,6 +1,6 @@
 import type { Prisma } from '@prisma/client';
 import * as multisig from '@sqds/multisig';
-import { Keypair, PublicKey, TransactionMessage, VersionedTransaction } from '@solana/web3.js';
+import { Keypair, PublicKey, TransactionMessage, VersionedTransaction, type TransactionInstruction } from '@solana/web3.js';
 import { badRequest, notFound } from './api-errors.js';
 import { config } from './config.js';
 import { prisma } from './prisma.js';
@@ -56,6 +56,22 @@ export type CreateSquadsTreasuryIntentInput = {
   timeLockSeconds?: number;
   vaultIndex?: number;
   members: SquadsTreasuryMemberInput[];
+};
+
+export type CreateSquadsAddMemberProposalInput = {
+  creatorPersonalWalletId: string;
+  newMemberPersonalWalletId: string;
+  permissions: SquadsPermissionName[];
+  newThreshold?: number;
+  memo?: string | null;
+  autoApprove?: boolean;
+};
+
+export type CreateSquadsChangeThresholdProposalInput = {
+  creatorPersonalWalletId: string;
+  newThreshold: number;
+  memo?: string | null;
+  autoApprove?: boolean;
 };
 
 export async function createSquadsTreasuryIntent(
@@ -131,6 +147,210 @@ export async function createSquadsTreasuryIntent(
       lastValidBlockHeight: latestBlockhash.lastValidBlockHeight,
     },
   };
+}
+
+export async function createSquadsAddMemberProposalIntent(
+  organizationId: string,
+  treasuryWalletId: string,
+  actorUserId: string,
+  input: CreateSquadsAddMemberProposalInput,
+) {
+  const creator = await loadActorPersonalWallet(actorUserId, input.creatorPersonalWalletId);
+  const newMember = await loadOrganizationPersonalWallet(organizationId, input.newMemberPersonalWalletId);
+  const permissions = normalizePermissionNames(input.permissions);
+  const actions: multisig.types.ConfigAction[] = [{
+    __kind: 'AddMember',
+    newMember: {
+      key: new PublicKey(newMember.walletAddress),
+      permissions: multisig.types.Permissions.fromPermissions(
+        permissions.map((permission) => SQUADS_PERMISSION_MAP[permission]),
+      ),
+    },
+  }];
+  if (input.newThreshold !== undefined) {
+    actions.push({ __kind: 'ChangeThreshold', newThreshold: normalizeThreshold(input.newThreshold) });
+  }
+
+  return createSquadsConfigProposalIntent({
+    organizationId,
+    treasuryWalletId,
+    actorUserId,
+    creator,
+    actions,
+    memo: normalizeOptionalText(input.memo) ?? `Add ${newMember.walletAddress} to Decimal treasury`,
+    autoApprove: input.autoApprove ?? true,
+  });
+}
+
+export async function createSquadsChangeThresholdProposalIntent(
+  organizationId: string,
+  treasuryWalletId: string,
+  actorUserId: string,
+  input: CreateSquadsChangeThresholdProposalInput,
+) {
+  const creator = await loadActorPersonalWallet(actorUserId, input.creatorPersonalWalletId);
+  return createSquadsConfigProposalIntent({
+    organizationId,
+    treasuryWalletId,
+    actorUserId,
+    creator,
+    actions: [{ __kind: 'ChangeThreshold', newThreshold: normalizeThreshold(input.newThreshold) }],
+    memo: normalizeOptionalText(input.memo) ?? `Change Decimal treasury threshold to ${input.newThreshold}`,
+    autoApprove: input.autoApprove ?? true,
+  });
+}
+
+export async function createSquadsConfigProposalApprovalIntent(
+  organizationId: string,
+  treasuryWalletId: string,
+  actorUserId: string,
+  input: {
+    transactionIndex: string;
+    memberPersonalWalletId: string;
+    memo?: string | null;
+  },
+) {
+  const member = await loadActorPersonalWallet(actorUserId, input.memberPersonalWalletId);
+  const { wallet, programId, multisigPda, multisigAccount } = await loadSquadsTreasury(organizationId, treasuryWalletId);
+  assertOnchainMemberPermission(multisigAccount, member.walletAddress, 'vote');
+  const transactionIndex = parseTransactionIndex(input.transactionIndex);
+  const latestBlockhash = await runtime.getLatestBlockhash();
+  const instruction = multisig.instructions.proposalApprove({
+    multisigPda,
+    transactionIndex,
+    member: new PublicKey(member.walletAddress),
+    memo: normalizeOptionalText(input.memo) ?? undefined,
+    programId,
+  });
+
+  return buildSquadsSignableResponse({
+    wallet,
+    programId,
+    multisigPda,
+    transactionIndex,
+    signerWalletAddress: member.walletAddress,
+    latestBlockhash,
+    instructions: [instruction],
+    kind: 'config_proposal_approval',
+    actions: [],
+  });
+}
+
+export async function createSquadsConfigProposalExecuteIntent(
+  organizationId: string,
+  treasuryWalletId: string,
+  actorUserId: string,
+  input: {
+    transactionIndex: string;
+    memberPersonalWalletId: string;
+  },
+) {
+  const member = await loadActorPersonalWallet(actorUserId, input.memberPersonalWalletId);
+  const { wallet, programId, multisigPda, multisigAccount } = await loadSquadsTreasury(organizationId, treasuryWalletId);
+  assertOnchainMemberPermission(multisigAccount, member.walletAddress, 'execute');
+  const transactionIndex = parseTransactionIndex(input.transactionIndex);
+  const latestBlockhash = await runtime.getLatestBlockhash();
+  const instruction = multisig.instructions.configTransactionExecute({
+    multisigPda,
+    transactionIndex,
+    member: new PublicKey(member.walletAddress),
+    rentPayer: new PublicKey(member.walletAddress),
+    programId,
+  });
+
+  return buildSquadsSignableResponse({
+    wallet,
+    programId,
+    multisigPda,
+    transactionIndex,
+    signerWalletAddress: member.walletAddress,
+    latestBlockhash,
+    instructions: [instruction],
+    kind: 'config_proposal_execution',
+    actions: [],
+  });
+}
+
+export async function syncSquadsTreasuryMembers(organizationId: string, treasuryWalletId: string) {
+  const { wallet, programId, multisigPda, vaultPda, vaultIndex, multisigAccount } = await loadSquadsTreasury(organizationId, treasuryWalletId);
+  const onchainMembers = serializeOnchainMembers(multisigAccount.members);
+  const linkedMembers = await loadMembersByWalletAddresses(organizationId, onchainMembers.map((member) => member.walletAddress));
+  const onchainMemberByAddress = new Map(onchainMembers.map((member) => [member.walletAddress, member]));
+  const linkedMemberIds = new Set(linkedMembers.map((member) => member.personalWalletId));
+
+  await prisma.$transaction(async (tx) => {
+    for (const member of linkedMembers) {
+      const onchainMember = onchainMemberByAddress.get(member.walletAddress);
+      await tx.organizationWalletAuthorization.upsert({
+        where: {
+          organizationId_treasuryWalletId_userWalletId_role: {
+            organizationId,
+            treasuryWalletId,
+            userWalletId: member.personalWalletId,
+            role: 'squads_member',
+          },
+        },
+        create: {
+          organizationId,
+          treasuryWalletId,
+          userWalletId: member.personalWalletId,
+          membershipId: member.membershipId,
+          role: 'squads_member',
+          scope: 'treasury_wallet',
+          metadataJson: {
+            provider: SQUADS_SOURCE,
+            permissions: onchainMember?.permissions ?? [],
+            multisigPda: multisigPda.toBase58(),
+            vaultPda: vaultPda.toBase58(),
+          } satisfies Prisma.InputJsonObject,
+        },
+        update: {
+          membershipId: member.membershipId,
+          status: 'active',
+          revokedAt: null,
+          metadataJson: {
+            provider: SQUADS_SOURCE,
+            permissions: onchainMember?.permissions ?? [],
+            multisigPda: multisigPda.toBase58(),
+            vaultPda: vaultPda.toBase58(),
+          } satisfies Prisma.InputJsonObject,
+        },
+      });
+    }
+
+    await tx.organizationWalletAuthorization.updateMany({
+      where: {
+        organizationId,
+        treasuryWalletId,
+        role: 'squads_member',
+        status: 'active',
+        userWalletId: { notIn: [...linkedMemberIds] },
+      },
+      data: {
+        status: 'revoked',
+        revokedAt: new Date(),
+      },
+    });
+
+    await tx.treasuryWallet.update({
+      where: { treasuryWalletId },
+      data: {
+        propertiesJson: mergeSquadsMetadata(wallet.propertiesJson, {
+          programId: programId.toBase58(),
+          multisigPda: multisigPda.toBase58(),
+          vaultPda: vaultPda.toBase58(),
+          vaultIndex,
+          threshold: Number(multisigAccount.threshold),
+          timeLockSeconds: Number(multisigAccount.timeLock),
+          transactionIndex: multisigAccount.transactionIndex.toString(),
+          staleTransactionIndex: multisigAccount.staleTransactionIndex.toString(),
+          members: onchainMembers,
+        }),
+      },
+    });
+  });
+
+  return getSquadsTreasuryDetail(organizationId, treasuryWalletId);
 }
 
 export async function confirmSquadsTreasuryCreation(
@@ -354,6 +574,125 @@ export async function getSquadsTreasuryDetail(organizationId: string, treasuryWa
   };
 }
 
+async function createSquadsConfigProposalIntent(args: {
+  organizationId: string;
+  treasuryWalletId: string;
+  actorUserId: string;
+  creator: ActivePersonalWallet;
+  actions: multisig.types.ConfigAction[];
+  memo: string;
+  autoApprove: boolean;
+}) {
+  const { wallet, programId, multisigPda, multisigAccount } = await loadSquadsTreasury(args.organizationId, args.treasuryWalletId);
+  if (args.creator.userId !== args.actorUserId) {
+    throw badRequest('creatorPersonalWalletId must belong to the authenticated user.');
+  }
+  assertOnchainMemberPermission(multisigAccount, args.creator.walletAddress, 'initiate');
+  validateConfigActionsAgainstCurrentMembers(multisigAccount, args.actions);
+
+  const transactionIndex = BigInt(multisigAccount.transactionIndex.toString()) + 1n;
+  const latestBlockhash = await runtime.getLatestBlockhash();
+  const creatorPublicKey = new PublicKey(args.creator.walletAddress);
+  const instructions = [
+    multisig.instructions.configTransactionCreate({
+      multisigPda,
+      transactionIndex,
+      creator: creatorPublicKey,
+      rentPayer: creatorPublicKey,
+      actions: args.actions,
+      memo: args.memo,
+      programId,
+    }),
+    multisig.instructions.proposalCreate({
+      multisigPda,
+      transactionIndex,
+      creator: creatorPublicKey,
+      rentPayer: creatorPublicKey,
+      isDraft: false,
+      programId,
+    }),
+    ...(args.autoApprove
+      ? [
+        multisig.instructions.proposalApprove({
+          multisigPda,
+          transactionIndex,
+          member: creatorPublicKey,
+          memo: 'Auto-approve Decimal config proposal creator',
+          programId,
+        }),
+      ]
+      : []),
+  ];
+
+  return buildSquadsSignableResponse({
+    wallet,
+    programId,
+    multisigPda,
+    transactionIndex,
+    signerWalletAddress: args.creator.walletAddress,
+    latestBlockhash,
+    instructions,
+    kind: 'config_proposal_create',
+    actions: serializeConfigActions(args.actions),
+  });
+}
+
+function buildSquadsSignableResponse(args: {
+  wallet: {
+    treasuryWalletId: string;
+    organizationId: string;
+    sourceRef: string | null;
+  };
+  programId: PublicKey;
+  multisigPda: PublicKey;
+  transactionIndex: bigint;
+  signerWalletAddress: string;
+  latestBlockhash: { blockhash: string; lastValidBlockHeight: number };
+  instructions: TransactionInstruction[];
+  kind: string;
+  actions: Array<Record<string, unknown>>;
+}) {
+  const [configTransactionPda] = multisig.getTransactionPda({
+    multisigPda: args.multisigPda,
+    index: args.transactionIndex,
+    programId: args.programId,
+  });
+  const [proposalPda] = multisig.getProposalPda({
+    multisigPda: args.multisigPda,
+    transactionIndex: args.transactionIndex,
+    programId: args.programId,
+  });
+
+  const message = new TransactionMessage({
+    payerKey: new PublicKey(args.signerWalletAddress),
+    recentBlockhash: args.latestBlockhash.blockhash,
+    instructions: args.instructions,
+  }).compileToV0Message();
+  const transaction = new VersionedTransaction(message);
+
+  return {
+    intent: {
+      provider: SQUADS_SOURCE,
+      kind: args.kind,
+      programId: args.programId.toBase58(),
+      treasuryWalletId: args.wallet.treasuryWalletId,
+      organizationId: args.wallet.organizationId,
+      multisigPda: args.multisigPda.toBase58(),
+      transactionIndex: args.transactionIndex.toString(),
+      configTransactionPda: configTransactionPda.toBase58(),
+      proposalPda: proposalPda.toBase58(),
+      actions: args.actions,
+    },
+    transaction: {
+      encoding: 'base64',
+      serializedTransaction: Buffer.from(transaction.serialize()).toString('base64'),
+      requiredSigner: args.signerWalletAddress,
+      recentBlockhash: args.latestBlockhash.blockhash,
+      lastValidBlockHeight: args.latestBlockhash.lastValidBlockHeight,
+    },
+  };
+}
+
 export function serializeSquadsTreasuryWallet(wallet: {
   treasuryWalletId: string;
   organizationId: string;
@@ -420,6 +759,19 @@ function normalizeMembers(members: SquadsTreasuryMemberInput[]) {
   });
 }
 
+function normalizePermissionNames(permissions: SquadsPermissionName[]) {
+  const normalized = [...new Set(permissions)];
+  if (!normalized.length) {
+    throw badRequest('Every Squads member requires at least one permission.');
+  }
+  for (const permission of normalized) {
+    if (!(permission in SQUADS_PERMISSION_MAP)) {
+      throw badRequest(`Unsupported Squads permission: ${permission}`);
+    }
+  }
+  return normalized;
+}
+
 function normalizeThreshold(threshold: number) {
   if (!Number.isInteger(threshold) || threshold < 1 || threshold > 65_535) {
     throw badRequest('threshold must be an integer between 1 and 65535.');
@@ -441,6 +793,56 @@ function normalizeVaultIndex(value: number | undefined) {
     throw badRequest('vaultIndex must be an integer between 0 and 255.');
   }
   return vaultIndex;
+}
+
+type ActivePersonalWallet = Awaited<ReturnType<typeof loadActorPersonalWallet>>;
+
+async function loadActorPersonalWallet(actorUserId: string, personalWalletId: string) {
+  const wallet = await prisma.personalWallet.findFirst({
+    where: {
+      userWalletId: personalWalletId,
+      userId: actorUserId,
+      status: 'active',
+      chain: SOLANA_CHAIN,
+    },
+  });
+  if (!wallet) {
+    throw badRequest('Personal wallet must belong to the authenticated user.');
+  }
+  return wallet;
+}
+
+async function loadOrganizationPersonalWallet(organizationId: string, personalWalletId: string) {
+  const wallet = await prisma.personalWallet.findFirst({
+    where: {
+      userWalletId: personalWalletId,
+      status: 'active',
+      chain: SOLANA_CHAIN,
+      user: {
+        memberships: {
+          some: {
+            organizationId,
+            status: 'active',
+          },
+        },
+      },
+    },
+    include: {
+      user: {
+        select: {
+          memberships: {
+            where: { organizationId, status: 'active' },
+            select: { membershipId: true },
+            take: 1,
+          },
+        },
+      },
+    },
+  });
+  if (!wallet) {
+    throw badRequest('newMemberPersonalWalletId must be an active personal wallet owned by an active organization member.');
+  }
+  return wallet;
 }
 
 async function loadAndValidateMembers(
@@ -659,6 +1061,34 @@ async function loadDetailedMembersByWalletAddresses(
   }));
 }
 
+async function loadSquadsTreasury(organizationId: string, treasuryWalletId: string) {
+  const wallet = await prisma.treasuryWallet.findFirst({
+    where: { organizationId, treasuryWalletId },
+  });
+  if (!wallet) {
+    throw notFound('Treasury wallet not found');
+  }
+  if (wallet.source !== SQUADS_SOURCE || !wallet.sourceRef) {
+    throw badRequest('Treasury wallet is not a Squads v4 treasury.');
+  }
+
+  const programId = new PublicKey(config.squadsProgramId);
+  const multisigPda = new PublicKey(wallet.sourceRef);
+  const multisigAccount = await runtime.loadMultisig(multisigPda);
+  const metadata = readSquadsMetadata(wallet.propertiesJson);
+  const vaultIndex = typeof metadata?.vaultIndex === 'number' ? metadata.vaultIndex : config.squadsDefaultVaultIndex;
+  const vaultPda = multisig.getVaultPda({ multisigPda, index: vaultIndex, programId })[0];
+
+  return {
+    wallet,
+    programId,
+    multisigPda,
+    vaultPda,
+    vaultIndex,
+    multisigAccount,
+  };
+}
+
 async function resolveSquadsProgramTreasury(programId: PublicKey) {
   if (config.squadsProgramTreasury) {
     return new PublicKey(config.squadsProgramTreasury);
@@ -699,6 +1129,90 @@ function permissionNamesFromMask(mask: number): SquadsPermissionName[] {
   );
 }
 
+function assertOnchainMemberPermission(
+  multisigAccount: SquadsMultisigAccountLike,
+  walletAddress: string,
+  permission: SquadsPermissionName,
+) {
+  const member = multisigAccount.members.find((item) => item.key.toBase58() === walletAddress);
+  if (!member) {
+    throw badRequest('Personal wallet is not an onchain member of this Squads treasury.');
+  }
+  const mask = member.permissions.mask;
+  const required = SQUADS_PERMISSION_MAP[permission];
+  if ((mask & required) !== required) {
+    throw badRequest(`Personal wallet does not have Squads ${permission} permission.`);
+  }
+}
+
+function validateConfigActionsAgainstCurrentMembers(
+  multisigAccount: SquadsMultisigAccountLike,
+  actions: multisig.types.ConfigAction[],
+) {
+  const members = new Map(multisigAccount.members.map((member) => [member.key.toBase58(), member.permissions.mask]));
+  let threshold = Number(multisigAccount.threshold);
+
+  for (const action of actions) {
+    if (multisig.types.isConfigActionAddMember(action)) {
+      const walletAddress = action.newMember.key.toBase58();
+      if (members.has(walletAddress)) {
+        throw badRequest('New member is already an onchain member of this Squads treasury.');
+      }
+      members.set(walletAddress, action.newMember.permissions.mask);
+    } else if (multisig.types.isConfigActionRemoveMember(action)) {
+      const walletAddress = action.oldMember.toBase58();
+      if (!members.has(walletAddress)) {
+        throw badRequest('Removed member is not an onchain member of this Squads treasury.');
+      }
+      members.delete(walletAddress);
+    } else if (multisig.types.isConfigActionChangeThreshold(action)) {
+      threshold = normalizeThreshold(action.newThreshold);
+    }
+  }
+
+  if (!members.size) {
+    throw badRequest('Config proposal would leave the Squads treasury without members.');
+  }
+  const masks = [...members.values()];
+  const voterCount = masks.filter((mask) => (mask & SQUADS_PERMISSION_MAP.vote) === SQUADS_PERMISSION_MAP.vote).length;
+  if (threshold > voterCount) {
+    throw badRequest('Config proposal threshold cannot exceed the resulting number of voting members.');
+  }
+  for (const permission of ['initiate', 'vote', 'execute'] as const) {
+    if (!masks.some((mask) => (mask & SQUADS_PERMISSION_MAP[permission]) === SQUADS_PERMISSION_MAP[permission])) {
+      throw badRequest(`Config proposal would leave the Squads treasury without a member with ${permission} permission.`);
+    }
+  }
+}
+
+function serializeConfigActions(actions: multisig.types.ConfigAction[]) {
+  return actions.map((action) => {
+    if (multisig.types.isConfigActionAddMember(action)) {
+      return {
+        kind: 'add_member',
+        walletAddress: action.newMember.key.toBase58(),
+        permissionsMask: action.newMember.permissions.mask,
+        permissions: permissionNamesFromMask(action.newMember.permissions.mask),
+      };
+    }
+    if (multisig.types.isConfigActionRemoveMember(action)) {
+      return {
+        kind: 'remove_member',
+        walletAddress: action.oldMember.toBase58(),
+      };
+    }
+    if (multisig.types.isConfigActionChangeThreshold(action)) {
+      return {
+        kind: 'change_threshold',
+        newThreshold: action.newThreshold,
+      };
+    }
+    return {
+      kind: action.__kind,
+    };
+  });
+}
+
 function deriveMemberLinkStatus(linked: {
   walletStatus: string;
   membershipStatus: string | null;
@@ -717,6 +1231,25 @@ function deriveMemberLinkStatus(linked: {
     return 'authorization_missing';
   }
   return 'linked';
+}
+
+function parseTransactionIndex(value: string) {
+  if (!/^\d+$/.test(value)) {
+    throw badRequest('transactionIndex must be a non-negative integer string.');
+  }
+  return BigInt(value);
+}
+
+function mergeSquadsMetadata(value: unknown, nextSquads: Prisma.InputJsonObject): Prisma.InputJsonObject {
+  const base = isRecordLike(value) ? ({ ...value } as Prisma.InputJsonObject) : {};
+  const previousSquads = isRecordLike(base.squads) ? ({ ...base.squads } as Prisma.InputJsonObject) : {};
+  return {
+    ...base,
+    squads: {
+      ...previousSquads,
+      ...nextSquads,
+    },
+  } satisfies Prisma.InputJsonObject;
 }
 
 function readSquadsMetadata(value: unknown) {

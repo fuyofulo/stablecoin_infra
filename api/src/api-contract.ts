@@ -80,6 +80,23 @@ export const API_ENDPOINTS = [
   }),
   endpoint('get_squads_treasury_detail', 'GET', '/organizations/{organizationId}/treasury-wallets/{treasuryWalletId}/squads/detail', ['treasury wallets', 'squads'], 'Read a Squads v4 treasury viewer payload with onchain config and local member linkage', 'session', { scope: 'organization:read' }),
   endpoint('get_squads_treasury_status', 'GET', '/organizations/{organizationId}/treasury-wallets/{treasuryWalletId}/squads/status', ['treasury wallets', 'squads'], 'Read live Squads v4 multisig status for a treasury wallet', 'session', { scope: 'organization:read' }),
+  endpoint('create_squads_add_member_proposal_intent', 'POST', '/organizations/{organizationId}/treasury-wallets/{treasuryWalletId}/squads/config-proposals/add-member-intent', ['treasury wallets', 'squads'], 'Prepare a signable Squads config proposal that adds a member', 'session', {
+    scope: 'organization:write',
+    requestBody: { creatorPersonalWalletId: 'uuid', newMemberPersonalWalletId: 'uuid', permissions: ['initiate', 'vote', 'execute'], newThreshold: 'number optional' },
+  }),
+  endpoint('create_squads_change_threshold_proposal_intent', 'POST', '/organizations/{organizationId}/treasury-wallets/{treasuryWalletId}/squads/config-proposals/change-threshold-intent', ['treasury wallets', 'squads'], 'Prepare a signable Squads config proposal that changes threshold', 'session', {
+    scope: 'organization:write',
+    requestBody: { creatorPersonalWalletId: 'uuid', newThreshold: 'number' },
+  }),
+  endpoint('approve_squads_config_proposal_intent', 'POST', '/organizations/{organizationId}/treasury-wallets/{treasuryWalletId}/squads/config-proposals/{transactionIndex}/approve-intent', ['treasury wallets', 'squads'], 'Prepare a signable Squads proposal approval transaction', 'session', {
+    scope: 'organization:write',
+    requestBody: { memberPersonalWalletId: 'uuid', memo: 'string optional' },
+  }),
+  endpoint('execute_squads_config_proposal_intent', 'POST', '/organizations/{organizationId}/treasury-wallets/{treasuryWalletId}/squads/config-proposals/{transactionIndex}/execute-intent', ['treasury wallets', 'squads'], 'Prepare a signable Squads config proposal execution transaction', 'session', {
+    scope: 'organization:write',
+    requestBody: { memberPersonalWalletId: 'uuid' },
+  }),
+  endpoint('sync_squads_members', 'POST', '/organizations/{organizationId}/treasury-wallets/{treasuryWalletId}/squads/sync-members', ['treasury wallets', 'squads'], 'Sync local Squads member authorizations from onchain multisig state', 'session', { scope: 'organization:write' }),
   endpoint('update_treasury_wallet', 'PATCH', '/organizations/{organizationId}/treasury-wallets/{treasuryWalletId}', ['address book'], 'Update owned treasury wallet', 'session', { scope: 'organization:write' }),
   endpoint('list_wallet_authorizations', 'GET', '/organizations/{organizationId}/wallet-authorizations', ['wallet authorizations'], 'List personal wallet authorizations for an organization', 'session', { scope: 'organization:read' }),
   endpoint('create_wallet_authorization', 'POST', '/organizations/{organizationId}/wallet-authorizations', ['wallet authorizations'], 'Authorize a personal wallet to act for an organization or treasury wallet', 'session', {
