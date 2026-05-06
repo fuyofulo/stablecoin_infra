@@ -738,6 +738,13 @@ function ProfilePage({ session }: { session: AuthenticatedSession }) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const { success, error: toastError } = useToast();
+  const [createPersonalWalletOpen, setCreatePersonalWalletOpen] = useState(false);
+
+  const personalWalletsQuery = useQuery({
+    queryKey: ['personal-wallets'] as const,
+    queryFn: () => api.listPersonalWallets(),
+  });
+
   const createOrganizationMutation = useMutation({
     mutationFn: async (formData: FormData) => {
       const organizationName = getFormString(formData, 'organizationName');
@@ -752,17 +759,70 @@ function ProfilePage({ session }: { session: AuthenticatedSession }) {
     onError: (err) => toastError(err instanceof Error ? err.message : 'Unable to create organization.'),
   });
 
+  const createPersonalWalletMutation = useMutation({
+    mutationFn: (formData: FormData) => {
+      const label = getOptionalFormString(formData, 'label');
+      return api.createPersonalWalletManaged({
+        provider: 'privy',
+        label: label || undefined,
+      });
+    },
+    onSuccess: async () => {
+      success('Personal wallet created.');
+      setCreatePersonalWalletOpen(false);
+      await queryClient.invalidateQueries({ queryKey: ['personal-wallets'] });
+    },
+    onError: (err) => toastError(err instanceof Error ? err.message : 'Unable to create personal wallet.'),
+  });
+
+  const personalWallets = personalWalletsQuery.data?.items ?? [];
+
   return (
     <PageFrame
       eyebrow="Account"
       title="Profile"
-      description="Manage your identity and organizations."
+      description="Manage your identity, personal wallets, and organizations."
     >
       <div className="metric-strip metric-strip-three">
         <Metric label="Organizations" value={String(session.organizations.length)} />
-        <Metric label="Active orgs" value={String(getOrganizations(session).length)} />
+        <Metric label="Personal wallets" value={String(personalWallets.length)} />
         <Metric label="User" value={session.user.email} />
       </div>
+
+      <section className="panel">
+        <SectionHeader
+          title="Personal wallets"
+          description="These wallets belong to you, not to any organization. Authorize one to act for an organization treasury account from the Treasury accounts page."
+        />
+        {personalWallets.length === 0 ? (
+          <EmptyPanel
+            title="Create your personal signing wallet"
+            description="This wallet belongs to you, not the organization. You can later authorize it to sign on behalf of any treasury account you have access to."
+          />
+        ) : (
+          <div className="simple-list" style={{ marginBottom: 12 }}>
+            {personalWallets.map((wallet) => (
+              <div className="simple-list-row" key={wallet.userWalletId}>
+                <div>
+                  <strong>{wallet.label ?? wallet.provider ?? wallet.walletType}</strong>
+                  <span>{shortenAddress(wallet.walletAddress)} // {wallet.walletType}</span>
+                </div>
+                <span className="status-pill status-pill-ok">{wallet.verifiedAt ? 'verified' : 'pending'}</span>
+              </div>
+            ))}
+          </div>
+        )}
+        <div style={{ marginTop: 16 }}>
+          <button
+            type="button"
+            className="button button-primary"
+            onClick={() => setCreatePersonalWalletOpen(true)}
+          >
+            + Create personal wallet
+          </button>
+        </div>
+      </section>
+
       <div className="split-panels">
         <section className="panel">
           <SectionHeader title="Create organization" description="Create a new company or treasury entity." />
@@ -794,7 +854,84 @@ function ProfilePage({ session }: { session: AuthenticatedSession }) {
           empty="You don't belong to any organization yet."
         />
       </section>
+
+      {createPersonalWalletOpen ? (
+        <CreatePersonalWalletDialog
+          pending={createPersonalWalletMutation.isPending}
+          onClose={() => setCreatePersonalWalletOpen(false)}
+          onSubmit={(form) => createPersonalWalletMutation.mutate(form)}
+        />
+      ) : null}
     </PageFrame>
+  );
+}
+
+function CreatePersonalWalletDialog(props: {
+  pending: boolean;
+  onClose: () => void;
+  onSubmit: (form: FormData) => void;
+}) {
+  const { pending, onClose, onSubmit } = props;
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') onClose();
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  return (
+    <div
+      className="rd-dialog-backdrop"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="rd-create-personal-wallet-title"
+    >
+      <div className="rd-dialog" style={{ maxWidth: 480 }}>
+        <h2 id="rd-create-personal-wallet-title" className="rd-dialog-title">
+          Create personal wallet
+        </h2>
+        <p className="rd-dialog-body">
+          Decimal will create a Privy-managed Solana wallet under your user. Keys never leave your browser. This wallet belongs to you — you can later authorize it to act for any organization treasury account.
+        </p>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            onSubmit(new FormData(e.currentTarget));
+          }}
+        >
+          <div className="provider-modal-summary" style={{ marginBottom: 16 }}>
+            <span
+              className="provider-icon provider-icon-large provider-icon-logo"
+              data-provider="privy"
+              aria-hidden
+            />
+            <div>
+              <strong>Privy</strong>
+              <p>Embedded Solana wallet managed through Privy.</p>
+            </div>
+          </div>
+          <label className="field">
+            Wallet name
+            <input
+              name="label"
+              placeholder="My signing wallet"
+              autoComplete="off"
+              autoFocus
+            />
+          </label>
+          <div className="rd-dialog-actions" style={{ marginTop: 20 }}>
+            <button type="button" className="button button-secondary" onClick={onClose} disabled={pending}>
+              Cancel
+            </button>
+            <button type="submit" className="button button-primary" disabled={pending} aria-busy={pending}>
+              {pending ? 'Creating…' : 'Create wallet'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
   );
 }
 
