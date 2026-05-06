@@ -30,6 +30,10 @@ import type {
   TreasuryWallet,
   ManagedWalletProvider,
   UserWallet,
+  WalletAuthorization,
+  WalletAuthorizationRole,
+  WalletAuthorizationScope,
+  WalletAuthorizationStatus,
   WalletChallenge,
 } from './types';
 import { getPublicApiBaseUrl } from './public-config';
@@ -186,11 +190,18 @@ export const api = {
   getOrganizationSummary(organizationId: string) {
     return request<OrganizationSummary>(`/organizations/${organizationId}/summary`);
   },
+  // Personal wallets — user-owned signing wallets.
+  // Backend accepts both /personal-wallets/* (preferred) and /user-wallets/*
+  // (legacy alias). New code uses the preferred path.
+  listPersonalWallets() {
+    return request<{ items: UserWallet[] }>('/personal-wallets');
+  },
+  /** @deprecated use listPersonalWallets */
   listUserWallets() {
-    return request<{ items: UserWallet[] }>('/user-wallets');
+    return request<{ items: UserWallet[] }>('/personal-wallets');
   },
   createWalletChallenge(input: { walletAddress: string }) {
-    return request<WalletChallenge>('/user-wallets/challenge', {
+    return request<WalletChallenge>('/personal-wallets/challenge', {
       method: 'POST',
       body: JSON.stringify(input),
     });
@@ -203,7 +214,7 @@ export const api = {
     provider?: string;
     label?: string;
   }) {
-    return request<UserWallet>('/user-wallets/external', {
+    return request<UserWallet>('/personal-wallets/external', {
       method: 'POST',
       body: JSON.stringify(input),
     });
@@ -214,19 +225,77 @@ export const api = {
     providerWalletId?: string;
     label?: string;
   }) {
-    return request<UserWallet>('/user-wallets/embedded', {
+    return request<UserWallet>('/personal-wallets/embedded', {
       method: 'POST',
       body: JSON.stringify(input),
     });
   },
+  createPersonalWalletManaged(input: {
+    provider: ManagedWalletProvider;
+    label?: string;
+  }) {
+    return request<UserWallet>('/personal-wallets/managed', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    });
+  },
+  /** @deprecated use createPersonalWalletManaged */
   createManagedWallet(input: {
     provider: ManagedWalletProvider;
     label?: string;
   }) {
-    return request<UserWallet>('/user-wallets/managed', {
+    return request<UserWallet>('/personal-wallets/managed', {
       method: 'POST',
       body: JSON.stringify(input),
     });
+  },
+
+  // Wallet authorizations — explicit bridge between a personal wallet and an
+  // organization (or specific treasury wallet within it).
+  listWalletAuthorizations(
+    organizationId: string,
+    params: {
+      treasuryWalletId?: string;
+      userWalletId?: string;
+      status?: WalletAuthorizationStatus;
+    } = {},
+  ) {
+    const qs = new URLSearchParams();
+    if (params.treasuryWalletId) qs.set('treasuryWalletId', params.treasuryWalletId);
+    if (params.userWalletId) qs.set('userWalletId', params.userWalletId);
+    if (params.status) qs.set('status', params.status);
+    const query = qs.toString();
+    return request<{ items: WalletAuthorization[] }>(
+      `/organizations/${organizationId}/wallet-authorizations${query ? `?${query}` : ''}`,
+    );
+  },
+  createWalletAuthorization(
+    organizationId: string,
+    input: {
+      userWalletId: string;
+      treasuryWalletId?: string | null;
+      membershipId?: string;
+      role?: WalletAuthorizationRole;
+      scope?: WalletAuthorizationScope;
+      metadataJson?: Record<string, unknown>;
+    },
+  ) {
+    return request<WalletAuthorization>(
+      `/organizations/${organizationId}/wallet-authorizations`,
+      {
+        method: 'POST',
+        body: JSON.stringify(input),
+      },
+    );
+  },
+  revokeWalletAuthorization(organizationId: string, walletAuthorizationId: string) {
+    return request<WalletAuthorization>(
+      `/organizations/${organizationId}/wallet-authorizations/${walletAuthorizationId}/revoke`,
+      {
+        method: 'POST',
+        body: JSON.stringify({}),
+      },
+    );
   },
   listTreasuryWallets(organizationId: string) {
     return request<{ items: TreasuryWallet[] }>(`/organizations/${organizationId}/treasury-wallets`);

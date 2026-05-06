@@ -69,6 +69,14 @@ export type UserWallet = {
   updatedAt: string;
 };
 
+/**
+ * Personal wallet — a signing wallet owned by an individual user.
+ * Same shape as UserWallet (the underlying DB table is still `user_wallets`
+ * for migration safety, but Prisma now calls the model `PersonalWallet`).
+ * New code should prefer this type name.
+ */
+export type PersonalWallet = UserWallet;
+
 export type ManagedWalletProvider =
   | 'privy'
   | 'fireblocks'
@@ -76,6 +84,56 @@ export type ManagedWalletProvider =
   | 'para'
   | 'turnkey'
   | 'dfns';
+
+export type WalletAuthorizationRole = 'owner' | 'admin' | 'signer' | 'approver';
+export type WalletAuthorizationScope = 'organization' | 'treasury_wallet';
+export type WalletAuthorizationStatus = 'active' | 'revoked';
+
+export type WalletAuthorization = {
+  walletAuthorizationId: string;
+  organizationId: string;
+  treasuryWalletId: string | null;
+  userWalletId: string;
+  membershipId: string;
+  role: WalletAuthorizationRole;
+  status: WalletAuthorizationStatus;
+  scope: WalletAuthorizationScope;
+  createdAt: string;
+  updatedAt: string;
+  revokedAt: string | null;
+  metadataJson: Record<string, unknown>;
+  personalWallet: {
+    userWalletId: string;
+    userId: string;
+    chain: string;
+    walletAddress: string;
+    walletType: string;
+    provider: string | null;
+    providerWalletId: string | null;
+    label: string | null;
+    status: string;
+  };
+  membership: {
+    membershipId: string;
+    userId: string;
+    role: string;
+    status: string;
+    user: {
+      userId: string;
+      email: string;
+      displayName: string;
+      avatarUrl: string | null;
+    };
+  };
+  treasuryWallet: {
+    treasuryWalletId: string;
+    chain: string;
+    address: string;
+    usdcAtaAddress: string | null;
+    displayName: string | null;
+    isActive: boolean;
+  } | null;
+};
 
 export type WalletChallenge = {
   chain: 'solana';
