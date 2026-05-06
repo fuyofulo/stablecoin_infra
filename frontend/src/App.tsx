@@ -39,18 +39,21 @@ import type {
   ObservedTransfer,
   TreasuryWallet,
   Organization,
+  UserWallet,
 } from './api';
 import {
   discoverSolanaWallets,
   formatRawUsdcCompact,
   formatRelativeTime,
   formatTimestamp,
+  orbAccountUrl,
   orbTransactionUrl,
   shortenAddress,
   signAndSubmitPreparedPayment,
   subscribeSolanaWallets,
   type BrowserWalletOption,
 } from './domain';
+import { setRuntimeSolanaConfig } from './solana-network';
 import { parseCsvPreview } from './csv-parse';
 import { ProofJsonView } from './proof-json-view';
 import {
@@ -107,6 +110,12 @@ function toAuthenticatedSession(result: { user: AuthenticatedSession['user']; or
 
 export function App() {
   const location = useLocation();
+  const capabilitiesQuery = useQuery({
+    queryKey: ['capabilities'] as const,
+    queryFn: () => api.getCapabilities(),
+    retry: false,
+    staleTime: 60_000,
+  });
   const shouldCheckSession =
     location.pathname !== '/login' &&
     location.pathname !== '/register' &&
@@ -117,6 +126,13 @@ export function App() {
     enabled: shouldCheckSession,
     retry: false,
   });
+
+  useEffect(() => {
+    const solana = capabilitiesQuery.data?.solana;
+    if (solana) {
+      setRuntimeSolanaConfig(solana);
+    }
+  }, [capabilitiesQuery.data?.solana]);
 
   return (
     <Routes>
@@ -740,6 +756,7 @@ function ProfilePage({ session }: { session: AuthenticatedSession }) {
   const { success, error: toastError } = useToast();
   const [createPersonalWalletOpen, setCreatePersonalWalletOpen] = useState(false);
   const [createOrgOpen, setCreateOrgOpen] = useState(false);
+  const [transferWallet, setTransferWallet] = useState<UserWallet | null>(null);
 
   const personalWalletsQuery = useQuery({
     queryKey: ['personal-wallets'] as const,
@@ -775,6 +792,22 @@ function ProfilePage({ session }: { session: AuthenticatedSession }) {
       await queryClient.invalidateQueries({ queryKey: ['personal-wallets'] });
     },
     onError: (err) => toastError(err instanceof Error ? err.message : 'Unable to create personal wallet.'),
+  });
+
+  const transferOutMutation = useMutation({
+    mutationFn: (input: { userWalletId: string; recipient: string; amountRaw: string; asset: 'sol' | 'usdc' }) =>
+      api.transferOutPersonalWallet(input.userWalletId, {
+        recipient: input.recipient,
+        amountRaw: input.amountRaw,
+        asset: input.asset,
+      }),
+    onSuccess: (result) => {
+      success(
+        `Transfer submitted (signature ${result.signature.slice(0, 8)}…${result.signature.slice(-6)}).`,
+      );
+      setTransferWallet(null);
+    },
+    onError: (err) => toastError(err instanceof Error ? err.message : 'Transfer failed.'),
   });
 
   const personalWallets = personalWalletsQuery.data?.items ?? [];
@@ -852,11 +885,12 @@ function ProfilePage({ session }: { session: AuthenticatedSession }) {
             <table className="rd-table">
               <thead>
                 <tr>
-                  <th style={{ width: '28%' }}>Name</th>
-                  <th style={{ width: '32%' }}>Address</th>
-                  <th style={{ width: '16%' }}>Provider</th>
-                  <th style={{ width: '16%' }}>Status</th>
-                  <th style={{ width: '8%' }}>Created</th>
+                  <th style={{ width: '24%' }}>Name</th>
+                  <th style={{ width: '28%' }}>Address</th>
+                  <th style={{ width: '14%' }}>Provider</th>
+                  <th style={{ width: '14%' }}>Status</th>
+                  <th style={{ width: '10%' }}>Created</th>
+                  <th style={{ width: '10%', textAlign: 'right' }}>&nbsp;</th>
                 </tr>
               </thead>
               <tbody>
@@ -894,6 +928,18 @@ function ProfilePage({ session }: { session: AuthenticatedSession }) {
                     </td>
                     <td style={{ color: 'var(--ax-text-muted)', fontSize: 13 }}>
                       {formatProfileDate(wallet.createdAt)}
+                    </td>
+                    <td style={{ textAlign: 'right' }}>
+                      {wallet.walletType === 'privy_embedded' ? (
+                        <button
+                          type="button"
+                          className="button button-secondary"
+                          style={{ padding: '4px 10px', fontSize: 12 }}
+                          onClick={() => setTransferWallet(wallet)}
+                        >
+                          Transfer
+                        </button>
+                      ) : null}
                     </td>
                   </tr>
                 ))}
@@ -976,6 +1022,19 @@ function ProfilePage({ session }: { session: AuthenticatedSession }) {
           pending={createPersonalWalletMutation.isPending}
           onClose={() => setCreatePersonalWalletOpen(false)}
           onSubmit={(form) => createPersonalWalletMutation.mutate(form)}
+        />
+      ) : null}
+      {transferWallet ? (
+        <TransferOutDialog
+          wallet={transferWallet}
+          pending={transferOutMutation.isPending}
+          onClose={() => transferOutMutation.isPending ? undefined : setTransferWallet(null)}
+          onSubmit={(input) =>
+            transferOutMutation.mutate({
+              userWalletId: transferWallet.userWalletId,
+              ...input,
+            })
+          }
         />
       ) : null}
       {createOrgOpen ? (
@@ -1114,6 +1173,179 @@ function CreatePersonalWalletDialog(props: {
             </button>
             <button type="submit" className="button button-primary" disabled={pending} aria-busy={pending}>
               {pending ? 'Creating…' : 'Create wallet'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// TransferOutDialog
+//
+// Sends SOL or USDC out of a Privy personal wallet via the backend
+// transfer-out endpoint (which signs server-side via Privy and submits).
+// Used to recover funds from a wallet that was funded for testing.
+//
+// Amount handling: user enters human-readable amount; we convert to
+// raw base units before sending. SOL: 9 decimals. USDC: 6 decimals.
+function TransferOutDialog(props: {
+  wallet: UserWallet;
+  pending: boolean;
+  onClose: () => void;
+  onSubmit: (input: { recipient: string; amountRaw: string; asset: 'sol' | 'usdc' }) => void;
+}) {
+  const { wallet, pending, onClose, onSubmit } = props;
+  const [asset, setAsset] = useState<'sol' | 'usdc'>('sol');
+  const [recipient, setRecipient] = useState('');
+  const [amount, setAmount] = useState('');
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape' && !pending) onClose();
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose, pending]);
+
+  const handleSubmit = (e: FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    const trimmedRecipient = recipient.trim();
+    if (!trimmedRecipient) {
+      setError('Recipient address is required.');
+      return;
+    }
+    if (trimmedRecipient === wallet.walletAddress) {
+      setError('Cannot transfer to the same wallet.');
+      return;
+    }
+    const amountTrimmed = amount.trim();
+    if (!/^\d+(\.\d+)?$/.test(amountTrimmed) || Number(amountTrimmed) <= 0) {
+      setError('Enter a positive amount.');
+      return;
+    }
+    const decimals = asset === 'sol' ? 9 : 6;
+    const [whole, frac = ''] = amountTrimmed.split('.');
+    const fracPadded = (frac + '0'.repeat(decimals)).slice(0, decimals);
+    const amountRaw = (BigInt(whole || '0') * BigInt(10) ** BigInt(decimals) + BigInt(fracPadded || '0')).toString();
+    if (amountRaw === '0') {
+      setError('Amount is too small for the selected asset.');
+      return;
+    }
+    onSubmit({ recipient: trimmedRecipient, amountRaw, asset });
+  };
+
+  return (
+    <div
+      className="rd-dialog-backdrop"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="rd-transfer-out-title"
+    >
+      <div className="rd-dialog" style={{ maxWidth: 500 }}>
+        <h2 id="rd-transfer-out-title" className="rd-dialog-title">
+          Transfer from personal wallet
+        </h2>
+        <p className="rd-dialog-body">
+          Send SOL or USDC out of this Privy-managed wallet. The backend signs via Privy and submits to the configured Solana network.
+        </p>
+
+        <div
+          style={{
+            padding: 12,
+            background: 'var(--ax-surface-1)',
+            borderRadius: 6,
+            marginBottom: 16,
+            fontSize: 13,
+          }}
+        >
+          <div style={{ color: 'var(--ax-text-muted)', marginBottom: 4 }}>From</div>
+          <div>
+            <strong>{wallet.label ?? 'Untitled wallet'}</strong>
+          </div>
+          <div style={{ fontFamily: 'monospace', fontSize: 12, color: 'var(--ax-text-muted)' }}>
+            {wallet.walletAddress}
+          </div>
+        </div>
+
+        <form onSubmit={handleSubmit}>
+          <div className="field" style={{ marginBottom: 12 }}>
+            <span style={{ display: 'block', marginBottom: 6, fontSize: 13 }}>Asset</span>
+            <div style={{ display: 'flex', gap: 8 }}>
+              {(['sol', 'usdc'] as const).map((a) => (
+                <button
+                  key={a}
+                  type="button"
+                  onClick={() => setAsset(a)}
+                  className={asset === a ? 'button button-primary' : 'button button-secondary'}
+                  style={{ flex: 1, padding: '8px 12px', fontSize: 13 }}
+                >
+                  {a.toUpperCase()}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <label className="field">
+            Recipient address
+            <input
+              value={recipient}
+              onChange={(e) => setRecipient(e.target.value)}
+              placeholder="Solana wallet address"
+              autoComplete="off"
+              autoFocus
+            />
+          </label>
+
+          <label className="field">
+            Amount ({asset.toUpperCase()})
+            <input
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              placeholder={asset === 'sol' ? '0.1' : '10.00'}
+              inputMode="decimal"
+              autoComplete="off"
+            />
+          </label>
+
+          <p style={{ fontSize: 12, color: 'var(--ax-text-muted)', margin: '4px 0 12px' }}>
+            For USDC: a recipient associated token account is created automatically if it doesn't exist (~0.002 SOL fee paid from this wallet).
+          </p>
+
+          {error ? (
+            <div
+              style={{
+                padding: 10,
+                border: '1px solid var(--ax-danger)',
+                borderRadius: 6,
+                background: 'var(--ax-surface-1)',
+                color: 'var(--ax-danger)',
+                fontSize: 13,
+                marginBottom: 12,
+              }}
+            >
+              {error}
+            </div>
+          ) : null}
+
+          <div className="rd-dialog-actions" style={{ marginTop: 16 }}>
+            <button
+              type="button"
+              className="button button-secondary"
+              onClick={onClose}
+              disabled={pending}
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              className="button button-primary"
+              disabled={pending}
+              aria-busy={pending}
+            >
+              {pending ? 'Sending…' : `Send ${asset.toUpperCase()}`}
             </button>
           </div>
         </form>
@@ -5274,10 +5506,6 @@ function AddressLink({ value, kind = 'account' }: { value: string; kind?: 'accou
       <a href={href} rel="noreferrer" target="_blank" aria-label="Open in explorer">↗</a>
     </span>
   );
-}
-
-function orbAccountUrl(address: string) {
-  return `https://orbmarkets.io/address/${address}?tab=summary`;
 }
 
 function StatusBadge({ tone, state, children }: { tone?: 'success' | 'warning' | 'danger' | 'neutral'; state?: string; children: ReactNode }) {

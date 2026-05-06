@@ -1,6 +1,7 @@
 import type {
   ApprovalPolicy,
   AuthenticatedSession,
+  CapabilitiesResponse,
   CollectionCsvPreview,
   CollectionRequest,
   CollectionProofPacket,
@@ -125,6 +126,9 @@ async function download(path: string, fallbackFileName = 'export.csv') {
 }
 
 export const api = {
+  getCapabilities() {
+    return request<CapabilitiesResponse>('/capabilities', { includeAuth: false });
+  },
   hasSessionToken() {
     return Boolean(sessionToken);
   },
@@ -239,6 +243,26 @@ export const api = {
     label?: string;
   }) {
     return request<UserWallet>('/personal-wallets/managed', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    });
+  },
+  // Drain / partial-transfer from a personal Privy wallet. Backend
+  // builds the instruction, signs via Privy, submits, best-effort
+  // confirms. asset='sol' -> amountRaw is lamports; asset='usdc' ->
+  // amountRaw is raw base units (1 USDC = 1_000_000). Recipient ATAs
+  // are created idempotently for USDC.
+  transferOutPersonalWallet(
+    userWalletId: string,
+    input: { recipient: string; amountRaw: string; asset: 'sol' | 'usdc' },
+  ) {
+    return request<{
+      signature: string;
+      asset: 'sol' | 'usdc';
+      amountRaw: string;
+      recipient: string;
+      userWalletId: string;
+    }>(`/personal-wallets/${userWalletId}/transfer-out`, {
       method: 'POST',
       body: JSON.stringify(input),
     });
