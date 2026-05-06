@@ -2,7 +2,8 @@ import { PublicKey } from '@solana/web3.js';
 import crypto from 'node:crypto';
 import { Router } from 'express';
 import { z } from 'zod';
-import { badRequest } from '../api-errors.js';
+import { ApiError, badRequest } from '../api-errors.js';
+import { config } from '../config.js';
 import { prisma } from '../prisma.js';
 
 export const userWalletsRouter = Router();
@@ -25,6 +26,11 @@ const registerEmbeddedWalletSchema = z.object({
   provider: z.string().trim().min(1).max(80).default('privy'),
   providerWalletId: z.string().trim().max(160).optional(),
   label: z.string().trim().max(120).optional(),
+});
+
+const createManagedWalletSchema = z.object({
+  provider: z.enum(['privy', 'fireblocks', 'coinbase_cdp', 'para', 'turnkey', 'dfns']),
+  label: z.string().trim().min(1).max(100).optional(),
 });
 
 userWalletsRouter.get('/user-wallets', async (req, res, next) => {
@@ -187,6 +193,55 @@ userWalletsRouter.post('/user-wallets/embedded', async (req, res, next) => {
   }
 });
 
+userWalletsRouter.post('/user-wallets/managed', async (req, res, next) => {
+  try {
+    const input = createManagedWalletSchema.parse(req.body);
+    if (input.provider !== 'privy') {
+      throw new ApiError(501, 'provider_not_supported', 'This wallet provider is not enabled yet.');
+    }
+
+    const createdWallet = await createPrivySolanaWallet({
+      userId: req.auth!.userId,
+      label: input.label ?? 'Privy signing wallet',
+    });
+    const walletAddress = normalizeSolanaAddress(createdWallet.address);
+
+    const wallet = await prisma.userWallet.upsert({
+      where: {
+        userId_chain_walletAddress: {
+          userId: req.auth!.userId,
+          chain: 'solana',
+          walletAddress,
+        },
+      },
+      update: {
+        walletType: 'privy_embedded',
+        provider: 'privy',
+        providerWalletId: createdWallet.providerWalletId,
+        label: input.label ?? createdWallet.displayName ?? 'Privy signing wallet',
+        status: 'active',
+        verifiedAt: new Date(),
+        metadataJson: createdWallet.metadata,
+      },
+      create: {
+        userId: req.auth!.userId,
+        chain: 'solana',
+        walletAddress,
+        walletType: 'privy_embedded',
+        provider: 'privy',
+        providerWalletId: createdWallet.providerWalletId,
+        label: input.label ?? createdWallet.displayName ?? 'Privy signing wallet',
+        verifiedAt: new Date(),
+        metadataJson: createdWallet.metadata,
+      },
+    });
+
+    res.status(201).json(serializeUserWallet(wallet));
+  } catch (error) {
+    next(error);
+  }
+});
+
 function serializeUserWallet(wallet: {
   userWalletId: string;
   userId: string;
@@ -219,6 +274,70 @@ function serializeUserWallet(wallet: {
     createdAt: wallet.createdAt.toISOString(),
     updatedAt: wallet.updatedAt.toISOString(),
   };
+}
+
+async function createPrivySolanaWallet(input: { userId: string; label: string }) {
+  if (!config.privyAppId || !config.privyAppSecret) {
+    throw new ApiError(
+      501,
+      'provider_not_configured',
+      'Privy wallet creation is not configured. Add PRIVY_APP_ID and PRIVY_APP_SECRET to api/.env.',
+    );
+  }
+
+  const externalId = `decimal-user-${input.userId}`.replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 64);
+  const response = await fetch(`${config.privyApiBaseUrl}/v1/wallets`, {
+    method: 'POST',
+    headers: {
+      authorization: `Basic ${Buffer.from(`${config.privyAppId}:${config.privyAppSecret}`).toString('base64')}`,
+      'content-type': 'application/json',
+      'privy-app-id': config.privyAppId,
+      'privy-idempotency-key': `user-wallet-${input.userId}`,
+    },
+    body: JSON.stringify({
+      chain_type: 'solana',
+      external_id: externalId,
+      display_name: input.label,
+    }),
+  });
+
+  const payload = await response.json().catch(() => null) as PrivyWalletResponse | null;
+  if (!response.ok || !payload?.id || !payload.address) {
+    throw new ApiError(
+      response.status >= 400 && response.status < 500 ? 400 : 502,
+      'privy_wallet_create_failed',
+      extractPrivyErrorMessage(payload) ?? 'Privy could not create the wallet.',
+      payload,
+    );
+  }
+
+  return {
+    providerWalletId: payload.id,
+    address: payload.address,
+    displayName: payload.display_name ?? null,
+    metadata: {
+      externalId: payload.external_id ?? externalId,
+      chainType: payload.chain_type ?? 'solana',
+      ownerId: payload.owner_id ?? null,
+      createdAt: payload.created_at ?? null,
+    },
+  };
+}
+
+type PrivyWalletResponse = {
+  id?: string;
+  address?: string;
+  display_name?: string | null;
+  external_id?: string | null;
+  chain_type?: string;
+  owner_id?: string | null;
+  created_at?: number;
+  error?: string;
+  message?: string;
+};
+
+function extractPrivyErrorMessage(payload: PrivyWalletResponse | null) {
+  return payload?.message ?? payload?.error ?? null;
 }
 
 function normalizeSolanaAddress(value: string) {

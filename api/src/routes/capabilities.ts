@@ -90,6 +90,7 @@ capabilitiesRouter.get('/capabilities', (_req, res) => {
           'POST /user-wallets/challenge',
           'POST /user-wallets/external',
           'POST /user-wallets/embedded',
+          'POST /user-wallets/managed',
           'GET /organizations/:organizationId/treasury-wallets',
           'GET /organizations/:organizationId/destinations',
           'GET /organizations/:organizationId/collection-sources',
