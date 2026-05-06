@@ -739,6 +739,7 @@ function ProfilePage({ session }: { session: AuthenticatedSession }) {
   const navigate = useNavigate();
   const { success, error: toastError } = useToast();
   const [createPersonalWalletOpen, setCreatePersonalWalletOpen] = useState(false);
+  const [createOrgOpen, setCreateOrgOpen] = useState(false);
 
   const personalWalletsQuery = useQuery({
     queryKey: ['personal-wallets'] as const,
@@ -753,6 +754,7 @@ function ProfilePage({ session }: { session: AuthenticatedSession }) {
     },
     onSuccess: async (organization) => {
       success('Organization created.');
+      setCreateOrgOpen(false);
       await queryClient.invalidateQueries({ queryKey: queryKeys().session });
       navigate(`/organizations/${organization.organizationId}`);
     },
@@ -776,83 +778,197 @@ function ProfilePage({ session }: { session: AuthenticatedSession }) {
   });
 
   const personalWallets = personalWalletsQuery.data?.items ?? [];
+  const organizations = session.organizations;
+  const isLoadingWallets = personalWalletsQuery.isLoading && personalWallets.length === 0;
 
   return (
-    <PageFrame
-      eyebrow="Account"
-      title="Profile"
-      description="Manage your identity, personal wallets, and organizations."
-    >
-      <div className="metric-strip metric-strip-three">
-        <Metric label="Organizations" value={String(session.organizations.length)} />
-        <Metric label="Personal wallets" value={String(personalWallets.length)} />
-        <Metric label="User" value={session.user.email} />
+    <main className="page-frame">
+      <header className="page-header">
+        <div>
+          <p className="eyebrow">Account · {session.user.email}</p>
+          <h1>Profile</h1>
+          <p>Manage your identity, personal signing wallets, and organizations.</p>
+        </div>
+      </header>
+
+      <div className="rd-metrics">
+        <div className="rd-metric">
+          <span className="rd-metric-label">Personal wallets</span>
+          <span className="rd-metric-value">{personalWallets.length}</span>
+        </div>
+        <div className="rd-metric">
+          <span className="rd-metric-label">Organizations</span>
+          <span className="rd-metric-value">{organizations.length}</span>
+        </div>
+        <div className="rd-metric">
+          <span className="rd-metric-label">Display name</span>
+          <span className="rd-metric-value" style={{ fontSize: 18 }}>
+            {session.user.displayName || session.user.email.split('@')[0]}
+          </span>
+        </div>
       </div>
 
-      <section className="panel">
-        <SectionHeader
-          title="Personal wallets"
-          description="These wallets belong to you, not to any organization. Authorize one to act for an organization treasury account from the Treasury accounts page."
-        />
-        {personalWallets.length === 0 ? (
-          <EmptyPanel
-            title="Create your personal signing wallet"
-            description="This wallet belongs to you, not the organization. You can later authorize it to sign on behalf of any treasury account you have access to."
-          />
-        ) : (
-          <div className="simple-list" style={{ marginBottom: 12 }}>
-            {personalWallets.map((wallet) => (
-              <div className="simple-list-row" key={wallet.userWalletId}>
-                <div>
-                  <strong>{wallet.label ?? wallet.provider ?? wallet.walletType}</strong>
-                  <span>{shortenAddress(wallet.walletAddress)} // {wallet.walletType}</span>
-                </div>
-                <span className="status-pill status-pill-ok">{wallet.verifiedAt ? 'verified' : 'pending'}</span>
-              </div>
-            ))}
+      <section className="rd-section" style={{ marginTop: 8 }}>
+        <div className="rd-section-head">
+          <div>
+            <p className="eyebrow">Identity</p>
+            <h2>Personal wallets</h2>
+            <p style={{ margin: 0, color: 'var(--ax-text-muted)' }}>
+              These wallets belong to you, not to any organization. Authorize one to act for a treasury account from the Treasury accounts page.
+            </p>
           </div>
-        )}
-        <div style={{ marginTop: 16 }}>
-          <button
-            type="button"
-            className="button button-primary"
-            onClick={() => setCreatePersonalWalletOpen(true)}
-          >
-            + Create personal wallet
-          </button>
+          <div>
+            <button
+              type="button"
+              className="button button-primary"
+              onClick={() => setCreatePersonalWalletOpen(true)}
+            >
+              + Create personal wallet
+            </button>
+          </div>
+        </div>
+
+        <div className="rd-table-shell" style={{ marginTop: 12 }}>
+          {isLoadingWallets ? (
+            <div style={{ padding: 16 }}>
+              <div className="rd-skeleton rd-skeleton-block" style={{ height: 56, marginBottom: 8 }} />
+              <div className="rd-skeleton rd-skeleton-block" style={{ height: 56 }} />
+            </div>
+          ) : personalWallets.length === 0 ? (
+            <div className="rd-empty-cell" style={{ padding: '64px 24px' }}>
+              <strong>Create your personal signing wallet</strong>
+              <p style={{ margin: '0 0 16px' }}>
+                This wallet belongs to you, not the organization. You can later authorize it to sign for any treasury account you have access to.
+              </p>
+              <button
+                type="button"
+                className="button button-primary"
+                onClick={() => setCreatePersonalWalletOpen(true)}
+              >
+                + Create personal wallet
+              </button>
+            </div>
+          ) : (
+            <table className="rd-table">
+              <thead>
+                <tr>
+                  <th style={{ width: '28%' }}>Name</th>
+                  <th style={{ width: '32%' }}>Address</th>
+                  <th style={{ width: '16%' }}>Provider</th>
+                  <th style={{ width: '16%' }}>Status</th>
+                  <th style={{ width: '8%' }}>Created</th>
+                </tr>
+              </thead>
+              <tbody>
+                {personalWallets.map((wallet) => (
+                  <tr key={wallet.userWalletId}>
+                    <td>
+                      <span className="rd-payee-name">
+                        {wallet.label ?? 'Untitled wallet'}
+                      </span>
+                    </td>
+                    <td>
+                      <a
+                        href={orbAccountUrl(wallet.walletAddress)}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="rd-addr-link"
+                        title={wallet.walletAddress}
+                      >
+                        {shortenAddress(wallet.walletAddress)}
+                      </a>
+                    </td>
+                    <td>
+                      <span style={{ color: 'var(--ax-text-muted)' }}>
+                        {wallet.provider ?? wallet.walletType}
+                      </span>
+                    </td>
+                    <td>
+                      <span
+                        className={
+                          wallet.verifiedAt ? 'rd-pill rd-pill-success' : 'rd-pill rd-pill-warning'
+                        }
+                      >
+                        {wallet.verifiedAt ? 'verified' : 'pending'}
+                      </span>
+                    </td>
+                    <td style={{ color: 'var(--ax-text-muted)', fontSize: 13 }}>
+                      {formatProfileDate(wallet.createdAt)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </div>
       </section>
 
-      <div className="split-panels">
-        <section className="panel">
-          <SectionHeader title="Create organization" description="Create a new company or treasury entity." />
-          <form
-            className="form-stack"
-            onSubmit={(event) => {
-              event.preventDefault();
-              createOrganizationMutation.mutate(new FormData(event.currentTarget));
-            }}
-          >
-            <label className="field">
-              Organization name
-              <input name="organizationName" placeholder="Acme Treasury Group" />
-            </label>
-            <button className="button button-primary" disabled={createOrganizationMutation.isPending} type="submit">
-              {createOrganizationMutation.isPending ? 'Creating…' : 'Create organization'}
+      <section className="rd-section">
+        <div className="rd-section-head">
+          <div>
+            <p className="eyebrow">Membership</p>
+            <h2>Your organizations</h2>
+            <p style={{ margin: 0, color: 'var(--ax-text-muted)' }}>
+              Organizations you can sign in to. Each organization owns its own treasury accounts.
+            </p>
+          </div>
+          <div>
+            <button
+              type="button"
+              className="button button-secondary"
+              onClick={() => setCreateOrgOpen(true)}
+            >
+              + Create organization
             </button>
-          </form>
-        </section>
-      </div>
-      <section className="panel panel-spaced">
-        <SectionHeader title="Your organizations" description="Organizations you're a member of." />
-        <SimpleList
-          items={session.organizations.map((org) => ({
-            id: org.organizationId,
-            title: org.organizationName,
-            meta: org.role,
-          }))}
-          empty="You don't belong to any organization yet."
-        />
+          </div>
+        </div>
+
+        <div className="rd-table-shell" style={{ marginTop: 12 }}>
+          {organizations.length === 0 ? (
+            <div className="rd-empty-cell" style={{ padding: '64px 24px' }}>
+              <strong>No organizations yet</strong>
+              <p style={{ margin: '0 0 16px' }}>
+                Create one to start adding treasury accounts and running payment flows.
+              </p>
+              <button
+                type="button"
+                className="button button-primary"
+                onClick={() => setCreateOrgOpen(true)}
+              >
+                + Create organization
+              </button>
+            </div>
+          ) : (
+            <table className="rd-table">
+              <thead>
+                <tr>
+                  <th style={{ width: '60%' }}>Organization</th>
+                  <th style={{ width: '20%' }}>Role</th>
+                  <th style={{ width: '20%' }}>&nbsp;</th>
+                </tr>
+              </thead>
+              <tbody>
+                {organizations.map((org) => (
+                  <tr
+                    key={org.organizationId}
+                    style={{ cursor: 'pointer' }}
+                    onClick={() => navigate(`/organizations/${org.organizationId}`)}
+                  >
+                    <td>
+                      <span className="rd-payee-name">{org.organizationName}</span>
+                    </td>
+                    <td>
+                      <span className="rd-pill rd-pill-info">{org.role}</span>
+                    </td>
+                    <td style={{ textAlign: 'right' }}>
+                      <span style={{ color: 'var(--ax-text-muted)', fontSize: 13 }}>Open →</span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
       </section>
 
       {createPersonalWalletOpen ? (
@@ -862,7 +978,78 @@ function ProfilePage({ session }: { session: AuthenticatedSession }) {
           onSubmit={(form) => createPersonalWalletMutation.mutate(form)}
         />
       ) : null}
-    </PageFrame>
+      {createOrgOpen ? (
+        <CreateOrganizationDialog
+          pending={createOrganizationMutation.isPending}
+          onClose={() => setCreateOrgOpen(false)}
+          onSubmit={(form) => createOrganizationMutation.mutate(form)}
+        />
+      ) : null}
+    </main>
+  );
+}
+
+function formatProfileDate(iso: string): string {
+  const d = new Date(iso);
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+function CreateOrganizationDialog(props: {
+  pending: boolean;
+  onClose: () => void;
+  onSubmit: (form: FormData) => void;
+}) {
+  const { pending, onClose, onSubmit } = props;
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') onClose();
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  return (
+    <div
+      className="rd-dialog-backdrop"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="rd-create-org-title"
+    >
+      <div className="rd-dialog" style={{ maxWidth: 460 }}>
+        <h2 id="rd-create-org-title" className="rd-dialog-title">
+          Create organization
+        </h2>
+        <p className="rd-dialog-body">
+          Create a new company or treasury entity. You become its owner; you can invite members and add treasury accounts after.
+        </p>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            onSubmit(new FormData(e.currentTarget));
+          }}
+        >
+          <label className="field">
+            Organization name
+            <input
+              name="organizationName"
+              required
+              placeholder="Acme Treasury Group"
+              autoComplete="off"
+              autoFocus
+            />
+          </label>
+          <div className="rd-dialog-actions" style={{ marginTop: 20 }}>
+            <button type="button" className="button button-secondary" onClick={onClose} disabled={pending}>
+              Cancel
+            </button>
+            <button type="submit" className="button button-primary" disabled={pending} aria-busy={pending}>
+              {pending ? 'Creating…' : 'Create organization'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
   );
 }
 
