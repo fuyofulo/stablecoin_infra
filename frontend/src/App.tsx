@@ -28,7 +28,6 @@ import type {
   Counterparty,
   Destination,
   ExceptionItem,
-  ManagedWalletProvider,
   PaymentExecutionPacket,
   PaymentOrder,
   PaymentOrderState,
@@ -39,7 +38,6 @@ import type {
   ReconciliationTimelineItem,
   ObservedTransfer,
   TreasuryWallet,
-  UserWallet,
   Organization,
 } from './api';
 import {
@@ -98,24 +96,6 @@ function queryKeys(organizationId?: string, paymentOrderId?: string) {
     exceptions: ['exceptions', organizationId] as const,
   };
 }
-
-type ManagedWalletProviderOption = {
-  id: ManagedWalletProvider;
-  name: string;
-  description: string;
-  capabilities: string[];
-  enabled: boolean;
-};
-
-const MANAGED_WALLET_PROVIDERS: ManagedWalletProviderOption[] = [
-  {
-    id: 'privy',
-    name: 'Privy',
-    description: 'Embedded Solana signing wallet managed through Privy.',
-    capabilities: ['Solana', 'Embedded', 'Transfers'],
-    enabled: true,
-  },
-];
 
 function toAuthenticatedSession(result: { user: AuthenticatedSession['user']; organizations: AuthenticatedSession['organizations'] }): AuthenticatedSession {
   return {
@@ -225,7 +205,6 @@ function AppShell({ session }: { session: AuthenticatedSession }) {
           <Route path="/" element={<HomeRedirect session={session} />} />
           <Route path="/setup" element={<SetupPage session={session} />} />
           <Route path="/profile" element={<ProfilePage session={session} />} />
-          <Route path="/organizations/:organizationId/wallets" element={<OrganizationWalletSetupPage session={session} />} />
           <Route path="/organizations/:organizationId" element={<CommandCenterPageV2 session={session} />} />
           <Route path="/organizations/:organizationId/wallets" element={<WalletsPage session={session} />} />
           <Route path="/organizations/:organizationId/counterparties" element={<CounterpartiesPage session={session} />} />
@@ -752,108 +731,6 @@ function SetupPage({ session }: { session: AuthenticatedSession }) {
       </section>
       </div>
     </PageFrame>
-  );
-}
-
-function OrganizationWalletSetupPage({ session }: { session: AuthenticatedSession }) {
-  const { organizationId } = useParams<{ organizationId: string }>();
-  const organization = session.organizations.find((candidate) => candidate.organizationId === organizationId);
-  const queryClient = useQueryClient();
-  const navigate = useNavigate();
-  const { success, error: toastError } = useToast();
-  const walletsQuery = useQuery({
-    queryKey: ['user-wallets'] as const,
-    queryFn: () => api.listUserWallets(),
-  });
-
-  const privyProvider = MANAGED_WALLET_PROVIDERS[0];
-
-  const managedWalletMutation = useMutation({
-    mutationFn: (formData: FormData) => {
-      const label = getOptionalFormString(formData, 'label');
-      return api.createManagedWallet({
-        provider: privyProvider.id,
-        label: label || undefined,
-      });
-    },
-    onSuccess: async () => {
-      success('Signing wallet created.');
-      await queryClient.invalidateQueries({ queryKey: ['user-wallets'] });
-    },
-    onError: (err) => toastError(err instanceof Error ? err.message : 'Unable to create signing wallet.'),
-  });
-
-  if (!organizationId || !organization) {
-    return <ScreenState title="Organization unavailable" description="Create or join an organization first." />;
-  }
-
-  const wallets = walletsQuery.data?.items ?? [];
-
-  return (
-    <PageFrame
-      eyebrow={organization.organizationName}
-      title="Add your signing wallet"
-      description="Decimal will create a Privy-managed Solana wallet that becomes your personal signer. Treasury setup comes next."
-    >
-      <section className="panel">
-        <SectionHeader
-          title="Create signing wallet"
-          description="Embedded Solana wallet managed through Privy. Keys never leave the browser; Decimal stores only the public address and provider metadata."
-        />
-        <form
-          className="form-stack"
-          onSubmit={(event) => {
-            event.preventDefault();
-            managedWalletMutation.mutate(new FormData(event.currentTarget));
-          }}
-        >
-          <label className="field">
-            Wallet name
-            <input
-              name="label"
-              placeholder={`${organization.organizationName} signing wallet`}
-              autoComplete="off"
-            />
-          </label>
-          <button
-            className="button button-primary"
-            disabled={managedWalletMutation.isPending}
-            type="submit"
-          >
-            {managedWalletMutation.isPending ? 'Creating…' : 'Create signing wallet'}
-          </button>
-        </form>
-      </section>
-      <section className="panel panel-spaced">
-        <SectionHeader title="Your wallets" description="These wallets can later become Squads members or solo signers." />
-        <WalletList wallets={wallets} />
-        <div style={{ marginTop: 16 }}>
-          <button className="button button-primary" type="button" onClick={() => navigate('/profile')}>
-            Continue
-          </button>
-        </div>
-      </section>
-    </PageFrame>
-  );
-}
-
-function WalletList({ wallets }: { wallets: UserWallet[] }) {
-  if (!wallets.length) {
-    return <EmptyPanel title="No wallets yet" description="Create your signing wallet above to get started." />;
-  }
-
-  return (
-    <div className="simple-list">
-      {wallets.map((wallet) => (
-        <div className="simple-list-row" key={wallet.userWalletId}>
-          <div>
-            <strong>{wallet.label ?? wallet.provider ?? wallet.walletType}</strong>
-            <span>{shortenAddress(wallet.walletAddress)} // {wallet.walletType}</span>
-          </div>
-          <span className="status-pill status-pill-ok">{wallet.verifiedAt ? 'verified' : 'pending'}</span>
-        </div>
-      ))}
-    </div>
   );
 }
 

@@ -73,7 +73,6 @@ export function WalletsPage({ session }: { session: AuthenticatedSession }) {
     // wallet imports are needed.
     mutationFn: async (form: FormData) => {
       const displayName = String(form.get('displayName') ?? '').trim();
-      const notes = String(form.get('notes') ?? '').trim();
       if (!displayName) {
         throw new Error('Wallet name is required.');
       }
@@ -84,7 +83,6 @@ export function WalletsPage({ session }: { session: AuthenticatedSession }) {
       return api.createTreasuryWallet(organizationId!, {
         address: managed.walletAddress,
         displayName,
-        notes: notes || undefined,
       });
     },
     onSuccess: async () => {
@@ -289,6 +287,8 @@ function AddWalletDialog(props: {
   onSubmit: (form: FormData) => void;
 }) {
   const { pending, onClose, onSubmit } = props;
+  const [step, setStep] = useState<'select' | 'create'>('select');
+
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key === 'Escape') onClose();
@@ -296,38 +296,104 @@ function AddWalletDialog(props: {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
+
   return (
-    <div className="rd-dialog-backdrop" role="dialog" aria-modal="true" aria-labelledby="rd-add-wallet-title">
-      <div className="rd-dialog" style={{ maxWidth: 480 }}>
-        <h2 id="rd-add-wallet-title" className="rd-dialog-title">
-          Create wallet
-        </h2>
-        <p className="rd-dialog-body">
-          Decimal will create a Privy-managed Solana wallet and register it as a treasury wallet for this organization. Keys never leave the browser.
-        </p>
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            onSubmit(new FormData(e.currentTarget));
-          }}
-        >
-          <label className="field">
-            Wallet name
-            <input name="displayName" required placeholder="Ops vault" autoComplete="off" />
-          </label>
-          <label className="field">
-            Notes
-            <input name="notes" placeholder="Optional context" autoComplete="off" />
-          </label>
-          <div className="rd-dialog-actions" style={{ marginTop: 20 }}>
-            <button type="button" className="button button-secondary" onClick={onClose}>
-              Cancel
-            </button>
-            <button type="submit" className="button button-primary" disabled={pending} aria-busy={pending}>
-              {pending ? 'Creating…' : 'Create via Privy'}
-            </button>
-          </div>
-        </form>
+    <div
+      className="rd-dialog-backdrop"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="rd-add-wallet-title"
+    >
+      <div className="rd-dialog" style={{ maxWidth: 540 }}>
+        {step === 'select' ? (
+          <>
+            <h2 id="rd-add-wallet-title" className="rd-dialog-title">
+              Add wallet
+            </h2>
+            <p className="rd-dialog-body">
+              Choose a custody provider to create a new Solana wallet for this organization.
+            </p>
+            <div className="provider-grid" style={{ marginTop: 8 }}>
+              <button
+                className="provider-card"
+                type="button"
+                onClick={() => setStep('create')}
+              >
+                <span className="provider-icon">P</span>
+                <span className="provider-card-main">
+                  <strong>Privy</strong>
+                  <small>Embedded Solana wallet managed through Privy. Keys never leave the browser.</small>
+                  <span className="provider-chip-row">
+                    <span className="provider-chip">Solana</span>
+                    <span className="provider-chip">Embedded</span>
+                    <span className="provider-chip">Transfers</span>
+                  </span>
+                </span>
+              </button>
+            </div>
+            <div className="rd-dialog-actions" style={{ marginTop: 20 }}>
+              <button type="button" className="button button-secondary" onClick={onClose}>
+                Cancel
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <h2 id="rd-add-wallet-title" className="rd-dialog-title">
+              New wallet
+            </h2>
+            <p className="rd-dialog-body">
+              Connect this provider and create its first wallet in one step.
+            </p>
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                onSubmit(new FormData(e.currentTarget));
+              }}
+            >
+              <div className="provider-modal-summary" style={{ marginBottom: 16 }}>
+                <span className="provider-icon provider-icon-large">P</span>
+                <div>
+                  <strong>Privy</strong>
+                  <p>Embedded Solana wallet managed through Privy.</p>
+                  <span className="provider-chip-row">
+                    <span className="provider-chip">Solana</span>
+                    <span className="provider-chip">Embedded</span>
+                    <span className="provider-chip">Transfers</span>
+                  </span>
+                </div>
+              </div>
+              <label className="field">
+                Wallet name
+                <input
+                  name="displayName"
+                  required
+                  placeholder="Ops vault"
+                  autoComplete="off"
+                  autoFocus
+                />
+              </label>
+              <div className="rd-dialog-actions" style={{ marginTop: 20 }}>
+                <button
+                  type="button"
+                  className="button button-secondary"
+                  onClick={() => setStep('select')}
+                  disabled={pending}
+                >
+                  Back
+                </button>
+                <button
+                  type="submit"
+                  className="button button-primary"
+                  disabled={pending}
+                  aria-busy={pending}
+                >
+                  {pending ? 'Creating…' : 'Create wallet'}
+                </button>
+              </div>
+            </form>
+          </>
+        )}
       </div>
     </div>
   );
