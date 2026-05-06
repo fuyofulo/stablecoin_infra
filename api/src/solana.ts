@@ -30,16 +30,39 @@ export function getSolanaConnection(): Connection {
 let devnetConnectionSingleton: Connection | null = null;
 
 /**
- * Connection pinned to the devnet RPC URL, regardless of the app's
- * primary SOLANA_NETWORK. Used for operations that only make sense on
- * devnet (airdrop) so they keep working even when the app itself is
- * running in mainnet mode.
+ * Connection pinned to SOLANA_DEVNET_RPC_URL, regardless of the app's
+ * primary SOLANA_NETWORK. Used for devnet reads (balances, signature
+ * polling) — typically a paid provider for better rate limits.
+ *
+ * Do NOT use this for `requestAirdrop` — premium RPC providers
+ * (Alchemy, Helius, etc.) explicitly disable that method and return
+ * "Invalid request". Use getSolanaAirdropConnection() instead.
  */
 export function getSolanaDevnetConnection(): Connection {
   if (!devnetConnectionSingleton) {
     devnetConnectionSingleton = new Connection(config.solanaDevnetRpcUrl, 'confirmed');
   }
   return devnetConnectionSingleton;
+}
+
+let airdropConnectionSingleton: Connection | null = null;
+
+/**
+ * Connection pinned to a node that allows `requestAirdrop`. Defaults
+ * to Solana's public devnet endpoint (https://api.devnet.solana.com)
+ * — premium providers like Alchemy disable the airdrop method.
+ * Override via SOLANA_AIRDROP_RPC_URL if a different faucet-allowing
+ * endpoint is preferred.
+ *
+ * Once the airdrop signature is returned, callers can poll its status
+ * on getSolanaDevnetConnection() (the faster Alchemy URL) — both
+ * read the same chain state.
+ */
+export function getSolanaAirdropConnection(): Connection {
+  if (!airdropConnectionSingleton) {
+    airdropConnectionSingleton = new Connection(config.solanaAirdropRpcUrl, 'confirmed');
+  }
+  return airdropConnectionSingleton;
 }
 
 /**

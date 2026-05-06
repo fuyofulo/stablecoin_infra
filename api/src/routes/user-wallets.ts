@@ -22,6 +22,7 @@ import {
   USDC_MINT,
   deriveUsdcAtaForWallet,
   fetchWalletBalances,
+  getSolanaAirdropConnection,
   getSolanaConnection,
   getSolanaDevnetConnection,
   waitForSignatureVisible,
@@ -606,14 +607,21 @@ userWalletsRouter.post(
 
       const amountSol = input.amountSol ?? 1;
       const lamports = Math.floor(amountSol * LAMPORTS_PER_SOL);
-      const connection = getSolanaDevnetConnection();
       const pubkey = new PublicKey(wallet.walletAddress);
 
-      const signature = await connection.requestAirdrop(pubkey, lamports);
-      // Best-effort visibility wait so the caller's next balance check
-      // sees the new SOL. Devnet airdrop typically lands in 1-3s.
+      // requestAirdrop hits a node that supports the method (Solana's
+      // public devnet RPC by default). Premium providers like Alchemy
+      // disable the method and return "Invalid request" — we'd rather
+      // fail in code review than at runtime, so the connection is
+      // explicitly the airdrop one, not the general devnet one.
+      const airdropConnection = getSolanaAirdropConnection();
+      const signature = await airdropConnection.requestAirdrop(pubkey, lamports);
+
+      // Poll signature visibility on the configured devnet RPC (usually
+      // Alchemy — faster, better rate limits). Both connections read
+      // the same chain so the airdrop tx is visible on either one.
       try {
-        await waitForSignatureVisible(connection, signature, { timeoutMs: 8_000 });
+        await waitForSignatureVisible(getSolanaDevnetConnection(), signature, { timeoutMs: 8_000 });
       } catch {
         // swallow — signature is what matters; airdrop errored on chain
         // is rare and the user can verify the signature themselves

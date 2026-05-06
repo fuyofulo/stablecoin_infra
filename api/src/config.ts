@@ -30,12 +30,21 @@ type DecimalConfig = {
   solanaNetwork: SolanaNetwork;
   solanaRpcUrl: string;
   /**
-   * Always-devnet RPC URL. Used for devnet-only operations (airdrop)
-   * regardless of which network the rest of the app is configured for.
-   * Falls back to the public devnet endpoint if SOLANA_DEVNET_RPC_URL
-   * is unset.
+   * Always-devnet RPC URL. Used for devnet reads (balances, signature
+   * status) regardless of which network the rest of the app is
+   * configured for. Typically a paid provider (Alchemy / Helius) for
+   * better rate limits — premium providers disable requestAirdrop, so
+   * see solanaAirdropRpcUrl below for the airdrop-specific path.
    */
   solanaDevnetRpcUrl: string;
+  /**
+   * RPC URL used specifically for `requestAirdrop` calls. Must be a
+   * node that allows the airdrop method (Solana's public devnet
+   * endpoint always does; most premium providers do not). Override
+   * with SOLANA_AIRDROP_RPC_URL if a different faucet-allowing
+   * endpoint is preferred. Defaults to https://api.devnet.solana.com.
+   */
+  solanaAirdropRpcUrl: string;
   clickhouseUrl: string;
   clickhouseDatabase: string;
   corsOrigins: string[];
@@ -69,6 +78,7 @@ function buildConfig(): DecimalConfig {
   const solanaNetwork = getSolanaNetwork();
   const solanaRpcUrl = (process.env.SOLANA_RPC_URL?.trim() || defaultSolanaRpcUrl(solanaNetwork));
   const solanaDevnetRpcUrl = (process.env.SOLANA_DEVNET_RPC_URL?.trim() || 'https://api.devnet.solana.com');
+  const solanaAirdropRpcUrl = (process.env.SOLANA_AIRDROP_RPC_URL?.trim() || 'https://api.devnet.solana.com');
 
   const nextConfig: DecimalConfig = {
     nodeEnv,
@@ -80,6 +90,7 @@ function buildConfig(): DecimalConfig {
     solanaNetwork,
     solanaRpcUrl,
     solanaDevnetRpcUrl,
+    solanaAirdropRpcUrl,
     clickhouseUrl: fileConfig.clickhouseUrl ?? 'http://127.0.0.1:8123',
     clickhouseDatabase: fileConfig.clickhouseDatabase ?? 'usdc_ops',
     corsOrigins: normalizeStringArray(fileConfig.corsOrigins),
