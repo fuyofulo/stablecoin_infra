@@ -1,10 +1,11 @@
-import { PublicKey } from '@solana/web3.js';
+import { PublicKey, VersionedTransaction } from '@solana/web3.js';
 import crypto from 'node:crypto';
 import { Router } from 'express';
 import { z } from 'zod';
-import { ApiError, badRequest } from '../api-errors.js';
-import { config } from '../config.js';
+import { ApiError, badRequest, notFound } from '../api-errors.js';
 import { prisma } from '../prisma.js';
+import { createPrivySolanaWallet, signPrivySolanaTransaction } from '../privy-wallets.js';
+import { config } from '../config.js';
 
 export const userWalletsRouter = Router();
 
@@ -31,6 +32,14 @@ const registerEmbeddedWalletSchema = z.object({
 const createManagedWalletSchema = z.object({
   provider: z.enum(['privy', 'fireblocks', 'coinbase_cdp', 'para', 'turnkey', 'dfns']),
   label: z.string().trim().min(1).max(100).optional(),
+});
+
+const signVersionedTransactionSchema = z.object({
+  serializedTransactionBase64: z.string().trim().min(1),
+});
+
+const userWalletParamsSchema = z.object({
+  userWalletId: z.string().uuid(),
 });
 
 userWalletsRouter.get(['/personal-wallets', '/user-wallets'], async (req, res, next) => {
@@ -242,6 +251,49 @@ userWalletsRouter.post(['/personal-wallets/managed', '/user-wallets/managed'], a
   }
 });
 
+userWalletsRouter.post(
+  ['/personal-wallets/:userWalletId/sign-versioned-transaction', '/user-wallets/:userWalletId/sign-versioned-transaction'],
+  async (req, res, next) => {
+    try {
+      const { userWalletId } = userWalletParamsSchema.parse(req.params);
+      const input = signVersionedTransactionSchema.parse(req.body);
+      const wallet = await prisma.personalWallet.findFirst({
+        where: {
+          userWalletId,
+          userId: req.auth!.userId,
+          status: 'active',
+        },
+      });
+      if (!wallet) {
+        throw notFound('Personal wallet not found');
+      }
+      if (wallet.chain !== 'solana' || wallet.provider !== 'privy' || wallet.walletType !== 'privy_embedded' || !wallet.providerWalletId) {
+        throw new ApiError(400, 'unsupported_wallet_signer', 'Only Privy embedded Solana wallets can sign through this endpoint.');
+      }
+
+      assertSignableVersionedTransaction(input.serializedTransactionBase64, wallet.walletAddress);
+      const signed = await signPrivySolanaTransaction({
+        providerWalletId: wallet.providerWalletId,
+        serializedTransactionBase64: input.serializedTransactionBase64,
+      });
+
+      await prisma.personalWallet.update({
+        where: { userWalletId: wallet.userWalletId },
+        data: { lastUsedAt: new Date() },
+      });
+
+      res.json({
+        userWalletId: wallet.userWalletId,
+        walletAddress: wallet.walletAddress,
+        signedTransactionBase64: signed.signedTransactionBase64,
+        encoding: signed.encoding,
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
 function serializeUserWallet(wallet: {
   userWalletId: string;
   userId: string;
@@ -276,75 +328,35 @@ function serializeUserWallet(wallet: {
   };
 }
 
-async function createPrivySolanaWallet(input: { userId: string; label: string }) {
-  if (!config.privyAppId || !config.privyAppSecret) {
-    throw new ApiError(
-      501,
-      'provider_not_configured',
-      'Privy wallet creation is not configured. Add PRIVY_APP_ID and PRIVY_APP_SECRET to api/.env.',
-    );
-  }
-
-  const externalId = `decimal-user-${input.userId}`.replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 64);
-  const response = await fetch(`${config.privyApiBaseUrl}/v1/wallets`, {
-    method: 'POST',
-    headers: {
-      authorization: `Basic ${Buffer.from(`${config.privyAppId}:${config.privyAppSecret}`).toString('base64')}`,
-      'content-type': 'application/json',
-      'privy-app-id': config.privyAppId,
-      'privy-idempotency-key': `user-wallet-${input.userId}`,
-    },
-    body: JSON.stringify({
-      chain_type: 'solana',
-      external_id: externalId,
-      display_name: input.label,
-    }),
-  });
-
-  const payload = await response.json().catch(() => null) as PrivyWalletResponse | null;
-  if (!response.ok || !payload?.id || !payload.address) {
-    throw new ApiError(
-      response.status >= 400 && response.status < 500 ? 400 : 502,
-      'privy_wallet_create_failed',
-      extractPrivyErrorMessage(payload) ?? 'Privy could not create the wallet.',
-      payload,
-    );
-  }
-
-  return {
-    providerWalletId: payload.id,
-    address: payload.address,
-    displayName: payload.display_name ?? null,
-    metadata: {
-      externalId: payload.external_id ?? externalId,
-      chainType: payload.chain_type ?? 'solana',
-      ownerId: payload.owner_id ?? null,
-      createdAt: payload.created_at ?? null,
-    },
-  };
-}
-
-type PrivyWalletResponse = {
-  id?: string;
-  address?: string;
-  display_name?: string | null;
-  external_id?: string | null;
-  chain_type?: string;
-  owner_id?: string | null;
-  created_at?: number;
-  error?: string;
-  message?: string;
-};
-
-function extractPrivyErrorMessage(payload: PrivyWalletResponse | null) {
-  return payload?.message ?? payload?.error ?? null;
-}
-
 function normalizeSolanaAddress(value: string) {
   try {
     return new PublicKey(value.trim()).toBase58();
   } catch {
     throw badRequest('Invalid Solana wallet address.');
+  }
+}
+
+function assertSignableVersionedTransaction(serializedTransactionBase64: string, walletAddress: string) {
+  let transaction: VersionedTransaction;
+  try {
+    transaction = VersionedTransaction.deserialize(Buffer.from(serializedTransactionBase64, 'base64'));
+  } catch {
+    throw badRequest('serializedTransactionBase64 must be a valid serialized Solana versioned transaction.');
+  }
+
+  const requiredSigners = transaction.message.staticAccountKeys
+    .slice(0, transaction.message.header.numRequiredSignatures)
+    .map((key) => key.toBase58());
+  if (!requiredSigners.includes(walletAddress)) {
+    throw badRequest('Personal wallet is not a required signer for this transaction.');
+  }
+
+  const squadsProgramId = config.squadsProgramId;
+  const programIds = transaction.message.compiledInstructions
+    .map((instruction) => transaction.message.staticAccountKeys[instruction.programIdIndex]?.toBase58())
+    .filter(Boolean);
+  if (!programIds.includes(squadsProgramId)) {
+    throw badRequest('This signing endpoint currently only supports Squads v4 treasury creation transactions.');
   }
 }
 

@@ -91,6 +91,7 @@ capabilitiesRouter.get('/capabilities', (_req, res) => {
           'POST /personal-wallets/external',
           'POST /personal-wallets/embedded',
           'POST /personal-wallets/managed',
+          'POST /personal-wallets/:userWalletId/sign-versioned-transaction',
           'GET /organizations/:organizationId/treasury-wallets',
           'POST /organizations/:organizationId/treasury-wallets/squads/create-intent',
           'POST /organizations/:organizationId/treasury-wallets/squads/confirm',

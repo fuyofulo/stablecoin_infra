@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
 import { after, before, beforeEach, test } from 'node:test';
 import { AddressInfo } from 'node:net';
-import { Keypair, PublicKey } from '@solana/web3.js';
+import { Keypair, PublicKey, TransactionInstruction, TransactionMessage, VersionedTransaction } from '@solana/web3.js';
 import { createApp } from '../src/app.js';
 import { config } from '../src/config.js';
 import { executeClickHouse } from '../src/clickhouse.js';
 import { prisma } from '../src/prisma.js';
+import { setPrivyWalletRuntimeForTests } from '../src/privy-wallets.js';
 import { resetRateLimitBuckets } from '../src/rate-limit.js';
 import { setSquadsTreasuryRuntimeForTests } from '../src/squads-treasury.js';
 
@@ -73,6 +74,7 @@ beforeEach(async () => {
   resetRateLimitBuckets();
   config.rateLimitEnabled = false;
   setSquadsTreasuryRuntimeForTests(null);
+  setPrivyWalletRuntimeForTests(null);
   await executeWithDeadlockRetry(() => prisma.$executeRawUnsafe(TRUNCATE_SQL));
   await clearClickHouseTables();
 });
@@ -517,6 +519,85 @@ test('Squads treasury creation prepares a signable transaction and persists the 
   assert.equal(status.localStateMatchesChain, true);
 });
 
+test('Privy personal wallet signing endpoint signs only transactions requiring that wallet', async () => {
+  const originalPrivyAppId = config.privyAppId;
+  const originalPrivyAppSecret = config.privyAppSecret;
+  try {
+    config.privyAppId = 'test-privy-app';
+    config.privyAppSecret = 'test-privy-secret';
+
+    const register = await post('/auth/register', {
+      email: 'privy-signer@example.com',
+      password: 'DemoPass123!',
+      displayName: 'Privy Signer',
+    });
+    await verifyRegisteredEmail(register);
+
+    const walletAddress = Keypair.generate().publicKey.toBase58();
+    const wallet = await post(
+      '/personal-wallets/embedded',
+      {
+        walletAddress,
+        provider: 'privy',
+        providerWalletId: 'privy-signing-wallet',
+        label: 'Privy signer',
+      },
+      register.sessionToken,
+    );
+    const serializedTransactionBase64 = buildSquadsCreateLikeTransactionBase64(walletAddress);
+    let privyRequestBody: unknown = null;
+    setPrivyWalletRuntimeForTests({
+      fetch: async (_url, init) => {
+        privyRequestBody = JSON.parse(String(init?.body ?? '{}'));
+        return new Response(
+          JSON.stringify({
+            method: 'signTransaction',
+            data: {
+              signed_transaction: serializedTransactionBase64,
+              encoding: 'base64',
+            },
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      },
+    });
+
+    const signed = await post(
+      `/personal-wallets/${wallet.userWalletId}/sign-versioned-transaction`,
+      { serializedTransactionBase64 },
+      register.sessionToken,
+    );
+
+    assert.equal(signed.userWalletId, wallet.userWalletId);
+    assert.equal(signed.walletAddress, walletAddress);
+    assert.equal(signed.signedTransactionBase64, serializedTransactionBase64);
+    assert.deepEqual(privyRequestBody, {
+      method: 'signTransaction',
+      params: {
+        transaction: serializedTransactionBase64,
+        encoding: 'base64',
+      },
+    });
+
+    const rejected = await fetch(`${baseUrl}/personal-wallets/${wallet.userWalletId}/sign-versioned-transaction`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        ...authHeaders(register.sessionToken),
+      },
+      body: JSON.stringify({
+        serializedTransactionBase64: buildSquadsCreateLikeTransactionBase64(Keypair.generate().publicKey.toBase58()),
+      }),
+    });
+    assert.equal(rejected.status, 400);
+    assert.equal((await rejected.json()).message, 'Personal wallet is not a required signer for this transaction.');
+  } finally {
+    config.privyAppId = originalPrivyAppId;
+    config.privyAppSecret = originalPrivyAppSecret;
+    setPrivyWalletRuntimeForTests(null);
+  }
+});
+
 test('service token protection only applies to internal routes', async () => {
   const originalServiceToken = config.controlPlaneServiceToken;
   const originalNodeEnv = config.nodeEnv;
@@ -589,6 +670,21 @@ function authHeaders(token: string) {
 
 function publicKeyFromString(value: string) {
   return new PublicKey(value);
+}
+
+function buildSquadsCreateLikeTransactionBase64(requiredSigner: string) {
+  const signer = new PublicKey(requiredSigner);
+  const instruction = new TransactionInstruction({
+    programId: new PublicKey(config.squadsProgramId),
+    keys: [{ pubkey: signer, isSigner: true, isWritable: true }],
+    data: Buffer.alloc(0),
+  });
+  const message = new TransactionMessage({
+    payerKey: signer,
+    recentBlockhash: Keypair.generate().publicKey.toBase58(),
+    instructions: [instruction],
+  }).compileToV0Message();
+  return Buffer.from(new VersionedTransaction(message).serialize()).toString('base64');
 }
 
 async function clearClickHouseTables() {

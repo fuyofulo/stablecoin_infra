@@ -9,7 +9,7 @@ Scope: create a Squads v4 treasury wallet for an organization and persist the Sq
 The backend now supports the first Squads tranche:
 
 - Prepare a Squads v4 multisig creation transaction.
-- Let the user's personal signing wallet sign and submit that transaction.
+- Let a Privy-backed personal signing wallet sign the prepared transaction.
 - Confirm the onchain Squads multisig and store its vault PDA as an organization treasury wallet.
 - Read live Squads status for a stored Squads treasury.
 
@@ -48,9 +48,10 @@ Flow:
 5. User chooses permissions and threshold.
 6. UI calls `create-intent`.
 7. UI shows review screen with multisig PDA, vault PDA, members, threshold, and required signer.
-8. User signs and submits the returned transaction with the required personal wallet.
-9. UI calls `confirm` with the submitted transaction signature and intent details.
-10. UI refreshes treasury wallets and shows the new Squads treasury.
+8. UI asks the backend to sign the returned transaction with the required Privy personal wallet.
+9. UI submits the returned signed transaction to Solana.
+10. UI calls `confirm` with the submitted transaction signature and intent details.
+11. UI refreshes treasury wallets and shows the new Squads treasury.
 
 MVP default:
 
@@ -159,6 +160,47 @@ Validation errors to surface cleanly:
 - `At least one Squads member must have execute permission.`
 - `Squads treasury wallet already exists in this organization.`
 
+### Sign Prepared Versioned Transaction
+
+```http
+POST /personal-wallets/:userWalletId/sign-versioned-transaction
+```
+
+Request:
+
+```ts
+type SignVersionedTransactionRequest = {
+  serializedTransactionBase64: string;
+};
+```
+
+Response:
+
+```ts
+type SignVersionedTransactionResponse = {
+  userWalletId: string;
+  walletAddress: string;
+  signedTransactionBase64: string;
+  encoding: 'base64';
+};
+```
+
+Backend behavior:
+
+- Requires session auth.
+- The wallet must belong to the authenticated user.
+- The wallet must be an active Privy embedded Solana personal wallet.
+- The transaction must be a valid serialized Solana `VersionedTransaction`.
+- The personal wallet address must be one of the transaction's required signers.
+- For now, the transaction must include the Squads v4 program. This intentionally prevents this from becoming a generic blind-signing endpoint too early.
+
+Frontend behavior:
+
+- Call this after `create-intent`.
+- Use `transaction.requiredSigner` from the intent response to pick the matching personal wallet.
+- Do not submit the unsigned transaction.
+- Submit `signedTransactionBase64` to Solana with `sendRawTransaction`.
+
 ### Confirm Squads Treasury
 
 ```http
@@ -260,6 +302,19 @@ confirmSquadsTreasury(
   );
 }
 
+signPersonalWalletVersionedTransaction(
+  userWalletId: string,
+  input: SignVersionedTransactionRequest,
+) {
+  return request<SignVersionedTransactionResponse>(
+    `/personal-wallets/${userWalletId}/sign-versioned-transaction`,
+    {
+      method: 'POST',
+      body: JSON.stringify(input),
+    },
+  );
+}
+
 getSquadsTreasuryStatus(organizationId: string, treasuryWalletId: string) {
   return request<SquadsTreasuryStatus>(
     `/organizations/${organizationId}/treasury-wallets/${treasuryWalletId}/squads/status`,
@@ -275,44 +330,31 @@ The backend returns a base64 serialized `VersionedTransaction` that is already p
 
 The frontend must:
 
-1. Deserialize it.
-2. Make sure the selected signer equals `transaction.requiredSigner`.
-3. Ask the wallet to sign.
-4. Submit the signed transaction.
-5. Confirm the transaction.
-6. Call backend `confirm`.
+1. Call `signPersonalWalletVersionedTransaction` with the creator personal wallet ID.
+2. Decode `signedTransactionBase64`.
+3. Submit the signed bytes with `connection.sendRawTransaction`.
+4. Confirm the transaction.
+5. Call backend `confirm`.
 
 Suggested helper:
 
 ```ts
 import {
   Connection,
-  PublicKey,
-  VersionedTransaction,
 } from '@solana/web3.js';
 import { getPublicSolanaRpcUrl } from '../public-config';
 
-export async function signAndSubmitSerializedVersionedTransaction(input: {
-  serializedTransactionBase64: string;
-  requiredSigner: string;
+export async function submitSignedVersionedTransaction(input: {
+  signedTransactionBase64: string;
   recentBlockhash: string;
   lastValidBlockHeight: number;
-  walletOptionId?: string;
 }) {
   const connection = new Connection(getPublicSolanaRpcUrl(), 'confirmed');
-  const bytes = Uint8Array.from(atob(input.serializedTransactionBase64), (char) => char.charCodeAt(0));
-  const transaction = VersionedTransaction.deserialize(bytes);
+  const bytes = Uint8Array.from(atob(input.signedTransactionBase64), (char) => char.charCodeAt(0));
 
-  // Reuse the existing wallet discovery/resolution pattern from solana-wallet.ts.
-  // The selected account/public key must equal input.requiredSigner.
-  // Prefer signTransaction if available, then submit with sendRawTransaction.
-  // If the wallet only exposes signAndSendTransaction, use that and return its signature.
-
-  const signature = await signWithSelectedWalletAndSubmit({
-    transaction,
-    requiredSigner: new PublicKey(input.requiredSigner).toBase58(),
-    walletOptionId: input.walletOptionId,
-    connection,
+  const signature = await connection.sendRawTransaction(bytes, {
+    skipPreflight: false,
+    preflightCommitment: 'confirmed',
   });
 
   await connection.confirmTransaction(
@@ -332,7 +374,8 @@ Implementation note:
 
 - Do not rebuild Squads instructions in the frontend.
 - Do not install `@sqds/multisig` in the frontend for this tranche.
-- Use the transaction exactly as returned by the backend.
+- Use the unsigned transaction exactly as returned by `create-intent`.
+- Use the signed transaction exactly as returned by the new personal-wallet signing endpoint.
 - Preserve the backend `createKey` partial signature. Do not recreate or replace the transaction.
 
 ## Component Flow
@@ -371,7 +414,7 @@ type PendingSquadsIntent = CreateSquadsTreasuryIntentResponse & {
 Mutation sequence:
 
 ```txt
-createIntent -> signAndSubmit -> confirm -> invalidate treasury queries
+createIntent -> backend sign -> submit signed transaction -> confirm -> invalidate treasury queries
 ```
 
 Invalidate these query keys after confirmation:
