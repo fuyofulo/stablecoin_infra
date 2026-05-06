@@ -51,6 +51,9 @@ ALTER TABLE users
 ALTER TABLE users
   ADD COLUMN IF NOT EXISTS email_verification_expires_at TIMESTAMPTZ;
 
+-- Personal wallets belong to individual users. They are not organization treasury
+-- wallets and should never be treated as org funds. The physical table remains
+-- user_wallets for compatibility with earlier builds.
 CREATE TABLE IF NOT EXISTS user_wallets
 (
   user_wallet_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -141,6 +144,26 @@ CREATE TABLE IF NOT EXISTS treasury_wallets
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE (organization_id, address)
+);
+
+-- Explicit authorization bridge from a personal wallet to an organization
+-- treasury wallet. This answers "which member wallet may act for this org
+-- wallet?" without making the member wallet part of the treasury.
+CREATE TABLE IF NOT EXISTS organization_wallet_authorizations
+(
+  wallet_authorization_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  organization_id UUID NOT NULL REFERENCES organizations(organization_id) ON DELETE CASCADE,
+  treasury_wallet_id UUID REFERENCES treasury_wallets(treasury_wallet_id) ON DELETE CASCADE,
+  user_wallet_id UUID NOT NULL REFERENCES user_wallets(user_wallet_id) ON DELETE CASCADE,
+  membership_id UUID NOT NULL REFERENCES organization_memberships(membership_id) ON DELETE CASCADE,
+  role TEXT NOT NULL DEFAULT 'signer',
+  status TEXT NOT NULL DEFAULT 'active',
+  scope TEXT NOT NULL DEFAULT 'treasury_wallet',
+  metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  revoked_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (organization_id, treasury_wallet_id, user_wallet_id, role)
 );
 
 ALTER TABLE treasury_wallets
@@ -792,6 +815,10 @@ CREATE INDEX IF NOT EXISTS idx_memberships_user_id ON organization_memberships(u
 CREATE INDEX IF NOT EXISTS idx_auth_sessions_user_id ON auth_sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_auth_sessions_organization_id ON auth_sessions(organization_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_google_subject ON users(google_subject) WHERE google_subject IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_user_wallets_user_status_created_at
+  ON user_wallets(user_id, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_user_wallets_wallet_address
+  ON user_wallets(wallet_address);
 CREATE INDEX IF NOT EXISTS idx_idempotency_records_actor_created_at
   ON idempotency_records(actor_type, actor_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_idempotency_records_expires_at
@@ -800,6 +827,12 @@ CREATE INDEX IF NOT EXISTS idx_organizations_status_created_at ON organizations(
 CREATE INDEX IF NOT EXISTS idx_treasury_wallets_organization_id ON treasury_wallets(organization_id);
 CREATE INDEX IF NOT EXISTS idx_treasury_wallets_address ON treasury_wallets(address);
 CREATE INDEX IF NOT EXISTS idx_treasury_wallets_usdc_ata ON treasury_wallets(usdc_ata_address);
+CREATE INDEX IF NOT EXISTS idx_wallet_authorizations_org_status
+  ON organization_wallet_authorizations(organization_id, status);
+CREATE INDEX IF NOT EXISTS idx_wallet_authorizations_user_wallet_status
+  ON organization_wallet_authorizations(user_wallet_id, status);
+CREATE INDEX IF NOT EXISTS idx_wallet_authorizations_membership_status
+  ON organization_wallet_authorizations(membership_id, status);
 CREATE INDEX IF NOT EXISTS idx_transfer_requests_organization_id ON transfer_requests(organization_id);
 CREATE INDEX IF NOT EXISTS idx_transfer_requests_payment_order_id ON transfer_requests(payment_order_id);
 CREATE INDEX IF NOT EXISTS idx_transfer_requests_source_treasury_wallet_id ON transfer_requests(source_treasury_wallet_id);
@@ -914,9 +947,14 @@ CREATE TRIGGER trg_memberships_updated_at
 BEFORE UPDATE ON organization_memberships
 FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
-DROP TRIGGER IF EXISTS trg_organizations_updated_at ON organizations;
-CREATE TRIGGER trg_organizations_updated_at
-BEFORE UPDATE ON organizations
+DROP TRIGGER IF EXISTS trg_user_wallets_updated_at ON user_wallets;
+CREATE TRIGGER trg_user_wallets_updated_at
+BEFORE UPDATE ON user_wallets
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+DROP TRIGGER IF EXISTS trg_wallet_authorizations_updated_at ON organization_wallet_authorizations;
+CREATE TRIGGER trg_wallet_authorizations_updated_at
+BEFORE UPDATE ON organization_wallet_authorizations
 FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 DROP TRIGGER IF EXISTS trg_idempotency_records_updated_at ON idempotency_records;

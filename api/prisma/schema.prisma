@@ -14,6 +14,7 @@ model Organization {
   createdAt        DateTime                 @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt        DateTime                 @updatedAt @map("updated_at") @db.Timestamptz(6)
   memberships      OrganizationMembership[]
+  walletAuthorizations OrganizationWalletAuthorization[]
   sessions         AuthSession[]
   counterparties   Counterparty[]
   treasuryWallets TreasuryWallet[]
@@ -53,7 +54,7 @@ model User {
   updatedAt                  DateTime                 @updatedAt @map("updated_at") @db.Timestamptz(6)
   memberships                OrganizationMembership[]
   sessions                   AuthSession[]
-  wallets                    UserWallet[]
+  wallets                    PersonalWallet[]
   walletChallenges           WalletChallenge[]
   transferRequestsRequested  TransferRequest[]        @relation("TransferRequestRequestedByUser")
   transferRequestNotes       TransferRequestNote[]
@@ -71,7 +72,11 @@ model User {
   @@map("users")
 }
 
-model UserWallet {
+/// PersonalWallet — user-owned signing wallet.
+/// This wallet belongs to an individual user, not to any organization treasury.
+/// It may be authorized to act inside an organization through
+/// OrganizationWalletAuthorization, but it never represents org funds by itself.
+model PersonalWallet {
   userWalletId     String    @id @default(dbgenerated("gen_random_uuid()")) @map("user_wallet_id") @db.Uuid
   userId           String    @map("user_id") @db.Uuid
   chain            String    @default("solana")
@@ -87,6 +92,7 @@ model UserWallet {
   createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt        DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
   user             User      @relation(fields: [userId], references: [userId], onDelete: Cascade)
+  walletAuthorizations OrganizationWalletAuthorization[]
 
   @@unique([userId, chain, walletAddress])
   @@index([userId, status, createdAt(sort: Desc)])
@@ -120,6 +126,7 @@ model OrganizationMembership {
   updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
   organization   Organization @relation(fields: [organizationId], references: [organizationId], onDelete: Cascade)
   user           User         @relation(fields: [userId], references: [userId], onDelete: Cascade)
+  walletAuthorizations OrganizationWalletAuthorization[]
 
   @@unique([organizationId, userId])
   @@map("organization_memberships")
@@ -180,6 +187,7 @@ model TreasuryWallet {
   createdAt                DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt                DateTime          @updatedAt @map("updated_at") @db.Timestamptz(6)
   organization           Organization         @relation(fields: [organizationId], references: [organizationId], onDelete: Cascade)
+  walletAuthorizations OrganizationWalletAuthorization[]
   outboundTransferRequests TransferRequest[] @relation("TransferRequestSourceWallet")
   sourcePaymentOrders      PaymentOrder[]    @relation("PaymentOrderSourceWallet")
   sourcePaymentRuns        PaymentRun[]      @relation("PaymentRunSourceWallet")
@@ -188,6 +196,35 @@ model TreasuryWallet {
 
   @@unique([organizationId, address])
   @@map("treasury_wallets")
+}
+
+/// OrganizationWalletAuthorization — explicit bridge between a personal wallet
+/// and an organization treasury wallet. This is the control-plane fact that says
+/// "this member's personal wallet may act for this org wallet" without making
+/// the personal wallet part of the treasury.
+model OrganizationWalletAuthorization {
+  walletAuthorizationId String                 @id @default(dbgenerated("gen_random_uuid()")) @map("wallet_authorization_id") @db.Uuid
+  organizationId        String                 @map("organization_id") @db.Uuid
+  treasuryWalletId      String?                @map("treasury_wallet_id") @db.Uuid
+  userWalletId          String                 @map("user_wallet_id") @db.Uuid
+  membershipId          String                 @map("membership_id") @db.Uuid
+  role                  String                 @default("signer")
+  status                String                 @default("active")
+  scope                 String                 @default("treasury_wallet") @map("scope")
+  createdAt             DateTime               @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt             DateTime               @updatedAt @map("updated_at") @db.Timestamptz(6)
+  revokedAt             DateTime?              @map("revoked_at") @db.Timestamptz(6)
+  metadataJson          Json                   @default("{}") @map("metadata_json")
+  organization          Organization           @relation(fields: [organizationId], references: [organizationId], onDelete: Cascade)
+  treasuryWallet        TreasuryWallet?        @relation(fields: [treasuryWalletId], references: [treasuryWalletId], onDelete: Cascade)
+  personalWallet        PersonalWallet         @relation(fields: [userWalletId], references: [userWalletId], onDelete: Cascade)
+  membership            OrganizationMembership @relation(fields: [membershipId], references: [membershipId], onDelete: Cascade)
+
+  @@unique([organizationId, treasuryWalletId, userWalletId, role])
+  @@index([organizationId, status])
+  @@index([userWalletId, status])
+  @@index([membershipId, status])
+  @@map("organization_wallet_authorizations")
 }
 
 model Counterparty {

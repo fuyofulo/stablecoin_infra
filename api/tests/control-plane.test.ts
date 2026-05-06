@@ -12,6 +12,7 @@ const TRUNCATE_SQL = `
 TRUNCATE TABLE
   auth_sessions,
   wallet_challenges,
+  organization_wallet_authorizations,
   user_wallets,
   idempotency_records,
   organization_memberships,
@@ -312,6 +313,72 @@ test('email verification gates organization setup and wallet registration is use
     body: JSON.stringify({ provider: 'fireblocks', label: 'Fireblocks signer' }),
   });
   assert.equal(unsupportedManagedWallet.status, 501);
+});
+
+test('personal wallets are separate from organization treasury wallets and require explicit authorization', async () => {
+  const register = await post('/auth/register', {
+    email: 'wallet-model@example.com',
+    password: 'DemoPass123!',
+    displayName: 'Wallet Model',
+  });
+  await verifyRegisteredEmail(register);
+
+  const organization = await post('/organizations', { organizationName: 'Wallet Model Org' }, register.sessionToken);
+  const personalWallet = await post(
+    '/personal-wallets/embedded',
+    {
+      walletAddress: Keypair.generate().publicKey.toBase58(),
+      provider: 'privy',
+      providerWalletId: 'privy-personal-wallet-1',
+      label: 'Personal signer',
+    },
+    register.sessionToken,
+  );
+  assert.equal(personalWallet.walletType, 'privy_embedded');
+
+  const personalWallets = await get('/personal-wallets', register.sessionToken);
+  assert.equal(personalWallets.items.length, 1);
+  assert.equal(personalWallets.items[0].userWalletId, personalWallet.userWalletId);
+
+  const treasuryWallet = await post(
+    `/organizations/${organization.organizationId}/treasury-wallets`,
+    {
+      chain: 'solana',
+      address: Keypair.generate().publicKey.toBase58(),
+      displayName: 'Org treasury',
+    },
+    register.sessionToken,
+  );
+  assert.notEqual(treasuryWallet.address, personalWallet.walletAddress);
+
+  const authorization = await post(
+    `/organizations/${organization.organizationId}/wallet-authorizations`,
+    {
+      userWalletId: personalWallet.userWalletId,
+      treasuryWalletId: treasuryWallet.treasuryWalletId,
+      role: 'signer',
+    },
+    register.sessionToken,
+  );
+  assert.equal(authorization.scope, 'treasury_wallet');
+  assert.equal(authorization.status, 'active');
+  assert.equal(authorization.personalWallet.walletAddress, personalWallet.walletAddress);
+  assert.equal(authorization.treasuryWallet.address, treasuryWallet.address);
+
+  const authorizations = await get(
+    `/organizations/${organization.organizationId}/wallet-authorizations?treasuryWalletId=${treasuryWallet.treasuryWalletId}`,
+    register.sessionToken,
+  );
+  assert.equal(authorizations.items.length, 1);
+  assert.equal(authorizations.items[0].walletAuthorizationId, authorization.walletAuthorizationId);
+
+  const revoked = await post(
+    `/organizations/${organization.organizationId}/wallet-authorizations/${authorization.walletAuthorizationId}/revoke`,
+    {},
+    register.sessionToken,
+  );
+  assert.equal(revoked.status, 'revoked');
+  assert.ok(revoked.revokedAt);
 });
 
 test('service token protection only applies to internal routes', async () => {

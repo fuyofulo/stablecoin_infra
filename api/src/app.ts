@@ -24,6 +24,7 @@ import { paymentRunsRouter } from './routes/payment-runs.js';
 import { publicRateLimitMiddleware } from './rate-limit.js';
 import { treasuryWalletsRouter } from './routes/treasury-wallets.js';
 import { userWalletsRouter } from './routes/user-wallets.js';
+import { walletAuthorizationsRouter } from './routes/wallet-authorizations.js';
 
 export function createApp() {
   const app = express();
@@ -96,6 +97,7 @@ export function createApp() {
   app.use(organizationsRouter);
   app.use(opsRouter);
   app.use(treasuryWalletsRouter);
+  app.use(walletAuthorizationsRouter);
   app.use(approvalsRouter);
   app.use(destinationsRouter);
   app.use(collectionSourcesRouter);

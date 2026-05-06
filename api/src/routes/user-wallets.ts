@@ -33,9 +33,9 @@ const createManagedWalletSchema = z.object({
   label: z.string().trim().min(1).max(100).optional(),
 });
 
-userWalletsRouter.get('/user-wallets', async (req, res, next) => {
+userWalletsRouter.get(['/personal-wallets', '/user-wallets'], async (req, res, next) => {
   try {
-    const items = await prisma.userWallet.findMany({
+    const items = await prisma.personalWallet.findMany({
       where: {
         userId: req.auth!.userId,
         status: 'active',
@@ -49,7 +49,7 @@ userWalletsRouter.get('/user-wallets', async (req, res, next) => {
   }
 });
 
-userWalletsRouter.post('/user-wallets/challenge', async (req, res, next) => {
+userWalletsRouter.post(['/personal-wallets/challenge', '/user-wallets/challenge'], async (req, res, next) => {
   try {
     const input = createChallengeSchema.parse(req.body);
     const walletAddress = normalizeSolanaAddress(input.walletAddress);
@@ -86,7 +86,7 @@ userWalletsRouter.post('/user-wallets/challenge', async (req, res, next) => {
   }
 });
 
-userWalletsRouter.post('/user-wallets/external', async (req, res, next) => {
+userWalletsRouter.post(['/personal-wallets/external', '/user-wallets/external'], async (req, res, next) => {
   try {
     const input = connectExternalWalletSchema.parse(req.body);
     const walletAddress = normalizeSolanaAddress(input.walletAddress);
@@ -120,7 +120,7 @@ userWalletsRouter.post('/user-wallets/external', async (req, res, next) => {
         data: { consumedAt: new Date() },
       });
 
-      return tx.userWallet.upsert({
+      return tx.personalWallet.upsert({
         where: {
           userId_chain_walletAddress: {
             userId: req.auth!.userId,
@@ -155,11 +155,11 @@ userWalletsRouter.post('/user-wallets/external', async (req, res, next) => {
   }
 });
 
-userWalletsRouter.post('/user-wallets/embedded', async (req, res, next) => {
+userWalletsRouter.post(['/personal-wallets/embedded', '/user-wallets/embedded'], async (req, res, next) => {
   try {
     const input = registerEmbeddedWalletSchema.parse(req.body);
     const walletAddress = normalizeSolanaAddress(input.walletAddress);
-    const wallet = await prisma.userWallet.upsert({
+    const wallet = await prisma.personalWallet.upsert({
       where: {
         userId_chain_walletAddress: {
           userId: req.auth!.userId,
@@ -193,7 +193,7 @@ userWalletsRouter.post('/user-wallets/embedded', async (req, res, next) => {
   }
 });
 
-userWalletsRouter.post('/user-wallets/managed', async (req, res, next) => {
+userWalletsRouter.post(['/personal-wallets/managed', '/user-wallets/managed'], async (req, res, next) => {
   try {
     const input = createManagedWalletSchema.parse(req.body);
     if (input.provider !== 'privy') {
@@ -206,7 +206,7 @@ userWalletsRouter.post('/user-wallets/managed', async (req, res, next) => {
     });
     const walletAddress = normalizeSolanaAddress(createdWallet.address);
 
-    const wallet = await prisma.userWallet.upsert({
+    const wallet = await prisma.personalWallet.upsert({
       where: {
         userId_chain_walletAddress: {
           userId: req.auth!.userId,

@@ -34,13 +34,14 @@ export const API_ENDPOINTS = [
   endpoint('resend_verification', 'POST', '/auth/resend-verification', ['auth'], 'Issue a new email verification code', 'session'),
   endpoint('logout', 'POST', '/auth/logout', ['auth'], 'Invalidate current user session', 'session'),
 
-  endpoint('list_user_wallets', 'GET', '/user-wallets', ['wallets'], 'List personal signing wallets for the current user', 'session'),
-  endpoint('create_user_wallet_challenge', 'POST', '/user-wallets/challenge', ['wallets'], 'Create wallet ownership challenge', 'session', {
+  endpoint('list_personal_wallets', 'GET', '/personal-wallets', ['personal wallets'], 'List personal signing wallets for the current user', 'session'),
+  endpoint('create_personal_wallet_challenge', 'POST', '/personal-wallets/challenge', ['personal wallets'], 'Create personal wallet ownership challenge', 'session', {
     requestBody: { walletAddress: 'string' },
   }),
-  endpoint('connect_external_user_wallet', 'POST', '/user-wallets/external', ['wallets'], 'Connect external wallet with signed challenge', 'session'),
-  endpoint('register_embedded_user_wallet', 'POST', '/user-wallets/embedded', ['wallets'], 'Register embedded wallet metadata', 'session'),
-  endpoint('create_managed_user_wallet', 'POST', '/user-wallets/managed', ['wallets'], 'Create a managed signing wallet with a configured custody provider', 'session'),
+  endpoint('connect_external_personal_wallet', 'POST', '/personal-wallets/external', ['personal wallets'], 'Connect external personal wallet with signed challenge', 'session'),
+  endpoint('register_embedded_personal_wallet', 'POST', '/personal-wallets/embedded', ['personal wallets'], 'Register embedded personal wallet metadata', 'session'),
+  endpoint('create_managed_personal_wallet', 'POST', '/personal-wallets/managed', ['personal wallets'], 'Create a managed personal signing wallet with a configured custody provider', 'session'),
+  endpoint('list_legacy_user_wallets', 'GET', '/user-wallets', ['personal wallets'], 'Legacy alias for personal wallets', 'session'),
 
   endpoint('list_organizations', 'GET', '/organizations', ['organizations'], 'List organizations for the current user', 'session'),
   endpoint('organization_summary', 'GET', '/organizations/{organizationId}/summary', ['organizations'], 'Lightweight organization counts for shell navigation', 'session', { scope: 'organization:read' }),
@@ -57,6 +58,12 @@ export const API_ENDPOINTS = [
     requestBody: { chain: 'solana', address: 'string', displayName: 'string optional' },
   }),
   endpoint('update_treasury_wallet', 'PATCH', '/organizations/{organizationId}/treasury-wallets/{treasuryWalletId}', ['address book'], 'Update owned treasury wallet', 'session', { scope: 'organization:write' }),
+  endpoint('list_wallet_authorizations', 'GET', '/organizations/{organizationId}/wallet-authorizations', ['wallet authorizations'], 'List personal wallet authorizations for an organization', 'session', { scope: 'organization:read' }),
+  endpoint('create_wallet_authorization', 'POST', '/organizations/{organizationId}/wallet-authorizations', ['wallet authorizations'], 'Authorize a personal wallet to act for an organization or treasury wallet', 'session', {
+    scope: 'organization:write',
+    requestBody: { userWalletId: 'uuid', treasuryWalletId: 'uuid optional', role: 'owner | admin | signer | approver optional' },
+  }),
+  endpoint('revoke_wallet_authorization', 'POST', '/organizations/{organizationId}/wallet-authorizations/{walletAuthorizationId}/revoke', ['wallet authorizations'], 'Revoke a personal wallet authorization', 'session', { scope: 'organization:write' }),
 
   endpoint('list_counterparties', 'GET', '/organizations/{organizationId}/counterparties', ['address book'], 'List counterparties', 'session', { scope: 'organization:read' }),
   endpoint('create_counterparty', 'POST', '/organizations/{organizationId}/counterparties', ['address book'], 'Create counterparty', 'session', { scope: 'organization:write' }),
