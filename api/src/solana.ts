@@ -5,13 +5,19 @@ import {
   getAssociatedTokenAddressSync,
   TOKEN_PROGRAM_ID,
 } from '@solana/spl-token';
-import { config } from './config.js';
+import { config, type SolanaNetwork } from './config.js';
 
 export const SOLANA_CHAIN = 'solana';
 export const USDC_ASSET = 'usdc';
 export const USDC_DECIMALS = 6;
-export const USDC_MINT = new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
+const USDC_MINT_MAINNET = new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
+const USDC_MINT_DEVNET = new PublicKey('4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU');
+export const USDC_MINT = getUsdcMint();
 export const SOLANA_SIGNATURE_PATTERN = /^[1-9A-HJ-NP-Za-km-z]{64,128}$/;
+
+export function getUsdcMint(network: SolanaNetwork = config.solanaNetwork): PublicKey {
+  return network === 'devnet' ? USDC_MINT_DEVNET : USDC_MINT_MAINNET;
+}
 
 let connectionSingleton: Connection | null = null;
 export function getSolanaConnection(): Connection {
@@ -19,6 +25,45 @@ export function getSolanaConnection(): Connection {
     connectionSingleton = new Connection(config.solanaRpcUrl, 'confirmed');
   }
   return connectionSingleton;
+}
+
+/**
+ * Poll getSignatureStatuses until the signature is at least 'confirmed'
+ * (or 'finalized'), or until the timeout elapses. Blockhash-agnostic
+ * alternative to Connection.confirmTransaction(strategy) — doesn't fail
+ * with "block height exceeded" when the tx actually landed but the
+ * intent's recentBlockhash window is already past.
+ *
+ * Returns { confirmed, seen } — `seen` is true if the RPC has any
+ * record of the signature (lets callers distinguish "tx never landed"
+ * from "tx landed, just didn't reach confirmed in our window").
+ *
+ * Throws if the network reports the tx errored on chain.
+ */
+export async function waitForSignatureVisible(
+  connection: Connection,
+  signature: string,
+  options: { timeoutMs?: number; pollIntervalMs?: number } = {},
+): Promise<{ confirmed: boolean; seen: boolean }> {
+  const timeoutMs = options.timeoutMs ?? 10_000;
+  const pollIntervalMs = options.pollIntervalMs ?? 1000;
+  const deadline = Date.now() + timeoutMs;
+  let everSeen = false;
+  while (Date.now() < deadline) {
+    const { value } = await connection.getSignatureStatuses([signature]);
+    const status = value[0];
+    if (status) {
+      everSeen = true;
+      if (status.err) {
+        throw new Error(`On-chain error: ${JSON.stringify(status.err)}`);
+      }
+      if (status.confirmationStatus === 'confirmed' || status.confirmationStatus === 'finalized') {
+        return { confirmed: true, seen: true };
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+  }
+  return { confirmed: false, seen: everSeen };
 }
 
 export type SolanaBalances = {

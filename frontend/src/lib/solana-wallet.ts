@@ -26,6 +26,48 @@ export function resolveSolanaRpcUrl(): string {
   return getPublicSolanaRpcUrl();
 }
 
+/**
+ * Poll getSignatureStatuses until the signature is at least 'confirmed'
+ * (or 'finalized'), or until the timeout budget elapses. This is the
+ * blockhash-agnostic alternative to Connection.confirmTransaction(strategy)
+ * — it doesn't care that the recentBlockhash window may have already
+ * passed by the time we start polling, which is the common case for txs
+ * built server-side and signed/submitted later via Privy.
+ *
+ * Returns { confirmed: true } as soon as the network shows the tx
+ * confirmed/finalized; { confirmed: false, seen: boolean } if the
+ * timeout elapses without confirmation. `seen` says whether the RPC
+ * has any record of the signature at all.
+ *
+ * Throws if the network reports the tx errored on chain — caller can
+ * surface a real error in that case.
+ */
+export async function waitForSignatureVisible(
+  connection: Connection,
+  signature: string,
+  options: { timeoutMs?: number; pollIntervalMs?: number } = {},
+): Promise<{ confirmed: boolean; seen: boolean }> {
+  const timeoutMs = options.timeoutMs ?? 30_000;
+  const pollIntervalMs = options.pollIntervalMs ?? 1500;
+  const deadline = Date.now() + timeoutMs;
+  let everSeen = false;
+  while (Date.now() < deadline) {
+    const { value } = await connection.getSignatureStatuses([signature]);
+    const status = value[0];
+    if (status) {
+      everSeen = true;
+      if (status.err) {
+        throw new Error(`On-chain error: ${JSON.stringify(status.err)}`);
+      }
+      if (status.confirmationStatus === 'confirmed' || status.confirmationStatus === 'finalized') {
+        return { confirmed: true, seen: true };
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+  }
+  return { confirmed: false, seen: everSeen };
+}
+
 type SolanaWalletProvider = {
   isPhantom?: boolean;
   publicKey?: PublicKey | { toBase58: () => string };

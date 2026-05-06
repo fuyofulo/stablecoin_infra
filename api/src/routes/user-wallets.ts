@@ -22,6 +22,7 @@ import {
   USDC_MINT,
   deriveUsdcAtaForWallet,
   getSolanaConnection,
+  waitForSignatureVisible,
 } from '../solana.js';
 
 export const userWalletsRouter = Router();
@@ -373,7 +374,7 @@ userWalletsRouter.post(
 
       const connection = getSolanaConnection();
       const sourcePubkey = new PublicKey(wallet.walletAddress);
-      const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
+      const { blockhash } = await connection.getLatestBlockhash('confirmed');
 
       let instructions: TransactionInstruction[];
       if (input.asset === 'sol') {
@@ -426,18 +427,17 @@ userWalletsRouter.post(
         preflightCommitment: 'confirmed',
       });
 
-      // Best-effort confirmation. We don't surface a confirm failure as
-      // an error — the tx may still land within the blockhash window
-      // and the caller can poll the signature via an explorer if they
-      // care to wait. This keeps the API from hanging the UI on a
-      // confirmation race.
+      // Best-effort visibility check via signature-status polling
+      // (10s budget). We don't use confirmTransaction({blockhash, ...})
+      // because the intent's recentBlockhash window often closes before
+      // we get here, producing "block height exceeded" even when the
+      // tx actually landed. Errors from the poller are swallowed —
+      // signature is what matters; the caller can verify on chain.
       try {
-        await connection.confirmTransaction(
-          { signature, blockhash, lastValidBlockHeight },
-          'confirmed',
-        );
+        await waitForSignatureVisible(connection, signature, { timeoutMs: 10_000 });
       } catch {
-        // swallow — signature is what matters
+        // tx errored on chain; surfacing the signature is still useful
+        // for the caller to inspect via an explorer
       }
 
       await prisma.personalWallet.update({

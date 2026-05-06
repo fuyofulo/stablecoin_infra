@@ -15,7 +15,7 @@ import {
   shortenAddress,
   orbAccountUrl,
 } from '../domain';
-import { resolveSolanaRpcUrl } from '../lib/solana-wallet';
+import { resolveSolanaRpcUrl, waitForSignatureVisible } from '../lib/solana-wallet';
 import { useToast } from '../ui/Toast';
 
 function decodeBase64ToBytes(base64: string): Uint8Array {
@@ -568,19 +568,26 @@ function CreateSquadsTreasuryDialog(props: {
         setSubmittedSignature(sig);
         signatureToConfirm = sig;
 
-        // Step 3: wait for chain confirmation against the intent's
-        // blockhash + last valid block height.
+        // Step 3: wait for the signature to show up as confirmed via
+        // direct getSignatureStatuses polling. We don't use
+        // connection.confirmTransaction({blockhash, lastValidBlockHeight})
+        // because by the time the user lands on this step, the
+        // intent's blockhash is usually already past its lastValidBlockHeight
+        // window (createIntent picked the blockhash, then sign + submit
+        // ate most of the ~60s deadline). That makes confirmTransaction
+        // return "block height exceeded" almost immediately even though
+        // the tx actually landed. Signature-status polling doesn't care
+        // about blockhash freshness.
         setPhase('confirming-onchain');
-        const confirmResult = await connection.confirmTransaction(
-          {
-            signature: sig,
-            blockhash: pendingIntent.transaction.recentBlockhash,
-            lastValidBlockHeight: pendingIntent.transaction.lastValidBlockHeight,
-          },
-          'confirmed',
-        );
-        if (confirmResult.value.err) {
-          throw new Error(`On-chain error: ${JSON.stringify(confirmResult.value.err)}`);
+        const visible = await waitForSignatureVisible(connection, sig, { timeoutMs: 30_000 });
+        // If we hit the timeout WITHOUT seeing the signature anywhere,
+        // bail out — the tx probably never landed (or got dropped).
+        // If we saw it but it didn't reach 'confirmed' yet, fall through
+        // to backend persist anyway: the backend's loadMultisig will
+        // either find the chain state and succeed, or surface its own
+        // clear error.
+        if (!visible.confirmed && !visible.seen) {
+          throw new Error('Transaction never appeared on chain after submission. Try preparing again.');
         }
       }
 
