@@ -89,6 +89,31 @@ export async function signPrivySolanaTransaction(input: {
   };
 }
 
+export async function deletePrivyWallet(input: { providerWalletId: string }) {
+  assertPrivyConfigured('Privy wallet deletion is not configured. Add PRIVY_APP_ID and PRIVY_APP_SECRET to api/.env.');
+
+  const response = await runtime.fetch(`${config.privyApiBaseUrl}/v1/wallets/${encodeURIComponent(input.providerWalletId)}`, {
+    method: 'DELETE',
+    headers: privyHeaders(),
+  });
+
+  if (response.ok || response.status === 404) {
+    return {
+      providerWalletId: input.providerWalletId,
+      remoteDeleted: response.ok,
+      remoteAlreadyMissing: response.status === 404,
+    };
+  }
+
+  const payload = await response.json().catch(() => null) as PrivyWalletResponse | null;
+  throw new ApiError(
+    response.status >= 400 && response.status < 500 ? 400 : 502,
+    'privy_wallet_delete_failed',
+    extractPrivyErrorMessage(payload) ?? 'Privy could not delete the wallet.',
+    payload,
+  );
+}
+
 function assertPrivyConfigured(message: string) {
   if (!config.privyAppId || !config.privyAppSecret) {
     throw new ApiError(501, 'provider_not_configured', message);

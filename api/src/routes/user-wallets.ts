@@ -15,7 +15,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { ApiError, badRequest, notFound } from '../api-errors.js';
 import { prisma } from '../prisma.js';
-import { createPrivySolanaWallet, signPrivySolanaTransaction } from '../privy-wallets.js';
+import { createPrivySolanaWallet, deletePrivyWallet, signPrivySolanaTransaction } from '../privy-wallets.js';
 import { config } from '../config.js';
 import {
   USDC_DECIMALS,
@@ -271,6 +271,70 @@ userWalletsRouter.post(['/personal-wallets/managed', '/user-wallets/managed'], a
     next(error);
   }
 });
+
+userWalletsRouter.delete(
+  ['/personal-wallets/:userWalletId', '/user-wallets/:userWalletId'],
+  async (req, res, next) => {
+    try {
+      const { userWalletId } = userWalletParamsSchema.parse(req.params);
+      const wallet = await prisma.personalWallet.findFirst({
+        where: {
+          userWalletId,
+          userId: req.auth!.userId,
+          status: 'active',
+        },
+      });
+      if (!wallet) {
+        throw notFound('Personal wallet not found');
+      }
+      if (wallet.chain !== 'solana' || wallet.provider !== 'privy' || wallet.walletType !== 'privy_embedded' || !wallet.providerWalletId) {
+        throw new ApiError(400, 'unsupported_wallet_delete', 'Only Privy embedded Solana wallets can be deleted through this endpoint.');
+      }
+
+      const deleted = await deletePrivyWallet({ providerWalletId: wallet.providerWalletId });
+      const archivedAt = new Date();
+      const archivedMetadata = appendWalletDeletionMetadata(wallet.metadataJson, {
+        archivedAt,
+        remoteDeleted: deleted.remoteDeleted,
+        remoteAlreadyMissing: deleted.remoteAlreadyMissing,
+      });
+
+      const result = await prisma.$transaction(async (tx) => {
+        const revokedAuthorizations = await tx.organizationWalletAuthorization.updateMany({
+          where: {
+            userWalletId: wallet.userWalletId,
+            status: 'active',
+          },
+          data: {
+            status: 'revoked',
+            revokedAt: archivedAt,
+          },
+        });
+
+        const archivedWallet = await tx.personalWallet.update({
+          where: { userWalletId: wallet.userWalletId },
+          data: {
+            status: 'archived',
+            providerWalletId: null,
+            metadataJson: archivedMetadata,
+          },
+        });
+
+        return { archivedWallet, revokedAuthorizationCount: revokedAuthorizations.count };
+      });
+
+      res.json({
+        deleted: true,
+        remoteDeleted: deleted.remoteDeleted,
+        remoteAlreadyMissing: deleted.remoteAlreadyMissing,
+        revokedAuthorizationCount: result.revokedAuthorizationCount,
+        wallet: serializeUserWallet(result.archivedWallet),
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
 
 userWalletsRouter.post(
   ['/personal-wallets/:userWalletId/sign-versioned-transaction', '/user-wallets/:userWalletId/sign-versioned-transaction'],
@@ -598,6 +662,25 @@ function serializeUserWallet(wallet: {
     metadataJson: wallet.metadataJson,
     createdAt: wallet.createdAt.toISOString(),
     updatedAt: wallet.updatedAt.toISOString(),
+  };
+}
+
+function appendWalletDeletionMetadata(metadataJson: unknown, input: {
+  archivedAt: Date;
+  remoteDeleted: boolean;
+  remoteAlreadyMissing: boolean;
+}) {
+  const metadata = metadataJson && typeof metadataJson === 'object' && !Array.isArray(metadataJson)
+    ? { ...metadataJson }
+    : {};
+
+  return {
+    ...metadata,
+    deletion: {
+      archivedAt: input.archivedAt.toISOString(),
+      remoteDeleted: input.remoteDeleted,
+      remoteAlreadyMissing: input.remoteAlreadyMissing,
+    },
   };
 }
 

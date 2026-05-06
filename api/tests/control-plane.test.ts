@@ -388,6 +388,81 @@ test('personal wallets are separate from organization treasury wallets and requi
   assert.ok(revoked.revokedAt);
 });
 
+test('users can delete their own Privy personal wallet and local authorizations are revoked', async () => {
+  const originalPrivyAppId = config.privyAppId;
+  const originalPrivyAppSecret = config.privyAppSecret;
+  try {
+    config.privyAppId = 'test-privy-app';
+    config.privyAppSecret = 'test-privy-secret';
+
+    const register = await post('/auth/register', {
+      email: 'delete-wallet@example.com',
+      password: 'DemoPass123!',
+      displayName: 'Delete Wallet',
+    });
+    await verifyRegisteredEmail(register);
+
+    const organization = await post('/organizations', { organizationName: 'Delete Wallet Org' }, register.sessionToken);
+    const wallet = await post(
+      '/personal-wallets/embedded',
+      {
+        walletAddress: Keypair.generate().publicKey.toBase58(),
+        provider: 'privy',
+        providerWalletId: 'privy-delete-wallet',
+        label: 'Disposable Privy wallet',
+      },
+      register.sessionToken,
+    );
+    await post(
+      `/organizations/${organization.organizationId}/wallet-authorizations`,
+      {
+        userWalletId: wallet.userWalletId,
+        role: 'signer',
+        scope: 'organization',
+      },
+      register.sessionToken,
+    );
+
+    let privyDeleteUrl = '';
+    let privyDeleteMethod = '';
+    setPrivyWalletRuntimeForTests({
+      fetch: async (url, init) => {
+        privyDeleteUrl = String(url);
+        privyDeleteMethod = init?.method ?? 'GET';
+        return new Response(null, { status: 204 });
+      },
+    });
+
+    const response = await fetch(`${baseUrl}/personal-wallets/${wallet.userWalletId}`, {
+      method: 'DELETE',
+      headers: authHeaders(register.sessionToken),
+    });
+    assert.equal(response.status, 200);
+    const deleted = await response.json();
+    assert.equal(deleted.deleted, true);
+    assert.equal(deleted.remoteDeleted, true);
+    assert.equal(deleted.revokedAuthorizationCount, 1);
+    assert.equal(deleted.wallet.status, 'archived');
+    assert.equal(deleted.wallet.providerWalletId, null);
+    assert.equal(privyDeleteMethod, 'DELETE');
+    assert.ok(privyDeleteUrl.endsWith('/v1/wallets/privy-delete-wallet'));
+
+    const personalWallets = await get('/personal-wallets', register.sessionToken);
+    assert.deepEqual(personalWallets.items, []);
+
+    const revokedAuthorizations = await get(
+      `/organizations/${organization.organizationId}/wallet-authorizations?status=revoked`,
+      register.sessionToken,
+    );
+    assert.equal(revokedAuthorizations.items.length, 1);
+    assert.equal(revokedAuthorizations.items[0].status, 'revoked');
+  } finally {
+    config.privyAppId = originalPrivyAppId;
+    config.privyAppSecret = originalPrivyAppSecret;
+    setPrivyWalletRuntimeForTests(null);
+  }
+});
+
 test('Squads treasury creation prepares a signable transaction and persists the vault PDA after confirmation', async () => {
   const register = await post('/auth/register', {
     email: 'squads-treasury@example.com',

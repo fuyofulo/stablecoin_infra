@@ -41,6 +41,7 @@ export const API_ENDPOINTS = [
   endpoint('connect_external_personal_wallet', 'POST', '/personal-wallets/external', ['personal wallets'], 'Connect external personal wallet with signed challenge', 'session'),
   endpoint('register_embedded_personal_wallet', 'POST', '/personal-wallets/embedded', ['personal wallets'], 'Register embedded personal wallet metadata', 'session'),
   endpoint('create_managed_personal_wallet', 'POST', '/personal-wallets/managed', ['personal wallets'], 'Create a managed personal signing wallet with a configured custody provider', 'session'),
+  endpoint('delete_personal_wallet', 'DELETE', '/personal-wallets/{userWalletId}', ['personal wallets'], 'Delete a Privy embedded personal wallet and archive its local record', 'session'),
   endpoint('sign_personal_wallet_versioned_transaction', 'POST', '/personal-wallets/{userWalletId}/sign-versioned-transaction', ['personal wallets', 'squads'], 'Sign a Squads v4 versioned transaction with a Privy-backed personal wallet', 'session', {
     requestBody: { serializedTransactionBase64: 'string base64' },
   }),
