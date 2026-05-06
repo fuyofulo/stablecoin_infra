@@ -395,6 +395,60 @@ export type SquadsTreasuryDetail = {
   };
 };
 
+export type SquadsProposalStatus =
+  | 'draft'
+  | 'active'
+  | 'approved'
+  | 'executed'
+  | 'cancelled'
+  | 'rejected';
+
+export type SquadsProposalListStatusFilter = 'pending' | 'all' | 'closed';
+
+type SquadsProposalMemberLink = {
+  personalWallet: {
+    userWalletId: string;
+    userId: string;
+    label: string | null;
+  } | null;
+  organizationMembership: {
+    membershipId: string;
+    role: string;
+    user: {
+      userId: string;
+      email: string;
+      displayName: string;
+      avatarUrl: string | null;
+    };
+  } | null;
+};
+
+export type SquadsProposalDecision = SquadsProposalMemberLink & {
+  walletAddress: string;
+  decidedAtSlot: number | null;
+};
+
+export type SquadsProposalPendingVoter = SquadsProposalMemberLink & {
+  walletAddress: string;
+  permissions: SquadsPermission[];
+};
+
+export type SquadsConfigProposal = {
+  transactionIndex: string;
+  configTransactionPda: string;
+  proposalPda: string;
+  status: SquadsProposalStatus;
+  threshold: number;
+  staleTransactionIndex: string;
+  actions: SquadsConfigAction[];
+  approvals: SquadsProposalDecision[];
+  rejections: SquadsProposalDecision[];
+  cancellations: SquadsProposalDecision[];
+  pendingVoters: SquadsProposalPendingVoter[];
+  canExecuteWalletAddresses: string[];
+  createdAtSlot: number | null;
+};
+
 export type SquadsConfigProposalKind =
   | 'config_proposal_create'
   | 'config_proposal_approval'

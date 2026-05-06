@@ -40,9 +40,11 @@ import type {
   CreateSquadsTreasuryIntentResponse,
   CreateSquadsAddMemberProposalRequest,
   CreateSquadsChangeThresholdProposalRequest,
+  SquadsConfigProposal,
   SquadsConfigProposalApproveRequest,
   SquadsConfigProposalExecuteRequest,
   SquadsConfigProposalIntentResponse,
+  SquadsProposalListStatusFilter,
   SquadsTreasuryDetail,
   SquadsTreasuryStatus,
   TreasuryWallet,
@@ -643,6 +645,28 @@ export const api = {
     return request<SquadsTreasuryDetail>(
       `/organizations/${organizationId}/treasury-wallets/${treasuryWalletId}/squads/sync-members`,
       { method: 'POST', body: JSON.stringify({}) },
+    );
+  },
+  listSquadsConfigProposals(
+    organizationId: string,
+    treasuryWalletId: string,
+    options: { status?: SquadsProposalListStatusFilter; limit?: number } = {},
+  ) {
+    const params = new URLSearchParams();
+    if (options.status) params.set('status', options.status);
+    if (options.limit !== undefined) params.set('limit', String(options.limit));
+    const query = params.toString();
+    return request<{ items: SquadsConfigProposal[] }>(
+      `/organizations/${organizationId}/treasury-wallets/${treasuryWalletId}/squads/config-proposals${query ? `?${query}` : ''}`,
+    );
+  },
+  getSquadsConfigProposal(
+    organizationId: string,
+    treasuryWalletId: string,
+    transactionIndex: string,
+  ) {
+    return request<SquadsConfigProposal>(
+      `/organizations/${organizationId}/treasury-wallets/${treasuryWalletId}/squads/config-proposals/${transactionIndex}`,
     );
   },
 

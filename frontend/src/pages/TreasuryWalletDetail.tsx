@@ -1,12 +1,10 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { Link, useParams } from 'react-router';
+import { Link, useNavigate, useParams } from 'react-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Connection, VersionedTransaction } from '@solana/web3.js';
 import { api, ApiError } from '../api';
 import type {
   AuthenticatedSession,
   OrganizationPersonalWallet,
-  SquadsConfigProposalIntentResponse,
   SquadsDetailMember,
   SquadsMemberLinkStatus,
   SquadsPermission,
@@ -15,42 +13,10 @@ import type {
   UserWallet,
 } from '../types';
 import { orbAccountUrl, shortenAddress } from '../domain';
-import { resolveSolanaRpcUrl, waitForSignatureVisible } from '../lib/solana-wallet';
+import { signAndSubmitIntent } from '../lib/squads-pipeline';
 import { useToast } from '../ui/Toast';
 
 const ALL_PERMISSIONS: SquadsPermission[] = ['initiate', 'vote', 'execute'];
-
-function decodeBase64ToBytes(base64: string): Uint8Array {
-  const binary = atob(base64);
-  const out = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i += 1) out[i] = binary.charCodeAt(i);
-  return out;
-}
-
-// Sign a Squads intent with the given personal wallet via the backend Privy
-// signing endpoint, submit to chain, and poll the signature via
-// getSignatureStatuses (blockhash-agnostic). Returns the on-chain signature.
-async function signAndSubmitIntent(args: {
-  intent: SquadsConfigProposalIntentResponse;
-  signerPersonalWalletId: string;
-}): Promise<string> {
-  const { intent, signerPersonalWalletId } = args;
-  const signed = await api.signPersonalWalletVersionedTransaction(signerPersonalWalletId, {
-    serializedTransactionBase64: intent.transaction.serializedTransaction,
-  });
-  const connection = new Connection(resolveSolanaRpcUrl(), 'confirmed');
-  const bytes = decodeBase64ToBytes(signed.signedTransactionBase64);
-  VersionedTransaction.deserialize(bytes);
-  const sig = await connection.sendRawTransaction(bytes, {
-    skipPreflight: false,
-    preflightCommitment: 'confirmed',
-  });
-  const visible = await waitForSignatureVisible(connection, sig, { timeoutMs: 30_000 });
-  if (!visible.confirmed && !visible.seen) {
-    throw new Error('Transaction never appeared on chain after submission. Try again.');
-  }
-  return sig;
-}
 
 type LinkStatusDescriptor = {
   label: string;
@@ -97,6 +63,7 @@ export function TreasuryWalletDetailPage({ session }: { session: AuthenticatedSe
     organizationId: string;
     treasuryWalletId: string;
   }>();
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { success, error: toastError } = useToast();
 
@@ -147,6 +114,16 @@ export function TreasuryWalletDetailPage({ session }: { session: AuthenticatedSe
     enabled: Boolean(organizationId && isSquads && isAdmin),
   });
   const orgPersonalWallets = orgPersonalWalletsQuery.data?.items ?? [];
+
+  // True when the current user has at least one personal wallet that is an
+  // on-chain Squads member of this multisig — gates the "Proposals" link.
+  const isCurrentUserSquadsMember = useMemo(() => {
+    const detail = detailQuery.data;
+    if (!detail) return false;
+    return detail.squads.members.some(
+      (m) => m.personalWallet?.userId === session.user.userId,
+    );
+  }, [detailQuery.data, session.user.userId]);
 
   const [openDialog, setOpenDialog] = useState<'add-member' | 'change-threshold' | null>(null);
 
@@ -233,32 +210,47 @@ export function TreasuryWalletDetailPage({ session }: { session: AuthenticatedSe
             {wallet.notes ? <> · {wallet.notes}</> : null}
           </p>
         </div>
-        {isSquads && isAdmin ? (
+        {isSquads ? (
           <div className="page-actions">
-            <button
-              type="button"
-              className="button button-secondary"
-              onClick={() => syncMutation.mutate()}
-              disabled={syncMutation.isPending}
-              aria-busy={syncMutation.isPending}
-              title="Re-pull on-chain Squads state and refresh local Decimal authorizations."
-            >
-              {syncMutation.isPending ? 'Syncing…' : 'Sync from chain'}
-            </button>
-            <button
-              type="button"
-              className="button button-secondary"
-              onClick={() => setOpenDialog('change-threshold')}
-            >
-              Change threshold
-            </button>
-            <button
-              type="button"
-              className="button button-primary"
-              onClick={() => setOpenDialog('add-member')}
-            >
-              + Add member
-            </button>
+            {isCurrentUserSquadsMember ? (
+              <button
+                type="button"
+                className="button button-secondary"
+                onClick={() =>
+                  navigate(`/organizations/${organizationId}/wallets/${treasuryWalletId}/proposals`)
+                }
+              >
+                Proposals
+              </button>
+            ) : null}
+            {isAdmin ? (
+              <>
+                <button
+                  type="button"
+                  className="button button-secondary"
+                  onClick={() => syncMutation.mutate()}
+                  disabled={syncMutation.isPending}
+                  aria-busy={syncMutation.isPending}
+                  title="Re-pull on-chain Squads state and refresh local Decimal authorizations."
+                >
+                  {syncMutation.isPending ? 'Syncing…' : 'Sync from chain'}
+                </button>
+                <button
+                  type="button"
+                  className="button button-secondary"
+                  onClick={() => setOpenDialog('change-threshold')}
+                >
+                  Change threshold
+                </button>
+                <button
+                  type="button"
+                  className="button button-primary"
+                  onClick={() => setOpenDialog('add-member')}
+                >
+                  + Add member
+                </button>
+              </>
+            ) : null}
           </div>
         ) : null}
       </header>
