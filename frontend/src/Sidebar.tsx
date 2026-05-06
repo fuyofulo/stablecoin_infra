@@ -295,38 +295,26 @@ export function AppSidebar({
 
           {wsMenuOpen ? (
             <div className="ax-ws-menu" role="menu">
-              {organizationContexts
-                .reduce<{ org: OrganizationMembership; items: OrganizationContext[] }[]>((groups, ctx) => {
-                  groups.push({ org: ctx.organization, items: [ctx] });
-                  return groups;
-                }, [])
-                .map((group) => (
-                  <div key={group.org.organizationId}>
-                    <div className="ax-ws-menu-group">
-                      <div className="ax-ws-menu-group-label">{group.org.organizationName}</div>
-                    </div>
-                    {group.items.map(({ organization }) => {
-                      const isActive = organization.organizationId === activeOrganizationId;
-                      return (
-                        <button
-                          key={organization.organizationId}
-                          type="button"
-                          role="menuitem"
-                          className={`ax-ws-menu-item${isActive ? ' ax-ws-menu-item-active' : ''}`}
-                          onClick={() => {
-                            setWsMenuOpen(false);
-                            if (!isActive) onOrganizationSwitch(organization.organizationId);
-                          }}
-                        >
-                          <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                            {organization.organizationName}
-                          </span>
-                          {isActive ? icons.check : null}
-                        </button>
-                      );
-                    })}
-                  </div>
-                ))}
+              {organizationContexts.map(({ organization }) => {
+                const isActive = organization.organizationId === activeOrganizationId;
+                return (
+                  <button
+                    key={organization.organizationId}
+                    type="button"
+                    role="menuitem"
+                    className={`ax-ws-menu-item${isActive ? ' ax-ws-menu-item-active' : ''}`}
+                    onClick={() => {
+                      setWsMenuOpen(false);
+                      if (!isActive) onOrganizationSwitch(organization.organizationId);
+                    }}
+                  >
+                    <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {organization.organizationName}
+                    </span>
+                    {isActive ? icons.check : null}
+                  </button>
+                );
+              })}
               <div className="ax-ws-menu-sep" />
               <button
                 type="button"
