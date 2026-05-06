@@ -758,6 +758,7 @@ function ProfilePage({ session }: { session: AuthenticatedSession }) {
   const [createOrgOpen, setCreateOrgOpen] = useState(false);
   const [transferWallet, setTransferWallet] = useState<UserWallet | null>(null);
   const [airdropWallet, setAirdropWallet] = useState<UserWallet | null>(null);
+  const [deleteWallet, setDeleteWallet] = useState<UserWallet | null>(null);
 
   const personalWalletBalancesQuery = useQuery({
     queryKey: ['personal-wallet-balances'] as const,
@@ -821,6 +822,18 @@ function ProfilePage({ session }: { session: AuthenticatedSession }) {
       await queryClient.invalidateQueries({ queryKey: ['personal-wallet-balances'] });
     },
     onError: (err) => toastError(err instanceof Error ? err.message : 'Airdrop failed.'),
+  });
+
+  const deleteWalletMutation = useMutation({
+    mutationFn: (input: { userWalletId: string }) =>
+      api.deletePersonalWallet(input.userWalletId),
+    onSuccess: async () => {
+      success('Personal wallet deleted.');
+      setDeleteWallet(null);
+      await queryClient.invalidateQueries({ queryKey: ['personal-wallets'] });
+      await queryClient.invalidateQueries({ queryKey: ['personal-wallet-balances'] });
+    },
+    onError: (err) => toastError(err instanceof Error ? err.message : 'Could not delete wallet.'),
   });
 
   const transferOutMutation = useMutation({
@@ -990,6 +1003,20 @@ function ProfilePage({ session }: { session: AuthenticatedSession }) {
                             >
                               Transfer
                             </button>
+                            <button
+                              type="button"
+                              className="button button-secondary"
+                              style={{
+                                padding: '4px 10px',
+                                fontSize: 12,
+                                color: 'var(--ax-danger)',
+                                borderColor: 'var(--ax-border)',
+                              }}
+                              onClick={() => setDeleteWallet(wallet)}
+                              aria-label={`Delete ${wallet.label ?? 'wallet'}`}
+                            >
+                              Delete
+                            </button>
                           </div>
                         ) : null}
                       </td>
@@ -1100,6 +1127,17 @@ function ProfilePage({ session }: { session: AuthenticatedSession }) {
               userWalletId: airdropWallet.userWalletId,
               amountSol,
             })
+          }
+        />
+      ) : null}
+      {deleteWallet ? (
+        <DeletePersonalWalletDialog
+          wallet={deleteWallet}
+          balance={balancesByWalletId.get(deleteWallet.userWalletId) ?? null}
+          pending={deleteWalletMutation.isPending}
+          onClose={() => deleteWalletMutation.isPending ? undefined : setDeleteWallet(null)}
+          onConfirm={() =>
+            deleteWalletMutation.mutate({ userWalletId: deleteWallet.userWalletId })
           }
         />
       ) : null}
@@ -1611,6 +1649,170 @@ function AirdropDialog(props: {
         <div className="rd-dialog-actions" style={{ marginTop: 20 }}>
           <button type="button" className="button button-secondary" onClick={onClose} disabled={pending}>
             Close
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// DeletePersonalWalletDialog
+//
+// Permanent + irreversible. Backend destroys the Privy keys via
+// Privy's DELETE /v1/wallets/:id, then archives the local row and
+// revokes any active wallet authorizations. Funds left in the wallet
+// at delete time are unrecoverable, so we surface the live balance
+// (if non-zero) prominently in the dialog body and gate the action
+// behind a typed-confirmation when there's value at stake.
+function DeletePersonalWalletDialog(props: {
+  wallet: UserWallet;
+  balance: { solLamports: string; usdcRaw: string | null; rpcError: string | null } | null;
+  pending: boolean;
+  onClose: () => void;
+  onConfirm: () => void;
+}) {
+  const { wallet, balance, pending, onClose, onConfirm } = props;
+  const [confirmText, setConfirmText] = useState('');
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape' && !pending) onClose();
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose, pending]);
+
+  // Detect non-zero balance to require typed confirmation. We don't
+  // gate on USDC alone equalling 0 because rpcError or a missing ATA
+  // returns null — only zero/null is treated as "no funds at risk".
+  const lamportsAreZero = (() => {
+    try {
+      return BigInt(balance?.solLamports ?? '0') === 0n;
+    } catch {
+      return true;
+    }
+  })();
+  const usdcIsZero = balance?.usdcRaw == null
+    ? true
+    : (() => {
+        try {
+          return BigInt(balance.usdcRaw) === 0n;
+        } catch {
+          return true;
+        }
+      })();
+  const hasValueAtRisk = !lamportsAreZero || !usdcIsZero;
+  const expectedConfirm = 'DELETE';
+  const confirmOk = !hasValueAtRisk || confirmText.trim() === expectedConfirm;
+
+  return (
+    <div
+      className="rd-dialog-backdrop"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="rd-delete-wallet-title"
+    >
+      <div className="rd-dialog" style={{ maxWidth: 500 }}>
+        <h2 id="rd-delete-wallet-title" className="rd-dialog-title" style={{ color: 'var(--ax-danger)' }}>
+          Delete personal wallet
+        </h2>
+        <p className="rd-dialog-body">
+          This permanently destroys the Privy keys for this wallet. The local record is archived and any organization wallet authorizations referencing it are revoked. <strong>Funds left in this wallet will be unrecoverable.</strong>
+        </p>
+
+        <div
+          style={{
+            padding: 12,
+            background: 'var(--ax-surface-1)',
+            borderRadius: 6,
+            marginBottom: 16,
+            fontSize: 13,
+          }}
+        >
+          <div style={{ color: 'var(--ax-text-muted)', marginBottom: 4 }}>Wallet</div>
+          <div>
+            <strong>{wallet.label ?? 'Untitled wallet'}</strong>
+          </div>
+          <div style={{ fontFamily: 'monospace', fontSize: 12, color: 'var(--ax-text-muted)' }}>
+            {wallet.walletAddress}
+          </div>
+        </div>
+
+        {hasValueAtRisk ? (
+          <div
+            style={{
+              padding: 12,
+              border: '1px solid var(--ax-danger)',
+              borderRadius: 6,
+              background: 'var(--ax-surface-1)',
+              marginBottom: 16,
+              fontSize: 13,
+              lineHeight: 1.5,
+            }}
+          >
+            <strong style={{ color: 'var(--ax-danger)', display: 'block', marginBottom: 6 }}>
+              This wallet has a non-zero balance
+            </strong>
+            <div style={{ display: 'flex', gap: 16, marginBottom: 8 }}>
+              {!lamportsAreZero ? (
+                <span>
+                  <span style={{ color: 'var(--ax-text-muted)' }}>SOL: </span>
+                  <strong>{formatSolFromLamports(balance!.solLamports)}</strong>
+                </span>
+              ) : null}
+              {!usdcIsZero ? (
+                <span>
+                  <span style={{ color: 'var(--ax-text-muted)' }}>USDC: </span>
+                  <strong>{formatRawUsdcCompact(balance!.usdcRaw!)}</strong>
+                </span>
+              ) : null}
+            </div>
+            <div style={{ color: 'var(--ax-text-muted)' }}>
+              Cancel and use the Transfer button to move these funds out before deleting. Once the keys are destroyed, no one can move them.
+            </div>
+            <label
+              className="field"
+              style={{ marginTop: 12, marginBottom: 0 }}
+            >
+              <span style={{ fontSize: 12, color: 'var(--ax-text-muted)' }}>
+                Type <strong>{expectedConfirm}</strong> to confirm
+              </span>
+              <input
+                value={confirmText}
+                onChange={(e) => setConfirmText(e.target.value)}
+                placeholder={expectedConfirm}
+                autoComplete="off"
+                disabled={pending}
+              />
+            </label>
+          </div>
+        ) : (
+          <p style={{ fontSize: 13, color: 'var(--ax-text-muted)', marginBottom: 16 }}>
+            No detectable balance on this wallet — safe to delete.
+          </p>
+        )}
+
+        <div className="rd-dialog-actions" style={{ marginTop: 8 }}>
+          <button
+            type="button"
+            className="button button-secondary"
+            onClick={onClose}
+            disabled={pending}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="button button-primary"
+            style={{
+              background: 'var(--ax-danger)',
+              borderColor: 'var(--ax-danger)',
+            }}
+            disabled={pending || !confirmOk}
+            aria-busy={pending}
+            onClick={onConfirm}
+          >
+            {pending ? 'Deleting…' : 'Delete wallet'}
           </button>
         </div>
       </div>

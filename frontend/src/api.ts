@@ -247,6 +247,24 @@ export const api = {
       body: JSON.stringify(input),
     });
   },
+  // Permanently deletes a Privy-embedded personal wallet. Backend
+  // calls Privy's DELETE /v1/wallets/:id (Privy keys destroyed),
+  // archives the local row (status=archived), clears providerWalletId,
+  // and revokes any active org wallet authorizations referencing the
+  // wallet. Funds in the wallet at delete time are unrecoverable —
+  // caller is responsible for transferring out first.
+  deletePersonalWallet(userWalletId: string) {
+    return request<{
+      deleted: true;
+      remoteDeleted: boolean;
+      remoteAlreadyMissing: boolean;
+      revokedAuthorizationCount: number;
+      wallet: UserWallet;
+    }>(`/personal-wallets/${userWalletId}`, {
+      method: 'DELETE',
+    });
+  },
+
   // Live balances for the caller's personal wallets via the configured
   // network. SOL in lamports, USDC raw (6 decimals). rpcError per row
   // surfaces transient RPC failures without breaking the whole list.
