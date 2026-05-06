@@ -38,6 +38,11 @@ import type {
   ConfirmSquadsTreasuryRequest,
   CreateSquadsTreasuryIntentRequest,
   CreateSquadsTreasuryIntentResponse,
+  CreateSquadsAddMemberProposalRequest,
+  CreateSquadsChangeThresholdProposalRequest,
+  SquadsConfigProposalApproveRequest,
+  SquadsConfigProposalExecuteRequest,
+  SquadsConfigProposalIntentResponse,
   SquadsTreasuryDetail,
   SquadsTreasuryStatus,
   TreasuryWallet,
@@ -590,6 +595,54 @@ export const api = {
   getSquadsTreasuryDetail(organizationId: string, treasuryWalletId: string) {
     return request<SquadsTreasuryDetail>(
       `/organizations/${organizationId}/treasury-wallets/${treasuryWalletId}/squads/detail`,
+    );
+  },
+  createSquadsAddMemberProposalIntent(
+    organizationId: string,
+    treasuryWalletId: string,
+    input: CreateSquadsAddMemberProposalRequest,
+  ) {
+    return request<SquadsConfigProposalIntentResponse>(
+      `/organizations/${organizationId}/treasury-wallets/${treasuryWalletId}/squads/config-proposals/add-member-intent`,
+      { method: 'POST', body: JSON.stringify(input) },
+    );
+  },
+  createSquadsChangeThresholdProposalIntent(
+    organizationId: string,
+    treasuryWalletId: string,
+    input: CreateSquadsChangeThresholdProposalRequest,
+  ) {
+    return request<SquadsConfigProposalIntentResponse>(
+      `/organizations/${organizationId}/treasury-wallets/${treasuryWalletId}/squads/config-proposals/change-threshold-intent`,
+      { method: 'POST', body: JSON.stringify(input) },
+    );
+  },
+  createSquadsConfigProposalApprovalIntent(
+    organizationId: string,
+    treasuryWalletId: string,
+    transactionIndex: string,
+    input: SquadsConfigProposalApproveRequest,
+  ) {
+    return request<SquadsConfigProposalIntentResponse>(
+      `/organizations/${organizationId}/treasury-wallets/${treasuryWalletId}/squads/config-proposals/${transactionIndex}/approve-intent`,
+      { method: 'POST', body: JSON.stringify(input) },
+    );
+  },
+  createSquadsConfigProposalExecuteIntent(
+    organizationId: string,
+    treasuryWalletId: string,
+    transactionIndex: string,
+    input: SquadsConfigProposalExecuteRequest,
+  ) {
+    return request<SquadsConfigProposalIntentResponse>(
+      `/organizations/${organizationId}/treasury-wallets/${treasuryWalletId}/squads/config-proposals/${transactionIndex}/execute-intent`,
+      { method: 'POST', body: JSON.stringify(input) },
+    );
+  },
+  syncSquadsTreasuryMembers(organizationId: string, treasuryWalletId: string) {
+    return request<SquadsTreasuryDetail>(
+      `/organizations/${organizationId}/treasury-wallets/${treasuryWalletId}/squads/sync-members`,
+      { method: 'POST', body: JSON.stringify({}) },
     );
   },
 

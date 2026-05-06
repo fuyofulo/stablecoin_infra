@@ -1,16 +1,56 @@
-import { useMemo, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link, useParams } from 'react-router';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Connection, VersionedTransaction } from '@solana/web3.js';
 import { api, ApiError } from '../api';
 import type {
   AuthenticatedSession,
+  OrganizationPersonalWallet,
+  SquadsConfigProposalIntentResponse,
   SquadsDetailMember,
   SquadsMemberLinkStatus,
   SquadsPermission,
   SquadsTreasuryDetail,
   TreasuryWallet,
+  UserWallet,
 } from '../types';
 import { orbAccountUrl, shortenAddress } from '../domain';
+import { resolveSolanaRpcUrl, waitForSignatureVisible } from '../lib/solana-wallet';
+import { useToast } from '../ui/Toast';
+
+const ALL_PERMISSIONS: SquadsPermission[] = ['initiate', 'vote', 'execute'];
+
+function decodeBase64ToBytes(base64: string): Uint8Array {
+  const binary = atob(base64);
+  const out = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) out[i] = binary.charCodeAt(i);
+  return out;
+}
+
+// Sign a Squads intent with the given personal wallet via the backend Privy
+// signing endpoint, submit to chain, and poll the signature via
+// getSignatureStatuses (blockhash-agnostic). Returns the on-chain signature.
+async function signAndSubmitIntent(args: {
+  intent: SquadsConfigProposalIntentResponse;
+  signerPersonalWalletId: string;
+}): Promise<string> {
+  const { intent, signerPersonalWalletId } = args;
+  const signed = await api.signPersonalWalletVersionedTransaction(signerPersonalWalletId, {
+    serializedTransactionBase64: intent.transaction.serializedTransaction,
+  });
+  const connection = new Connection(resolveSolanaRpcUrl(), 'confirmed');
+  const bytes = decodeBase64ToBytes(signed.signedTransactionBase64);
+  VersionedTransaction.deserialize(bytes);
+  const sig = await connection.sendRawTransaction(bytes, {
+    skipPreflight: false,
+    preflightCommitment: 'confirmed',
+  });
+  const visible = await waitForSignatureVisible(connection, sig, { timeoutMs: 30_000 });
+  if (!visible.confirmed && !visible.seen) {
+    throw new Error('Transaction never appeared on chain after submission. Try again.');
+  }
+  return sig;
+}
 
 type LinkStatusDescriptor = {
   label: string;
@@ -52,11 +92,20 @@ const PERMISSION_LABEL: Record<SquadsPermission, string> = {
   execute: 'Execute',
 };
 
-export function TreasuryWalletDetailPage({ session: _session }: { session: AuthenticatedSession }) {
+export function TreasuryWalletDetailPage({ session }: { session: AuthenticatedSession }) {
   const { organizationId, treasuryWalletId } = useParams<{
     organizationId: string;
     treasuryWalletId: string;
   }>();
+  const queryClient = useQueryClient();
+  const { success, error: toastError } = useToast();
+
+  const currentMembership = useMemo(
+    () => session.organizations.find((o) => o.organizationId === organizationId),
+    [session.organizations, organizationId],
+  );
+  const isAdmin =
+    currentMembership?.role === 'owner' || currentMembership?.role === 'admin';
 
   const treasuryListQuery = useQuery({
     queryKey: ['treasury-wallets', organizationId] as const,
@@ -78,6 +127,48 @@ export function TreasuryWalletDetailPage({ session: _session }: { session: Authe
     enabled: Boolean(organizationId && treasuryWalletId && isSquads),
     refetchInterval: 30_000,
   });
+
+  const ownPersonalWalletsQuery = useQuery({
+    queryKey: ['personal-wallets'] as const,
+    queryFn: () => api.listPersonalWallets(),
+    enabled: Boolean(isSquads && isAdmin),
+  });
+  const ownPersonalWallets = useMemo(
+    () =>
+      (ownPersonalWalletsQuery.data?.items ?? []).filter(
+        (w) => w.status === 'active' && w.chain === 'solana',
+      ),
+    [ownPersonalWalletsQuery.data],
+  );
+
+  const orgPersonalWalletsQuery = useQuery({
+    queryKey: ['organization-personal-wallets', organizationId] as const,
+    queryFn: () => api.listOrganizationPersonalWallets(organizationId!),
+    enabled: Boolean(organizationId && isSquads && isAdmin),
+  });
+  const orgPersonalWallets = orgPersonalWalletsQuery.data?.items ?? [];
+
+  const [openDialog, setOpenDialog] = useState<'add-member' | 'change-threshold' | null>(null);
+
+  const syncMutation = useMutation({
+    mutationFn: () => api.syncSquadsTreasuryMembers(organizationId!, treasuryWalletId!),
+    onSuccess: (synced) => {
+      queryClient.setQueryData(
+        ['treasury-wallet-detail', organizationId, treasuryWalletId],
+        synced,
+      );
+      success('Synced from chain.');
+    },
+    onError: (err) => {
+      toastError(err instanceof Error ? err.message : 'Sync failed.');
+    },
+  });
+
+  async function refreshDetail() {
+    await queryClient.invalidateQueries({
+      queryKey: ['treasury-wallet-detail', organizationId, treasuryWalletId],
+    });
+  }
 
   if (!organizationId || !treasuryWalletId) {
     return (
@@ -142,6 +233,34 @@ export function TreasuryWalletDetailPage({ session: _session }: { session: Authe
             {wallet.notes ? <> · {wallet.notes}</> : null}
           </p>
         </div>
+        {isSquads && isAdmin ? (
+          <div className="page-actions">
+            <button
+              type="button"
+              className="button button-secondary"
+              onClick={() => syncMutation.mutate()}
+              disabled={syncMutation.isPending}
+              aria-busy={syncMutation.isPending}
+              title="Re-pull on-chain Squads state and refresh local Decimal authorizations."
+            >
+              {syncMutation.isPending ? 'Syncing…' : 'Sync from chain'}
+            </button>
+            <button
+              type="button"
+              className="button button-secondary"
+              onClick={() => setOpenDialog('change-threshold')}
+            >
+              Change threshold
+            </button>
+            <button
+              type="button"
+              className="button button-primary"
+              onClick={() => setOpenDialog('add-member')}
+            >
+              + Add member
+            </button>
+          </div>
+        ) : null}
       </header>
 
       {!isSquads ? (
@@ -171,6 +290,40 @@ export function TreasuryWalletDetailPage({ session: _session }: { session: Authe
         </section>
       ) : detail ? (
         <SquadsDetailContent detail={detail} wallet={wallet} />
+      ) : null}
+
+      {detail && openDialog === 'add-member' ? (
+        <AddMemberDialog
+          organizationId={organizationId}
+          treasuryWalletId={treasuryWalletId}
+          detail={detail}
+          ownPersonalWallets={ownPersonalWallets}
+          orgPersonalWallets={orgPersonalWallets}
+          orgPersonalWalletsLoading={orgPersonalWalletsQuery.isLoading}
+          onClose={() => setOpenDialog(null)}
+          onConfirmed={async () => {
+            setOpenDialog(null);
+            await refreshDetail();
+            success('Member added and synced from chain.');
+          }}
+          onError={(message) => toastError(message)}
+        />
+      ) : null}
+
+      {detail && openDialog === 'change-threshold' ? (
+        <ChangeThresholdDialog
+          organizationId={organizationId}
+          treasuryWalletId={treasuryWalletId}
+          detail={detail}
+          ownPersonalWallets={ownPersonalWallets}
+          onClose={() => setOpenDialog(null)}
+          onConfirmed={async () => {
+            setOpenDialog(null);
+            await refreshDetail();
+            success('Threshold changed.');
+          }}
+          onError={(message) => toastError(message)}
+        />
       ) : null}
     </main>
   );
@@ -408,6 +561,835 @@ function ExplorerAddress({ value }: { value: string }) {
     >
       {shortenAddress(value, 6, 6)}
     </a>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Dialogs: Add Member + Change Threshold
+// ---------------------------------------------------------------------------
+
+type ProposalDialogPhase =
+  | 'config'
+  | 'review'
+  | 'creating'
+  | 'awaiting-approvals'
+  | 'executing'
+  | 'syncing'
+  | 'done'
+  | 'error';
+
+type ProposalDialogState = {
+  phase: ProposalDialogPhase;
+  errorMessage: string | null;
+  createSignature: string | null;
+  executeSignature: string | null;
+};
+
+const initialProposalState: ProposalDialogState = {
+  phase: 'config',
+  errorMessage: null,
+  createSignature: null,
+  executeSignature: null,
+};
+
+// Personal wallets that the current user owns AND are on-chain multisig
+// members with the given permission.
+function ownWalletsThatAreMembers(
+  ownWallets: UserWallet[],
+  detail: SquadsTreasuryDetail,
+  permission: SquadsPermission,
+) {
+  const memberAddresses = new Set(
+    detail.squads.members
+      .filter((m) => m.permissions.includes(permission))
+      .map((m) => m.walletAddress),
+  );
+  return ownWallets.filter((w) => memberAddresses.has(w.walletAddress));
+}
+
+function DialogShell({
+  labelledBy,
+  onClose,
+  children,
+}: {
+  labelledBy: string;
+  onClose: () => void;
+  children: ReactNode;
+}) {
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') onClose();
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  return (
+    <div
+      className="rd-dialog-backdrop"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby={labelledBy}
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div className="rd-dialog" style={{ maxWidth: 600 }}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function PermissionTogglePills({
+  permissions,
+  onToggle,
+  disabled,
+}: {
+  permissions: SquadsPermission[];
+  onToggle: (perm: SquadsPermission) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+      {ALL_PERMISSIONS.map((perm) => {
+        const active = permissions.includes(perm);
+        return (
+          <button
+            key={perm}
+            type="button"
+            onClick={() => onToggle(perm)}
+            disabled={disabled}
+            style={{
+              fontSize: 12,
+              padding: '4px 10px',
+              borderRadius: 999,
+              border: '1px solid var(--ax-border)',
+              background: active ? 'var(--ax-accent-dim)' : 'transparent',
+              color: active ? 'var(--ax-accent)' : 'var(--ax-text-muted)',
+              cursor: disabled ? 'not-allowed' : 'pointer',
+              opacity: disabled ? 0.5 : 1,
+            }}
+          >
+            {PERMISSION_LABEL[perm]}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function AddMemberDialog(props: {
+  organizationId: string;
+  treasuryWalletId: string;
+  detail: SquadsTreasuryDetail;
+  ownPersonalWallets: UserWallet[];
+  orgPersonalWallets: OrganizationPersonalWallet[];
+  orgPersonalWalletsLoading: boolean;
+  onClose: () => void;
+  onConfirmed: () => Promise<void> | void;
+  onError: (message: string) => void;
+}) {
+  const {
+    organizationId,
+    treasuryWalletId,
+    detail,
+    ownPersonalWallets,
+    orgPersonalWallets,
+    orgPersonalWalletsLoading,
+    onClose,
+    onConfirmed,
+    onError,
+  } = props;
+
+  const eligibleNewMembers = useMemo(() => {
+    const existing = new Set(detail.squads.members.map((m) => m.walletAddress));
+    return orgPersonalWallets.filter((w) => !existing.has(w.walletAddress));
+  }, [orgPersonalWallets, detail.squads.members]);
+
+  const eligibleCreators = useMemo(
+    () => ownWalletsThatAreMembers(ownPersonalWallets, detail, 'initiate'),
+    [ownPersonalWallets, detail],
+  );
+  const eligibleExecutors = useMemo(
+    () => ownWalletsThatAreMembers(ownPersonalWallets, detail, 'execute'),
+    [ownPersonalWallets, detail],
+  );
+
+  const [newMemberWalletId, setNewMemberWalletId] = useState('');
+  const [permissions, setPermissions] = useState<SquadsPermission[]>([...ALL_PERMISSIONS]);
+  const [adjustThreshold, setAdjustThreshold] = useState(false);
+  const [newThreshold, setNewThreshold] = useState<number>(detail.squads.threshold);
+  const [creatorWalletId, setCreatorWalletId] = useState('');
+  const [state, setState] = useState<ProposalDialogState>(initialProposalState);
+
+  // Auto-select sole creator if only one option.
+  useEffect(() => {
+    if (!creatorWalletId && eligibleCreators.length >= 1) {
+      setCreatorWalletId(eligibleCreators[0]!.userWalletId);
+    }
+  }, [eligibleCreators, creatorWalletId]);
+
+  const newMemberWallet = useMemo(
+    () => eligibleNewMembers.find((w) => w.userWalletId === newMemberWalletId) ?? null,
+    [eligibleNewMembers, newMemberWalletId],
+  );
+
+  const togglePermission = (perm: SquadsPermission) => {
+    setPermissions((prev) =>
+      prev.includes(perm) ? prev.filter((p) => p !== perm) : [...prev, perm],
+    );
+  };
+
+  const isWorking =
+    state.phase === 'creating'
+    || state.phase === 'executing'
+    || state.phase === 'syncing';
+
+  async function runCreateProposal() {
+    if (!newMemberWalletId || !creatorWalletId || permissions.length === 0) return;
+    setState({ ...initialProposalState, phase: 'creating' });
+    try {
+      const intent = await api.createSquadsAddMemberProposalIntent(
+        organizationId,
+        treasuryWalletId,
+        {
+          creatorPersonalWalletId: creatorWalletId,
+          newMemberPersonalWalletId: newMemberWalletId,
+          permissions,
+          newThreshold: adjustThreshold ? newThreshold : undefined,
+          autoApprove: true,
+        },
+      );
+      const sig = await signAndSubmitIntent({
+        intent,
+        signerPersonalWalletId: creatorWalletId,
+      });
+      // After create+autoApprove: if the multisig was 1-of-1, the proposal
+      // already meets the threshold (creator just approved). Otherwise, more
+      // signers need to approve before it can execute.
+      if (detail.squads.threshold <= 1) {
+        // Auto-execute. Pick an executor — fall back to creator if creator
+        // also has execute permission.
+        const executorWalletId =
+          eligibleExecutors.find((w) => w.userWalletId === creatorWalletId)?.userWalletId
+          ?? eligibleExecutors[0]?.userWalletId
+          ?? creatorWalletId;
+        setState((s) => ({ ...s, phase: 'executing', createSignature: sig }));
+        const execIntent = await api.createSquadsConfigProposalExecuteIntent(
+          organizationId,
+          treasuryWalletId,
+          intent.intent.transactionIndex,
+          { memberPersonalWalletId: executorWalletId },
+        );
+        const execSig = await signAndSubmitIntent({
+          intent: execIntent,
+          signerPersonalWalletId: executorWalletId,
+        });
+        setState((s) => ({ ...s, phase: 'syncing', executeSignature: execSig }));
+        await api.syncSquadsTreasuryMembers(organizationId, treasuryWalletId);
+        setState((s) => ({ ...s, phase: 'done' }));
+        await onConfirmed();
+      } else {
+        setState((s) => ({ ...s, phase: 'awaiting-approvals', createSignature: sig }));
+      }
+    } catch (err) {
+      const msg = err instanceof ApiError || err instanceof Error
+        ? err.message
+        : 'Add member failed.';
+      setState((s) => ({ ...s, phase: 'error', errorMessage: msg }));
+      onError(msg);
+    }
+  }
+
+  // Empty / pre-conditions
+  if (eligibleCreators.length === 0) {
+    return (
+      <DialogShell labelledBy="rd-add-member-empty" onClose={onClose}>
+        <h2 id="rd-add-member-empty" className="rd-dialog-title">
+          You can't initiate a proposal
+        </h2>
+        <p className="rd-dialog-body">
+          To add a Squads member, the proposal must be initiated by one of your personal wallets that already holds the <strong>Initiate</strong> permission on this multisig. None of your personal wallets are members with that permission.
+        </p>
+        <div className="rd-dialog-actions" style={{ marginTop: 20 }}>
+          <button type="button" className="button button-primary" onClick={onClose}>
+            Close
+          </button>
+        </div>
+      </DialogShell>
+    );
+  }
+
+  if (state.phase === 'config' || state.phase === 'review') {
+    const validForm =
+      newMemberWalletId
+      && creatorWalletId
+      && permissions.length > 0
+      && (!adjustThreshold || (newThreshold >= 1 && newThreshold <= 65_535));
+
+    return (
+      <DialogShell labelledBy="rd-add-member-title" onClose={onClose}>
+        <h2 id="rd-add-member-title" className="rd-dialog-title">
+          Add Squads member
+        </h2>
+        <p className="rd-dialog-body">
+          Create a Squads <code>AddMember</code> config proposal. {detail.squads.threshold <= 1
+            ? 'Your single signature creates, approves, and executes the proposal in two transactions, then Decimal syncs local state.'
+            : `Your signature creates and casts the first approval. ${detail.squads.threshold - 1} more approvals are needed before the proposal can execute.`}
+        </p>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <label className="field">
+            New member
+            {orgPersonalWalletsLoading ? (
+              <div className="rd-skeleton rd-skeleton-block" style={{ height: 36 }} />
+            ) : eligibleNewMembers.length === 0 ? (
+              <div
+                style={{
+                  padding: 10,
+                  border: '1px dashed var(--ax-border)',
+                  borderRadius: 6,
+                  fontSize: 13,
+                  color: 'var(--ax-text-muted)',
+                }}
+              >
+                No eligible org members. Either everyone with a personal wallet is already a Squads member, or no other org members have created a personal wallet yet.
+              </div>
+            ) : (
+              <select
+                value={newMemberWalletId}
+                onChange={(e) => setNewMemberWalletId(e.target.value)}
+                required
+              >
+                <option value="">Pick a personal wallet…</option>
+                {eligibleNewMembers.map((w) => (
+                  <option key={w.userWalletId} value={w.userWalletId}>
+                    {w.user.displayName || w.user.email} · {shortenAddress(w.walletAddress, 4, 4)}
+                  </option>
+                ))}
+              </select>
+            )}
+          </label>
+
+          <div className="field">
+            Permissions
+            <PermissionTogglePills
+              permissions={permissions}
+              onToggle={togglePermission}
+            />
+            {permissions.length === 0 ? (
+              <p style={{ fontSize: 12, color: 'var(--ax-warning)', margin: '4px 0 0' }}>
+                Pick at least one permission.
+              </p>
+            ) : null}
+          </div>
+
+          <div className="field">
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={adjustThreshold}
+                onChange={(e) => setAdjustThreshold(e.target.checked)}
+              />
+              <span>Also change approval threshold</span>
+            </label>
+            {adjustThreshold ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 8 }}>
+                <input
+                  type="number"
+                  min={1}
+                  max={65_535}
+                  value={newThreshold}
+                  onChange={(e) => setNewThreshold(Math.max(1, Number(e.target.value) || 1))}
+                  style={{ width: 80 }}
+                />
+                <span style={{ fontSize: 13, color: 'var(--ax-text-muted)' }}>
+                  approvals required after this proposal executes (current: {detail.squads.threshold})
+                </span>
+              </div>
+            ) : null}
+          </div>
+
+          <label className="field">
+            Your signing wallet
+            <select
+              value={creatorWalletId}
+              onChange={(e) => setCreatorWalletId(e.target.value)}
+              disabled={eligibleCreators.length <= 1}
+              required
+            >
+              {eligibleCreators.map((w) => (
+                <option key={w.userWalletId} value={w.userWalletId}>
+                  {(w.label ?? 'Untitled')} · {shortenAddress(w.walletAddress, 4, 4)}
+                </option>
+              ))}
+            </select>
+            <p style={{ fontSize: 12, color: 'var(--ax-text-muted)', margin: '4px 0 0' }}>
+              Must be a current Squads member with the <strong>Initiate</strong> permission.
+            </p>
+          </label>
+        </div>
+
+        <div className="rd-dialog-actions" style={{ marginTop: 20 }}>
+          <button type="button" className="button button-secondary" onClick={onClose}>
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="button button-primary"
+            disabled={!validForm}
+            onClick={() => runCreateProposal()}
+          >
+            {detail.squads.threshold <= 1 ? 'Sign and add member' : 'Sign and submit proposal'}
+          </button>
+        </div>
+      </DialogShell>
+    );
+  }
+
+  // In-flight phases (creating / executing / syncing) and terminal phases.
+  return (
+    <DialogShell labelledBy="rd-add-member-progress" onClose={onClose}>
+      <h2 id="rd-add-member-progress" className="rd-dialog-title">
+        {state.phase === 'done'
+          ? 'Member added'
+          : state.phase === 'awaiting-approvals'
+            ? 'Proposal submitted — awaiting more approvals'
+            : state.phase === 'error'
+              ? 'Add member failed'
+              : 'Working…'}
+      </h2>
+      <p className="rd-dialog-body">
+        {newMemberWallet ? (
+          <>
+            Adding{' '}
+            <strong>{newMemberWallet.user.displayName || newMemberWallet.user.email}</strong>
+            {' '}({shortenAddress(newMemberWallet.walletAddress, 4, 4)}) with permissions {permissions.join(', ')}.
+          </>
+        ) : null}
+      </p>
+
+      <ProposalProgress
+        steps={[
+          { key: 'creating', label: 'Sign + submit create proposal' },
+          { key: 'executing', label: 'Sign + submit execute' },
+          { key: 'syncing', label: 'Sync Decimal authorizations' },
+        ]}
+        currentPhase={state.phase}
+        skippedExecute={detail.squads.threshold > 1}
+        signatures={{
+          create: state.createSignature,
+          execute: state.executeSignature,
+        }}
+      />
+
+      {state.phase === 'awaiting-approvals' ? (
+        <div
+          style={{
+            padding: 12,
+            border: '1px solid rgba(220, 170, 60, 0.45)',
+            borderRadius: 8,
+            background: 'rgba(220, 170, 60, 0.08)',
+            marginTop: 12,
+            fontSize: 13,
+          }}
+        >
+          The proposal landed and you've cast the first approval.
+          {' '}
+          <strong>{detail.squads.threshold - 1} more approval{detail.squads.threshold - 1 === 1 ? '' : 's'}</strong>
+          {' '}from other Squads voters are required before it can execute.
+        </div>
+      ) : null}
+
+      {state.errorMessage ? (
+        <div
+          style={{
+            padding: 12,
+            border: '1px solid var(--ax-danger)',
+            borderRadius: 8,
+            background: 'var(--ax-surface-1)',
+            marginTop: 12,
+            fontSize: 13,
+          }}
+        >
+          <strong style={{ color: 'var(--ax-danger)' }}>Error:</strong> {state.errorMessage}
+        </div>
+      ) : null}
+
+      <div className="rd-dialog-actions" style={{ marginTop: 20 }}>
+        {state.phase === 'error' ? (
+          <button
+            type="button"
+            className="button button-secondary"
+            onClick={() => setState(initialProposalState)}
+          >
+            Back to form
+          </button>
+        ) : null}
+        <button
+          type="button"
+          className="button button-primary"
+          onClick={onClose}
+          disabled={isWorking}
+        >
+          {state.phase === 'done' ? 'Close' : isWorking ? 'Working…' : 'Close'}
+        </button>
+      </div>
+    </DialogShell>
+  );
+}
+
+function ChangeThresholdDialog(props: {
+  organizationId: string;
+  treasuryWalletId: string;
+  detail: SquadsTreasuryDetail;
+  ownPersonalWallets: UserWallet[];
+  onClose: () => void;
+  onConfirmed: () => Promise<void> | void;
+  onError: (message: string) => void;
+}) {
+  const {
+    organizationId,
+    treasuryWalletId,
+    detail,
+    ownPersonalWallets,
+    onClose,
+    onConfirmed,
+    onError,
+  } = props;
+
+  const eligibleCreators = useMemo(
+    () => ownWalletsThatAreMembers(ownPersonalWallets, detail, 'initiate'),
+    [ownPersonalWallets, detail],
+  );
+  const eligibleExecutors = useMemo(
+    () => ownWalletsThatAreMembers(ownPersonalWallets, detail, 'execute'),
+    [ownPersonalWallets, detail],
+  );
+
+  const voterCount = detail.squads.members.filter((m) => m.permissions.includes('vote')).length;
+
+  const [newThreshold, setNewThreshold] = useState<number>(detail.squads.threshold);
+  const [creatorWalletId, setCreatorWalletId] = useState('');
+  const [state, setState] = useState<ProposalDialogState>(initialProposalState);
+
+  useEffect(() => {
+    if (!creatorWalletId && eligibleCreators.length >= 1) {
+      setCreatorWalletId(eligibleCreators[0]!.userWalletId);
+    }
+  }, [eligibleCreators, creatorWalletId]);
+
+  const isWorking =
+    state.phase === 'creating'
+    || state.phase === 'executing'
+    || state.phase === 'syncing';
+
+  async function runChangeThreshold() {
+    if (!creatorWalletId) return;
+    if (newThreshold === detail.squads.threshold) {
+      onError('New threshold is the same as the current threshold.');
+      return;
+    }
+    if (newThreshold > voterCount) {
+      onError(`Threshold cannot exceed the number of voters (${voterCount}).`);
+      return;
+    }
+    setState({ ...initialProposalState, phase: 'creating' });
+    try {
+      const intent = await api.createSquadsChangeThresholdProposalIntent(
+        organizationId,
+        treasuryWalletId,
+        {
+          creatorPersonalWalletId: creatorWalletId,
+          newThreshold,
+          autoApprove: true,
+        },
+      );
+      const sig = await signAndSubmitIntent({
+        intent,
+        signerPersonalWalletId: creatorWalletId,
+      });
+      if (detail.squads.threshold <= 1) {
+        const executorWalletId =
+          eligibleExecutors.find((w) => w.userWalletId === creatorWalletId)?.userWalletId
+          ?? eligibleExecutors[0]?.userWalletId
+          ?? creatorWalletId;
+        setState((s) => ({ ...s, phase: 'executing', createSignature: sig }));
+        const execIntent = await api.createSquadsConfigProposalExecuteIntent(
+          organizationId,
+          treasuryWalletId,
+          intent.intent.transactionIndex,
+          { memberPersonalWalletId: executorWalletId },
+        );
+        const execSig = await signAndSubmitIntent({
+          intent: execIntent,
+          signerPersonalWalletId: executorWalletId,
+        });
+        setState((s) => ({ ...s, phase: 'syncing', executeSignature: execSig }));
+        await api.syncSquadsTreasuryMembers(organizationId, treasuryWalletId);
+        setState((s) => ({ ...s, phase: 'done' }));
+        await onConfirmed();
+      } else {
+        setState((s) => ({ ...s, phase: 'awaiting-approvals', createSignature: sig }));
+      }
+    } catch (err) {
+      const msg = err instanceof ApiError || err instanceof Error
+        ? err.message
+        : 'Change threshold failed.';
+      setState((s) => ({ ...s, phase: 'error', errorMessage: msg }));
+      onError(msg);
+    }
+  }
+
+  if (eligibleCreators.length === 0) {
+    return (
+      <DialogShell labelledBy="rd-threshold-empty" onClose={onClose}>
+        <h2 id="rd-threshold-empty" className="rd-dialog-title">
+          You can't initiate a proposal
+        </h2>
+        <p className="rd-dialog-body">
+          None of your personal wallets are Squads members with the <strong>Initiate</strong> permission on this multisig.
+        </p>
+        <div className="rd-dialog-actions" style={{ marginTop: 20 }}>
+          <button type="button" className="button button-primary" onClick={onClose}>
+            Close
+          </button>
+        </div>
+      </DialogShell>
+    );
+  }
+
+  if (state.phase === 'config' || state.phase === 'review') {
+    const valid =
+      creatorWalletId
+      && newThreshold >= 1
+      && newThreshold <= voterCount
+      && newThreshold !== detail.squads.threshold;
+
+    return (
+      <DialogShell labelledBy="rd-threshold-title" onClose={onClose}>
+        <h2 id="rd-threshold-title" className="rd-dialog-title">
+          Change approval threshold
+        </h2>
+        <p className="rd-dialog-body">
+          Create a Squads <code>ChangeThreshold</code> config proposal. Current threshold:{' '}
+          <strong>{detail.squads.threshold} of {voterCount}</strong>.
+        </p>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <label className="field">
+            New threshold
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <input
+                type="number"
+                min={1}
+                max={voterCount}
+                value={newThreshold}
+                onChange={(e) => setNewThreshold(Math.max(1, Number(e.target.value) || 1))}
+                style={{ width: 80 }}
+              />
+              <span style={{ fontSize: 13, color: 'var(--ax-text-muted)' }}>
+                of {voterCount} voting member{voterCount === 1 ? '' : 's'}
+              </span>
+            </div>
+          </label>
+
+          <label className="field">
+            Your signing wallet
+            <select
+              value={creatorWalletId}
+              onChange={(e) => setCreatorWalletId(e.target.value)}
+              disabled={eligibleCreators.length <= 1}
+              required
+            >
+              {eligibleCreators.map((w) => (
+                <option key={w.userWalletId} value={w.userWalletId}>
+                  {(w.label ?? 'Untitled')} · {shortenAddress(w.walletAddress, 4, 4)}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+
+        <div className="rd-dialog-actions" style={{ marginTop: 20 }}>
+          <button type="button" className="button button-secondary" onClick={onClose}>
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="button button-primary"
+            disabled={!valid}
+            onClick={() => runChangeThreshold()}
+          >
+            {detail.squads.threshold <= 1 ? 'Sign and change threshold' : 'Sign and submit proposal'}
+          </button>
+        </div>
+      </DialogShell>
+    );
+  }
+
+  return (
+    <DialogShell labelledBy="rd-threshold-progress" onClose={onClose}>
+      <h2 id="rd-threshold-progress" className="rd-dialog-title">
+        {state.phase === 'done'
+          ? 'Threshold changed'
+          : state.phase === 'awaiting-approvals'
+            ? 'Proposal submitted — awaiting more approvals'
+            : state.phase === 'error'
+              ? 'Change threshold failed'
+              : 'Working…'}
+      </h2>
+      <p className="rd-dialog-body">
+        Changing threshold from <strong>{detail.squads.threshold}</strong> to <strong>{newThreshold}</strong>.
+      </p>
+
+      <ProposalProgress
+        steps={[
+          { key: 'creating', label: 'Sign + submit create proposal' },
+          { key: 'executing', label: 'Sign + submit execute' },
+          { key: 'syncing', label: 'Sync Decimal authorizations' },
+        ]}
+        currentPhase={state.phase}
+        skippedExecute={detail.squads.threshold > 1}
+        signatures={{
+          create: state.createSignature,
+          execute: state.executeSignature,
+        }}
+      />
+
+      {state.phase === 'awaiting-approvals' ? (
+        <div
+          style={{
+            padding: 12,
+            border: '1px solid rgba(220, 170, 60, 0.45)',
+            borderRadius: 8,
+            background: 'rgba(220, 170, 60, 0.08)',
+            marginTop: 12,
+            fontSize: 13,
+          }}
+        >
+          The proposal landed and you've cast the first approval.
+          {' '}
+          <strong>{detail.squads.threshold - 1} more approval{detail.squads.threshold - 1 === 1 ? '' : 's'}</strong>
+          {' '}from other Squads voters are required before it can execute.
+        </div>
+      ) : null}
+
+      {state.errorMessage ? (
+        <div
+          style={{
+            padding: 12,
+            border: '1px solid var(--ax-danger)',
+            borderRadius: 8,
+            background: 'var(--ax-surface-1)',
+            marginTop: 12,
+            fontSize: 13,
+          }}
+        >
+          <strong style={{ color: 'var(--ax-danger)' }}>Error:</strong> {state.errorMessage}
+        </div>
+      ) : null}
+
+      <div className="rd-dialog-actions" style={{ marginTop: 20 }}>
+        {state.phase === 'error' ? (
+          <button
+            type="button"
+            className="button button-secondary"
+            onClick={() => setState(initialProposalState)}
+          >
+            Back to form
+          </button>
+        ) : null}
+        <button
+          type="button"
+          className="button button-primary"
+          onClick={onClose}
+          disabled={isWorking}
+        >
+          {state.phase === 'done' ? 'Close' : isWorking ? 'Working…' : 'Close'}
+        </button>
+      </div>
+    </DialogShell>
+  );
+}
+
+function ProposalProgress({
+  steps,
+  currentPhase,
+  skippedExecute,
+  signatures,
+}: {
+  steps: Array<{ key: ProposalDialogPhase; label: string }>;
+  currentPhase: ProposalDialogPhase;
+  skippedExecute: boolean;
+  signatures: { create: string | null; execute: string | null };
+}) {
+  const order: ProposalDialogPhase[] = ['creating', 'executing', 'syncing', 'done'];
+  const currentIndex = order.indexOf(currentPhase);
+
+  return (
+    <ol style={{ listStyle: 'none', padding: 0, margin: '8px 0 0', display: 'grid', gap: 6 }}>
+      {steps.map((step, i) => {
+        const stepIndex = order.indexOf(step.key);
+        const skipped = skippedExecute && (step.key === 'executing' || step.key === 'syncing');
+        const active = currentPhase === step.key;
+        const done = !skipped && currentIndex > stepIndex;
+        return (
+          <li
+            key={step.key}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 10,
+              fontSize: 13,
+              color: skipped
+                ? 'var(--ax-text-faint)'
+                : active
+                  ? 'var(--ax-text)'
+                  : done
+                    ? 'var(--ax-text-muted)'
+                    : 'var(--ax-text-faint)',
+              opacity: skipped ? 0.5 : 1,
+            }}
+          >
+            <span
+              aria-hidden
+              style={{
+                width: 18,
+                height: 18,
+                borderRadius: 9,
+                display: 'inline-grid',
+                placeItems: 'center',
+                fontSize: 11,
+                fontWeight: 600,
+                background: done ? 'var(--ax-accent-dim)' : 'var(--ax-surface-2)',
+                color: done ? 'var(--ax-accent)' : 'var(--ax-text-muted)',
+                border: active ? '1px solid var(--ax-accent)' : '1px solid transparent',
+              }}
+            >
+              {done ? '✓' : i + 1}
+            </span>
+            {step.label}
+            {skipped ? (
+              <span style={{ fontSize: 11 }}>· deferred (more approvals needed)</span>
+            ) : active ? (
+              <span style={{ fontSize: 12 }}>· in progress…</span>
+            ) : null}
+          </li>
+        );
+      })}
+      {signatures.create ? (
+        <li style={{ fontSize: 11, fontFamily: 'monospace', color: 'var(--ax-text-muted)', marginTop: 6 }}>
+          create sig: {shortenAddress(signatures.create, 6, 6)}
+        </li>
+      ) : null}
+      {signatures.execute ? (
+        <li style={{ fontSize: 11, fontFamily: 'monospace', color: 'var(--ax-text-muted)' }}>
+          execute sig: {shortenAddress(signatures.execute, 6, 6)}
+        </li>
+      ) : null}
+    </ol>
   );
 }
 

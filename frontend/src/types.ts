@@ -395,6 +395,64 @@ export type SquadsTreasuryDetail = {
   };
 };
 
+export type SquadsConfigProposalKind =
+  | 'config_proposal_create'
+  | 'config_proposal_approval'
+  | 'config_proposal_execution';
+
+export type SquadsConfigAction =
+  | { kind: 'add_member'; walletAddress: string; permissionsMask: number; permissions: SquadsPermission[] }
+  | { kind: 'remove_member'; walletAddress: string }
+  | { kind: 'change_threshold'; newThreshold: number }
+  | { kind: string };
+
+export type SquadsConfigProposalIntentResponse = {
+  intent: {
+    provider: SquadsTreasuryProvider;
+    kind: SquadsConfigProposalKind;
+    programId: string;
+    treasuryWalletId: string;
+    organizationId: string;
+    multisigPda: string;
+    transactionIndex: string;
+    configTransactionPda: string;
+    proposalPda: string;
+    actions: SquadsConfigAction[];
+  };
+  transaction: {
+    encoding: 'base64';
+    serializedTransaction: string;
+    requiredSigner: string;
+    recentBlockhash: string;
+    lastValidBlockHeight: number;
+  };
+};
+
+export type CreateSquadsAddMemberProposalRequest = {
+  creatorPersonalWalletId: string;
+  newMemberPersonalWalletId: string;
+  permissions: SquadsPermission[];
+  newThreshold?: number;
+  memo?: string | null;
+  autoApprove?: boolean;
+};
+
+export type CreateSquadsChangeThresholdProposalRequest = {
+  creatorPersonalWalletId: string;
+  newThreshold: number;
+  memo?: string | null;
+  autoApprove?: boolean;
+};
+
+export type SquadsConfigProposalApproveRequest = {
+  memberPersonalWalletId: string;
+  memo?: string | null;
+};
+
+export type SquadsConfigProposalExecuteRequest = {
+  memberPersonalWalletId: string;
+};
+
 export type SquadsTreasuryStatus = {
   treasuryWalletId: string;
   provider: SquadsTreasuryProvider;
