@@ -60,7 +60,7 @@ export function isSolanaSignatureLike(value: string) {
 
 export function deriveUsdcAtaForWallet(walletAddress: string) {
   const owner = new PublicKey(walletAddress);
-  return getAssociatedTokenAddressSync(USDC_MINT, owner).toBase58();
+  return getAssociatedTokenAddressSync(USDC_MINT, owner, true).toBase58();
 }
 
 export type SerializedSolanaInstruction = {

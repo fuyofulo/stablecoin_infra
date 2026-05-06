@@ -57,6 +57,15 @@ export const API_ENDPOINTS = [
     scope: 'organization:write',
     requestBody: { chain: 'solana', address: 'string', displayName: 'string optional' },
   }),
+  endpoint('create_squads_treasury_intent', 'POST', '/organizations/{organizationId}/treasury-wallets/squads/create-intent', ['treasury wallets', 'squads'], 'Prepare a signable Squads v4 treasury creation transaction', 'session', {
+    scope: 'organization:write',
+    requestBody: { creatorPersonalWalletId: 'uuid', threshold: 'number', members: 'array of personal wallets + permissions' },
+  }),
+  endpoint('confirm_squads_treasury', 'POST', '/organizations/{organizationId}/treasury-wallets/squads/confirm', ['treasury wallets', 'squads'], 'Verify onchain Squads multisig creation and persist the vault PDA as an organization treasury wallet', 'session', {
+    scope: 'organization:write',
+    requestBody: { signature: 'string', createKey: 'string', multisigPda: 'string', vaultIndex: 'number optional' },
+  }),
+  endpoint('get_squads_treasury_status', 'GET', '/organizations/{organizationId}/treasury-wallets/{treasuryWalletId}/squads/status', ['treasury wallets', 'squads'], 'Read live Squads v4 multisig status for a treasury wallet', 'session', { scope: 'organization:read' }),
   endpoint('update_treasury_wallet', 'PATCH', '/organizations/{organizationId}/treasury-wallets/{treasuryWalletId}', ['address book'], 'Update owned treasury wallet', 'session', { scope: 'organization:write' }),
   endpoint('list_wallet_authorizations', 'GET', '/organizations/{organizationId}/wallet-authorizations', ['wallet authorizations'], 'List personal wallet authorizations for an organization', 'session', { scope: 'organization:read' }),
   endpoint('create_wallet_authorization', 'POST', '/organizations/{organizationId}/wallet-authorizations', ['wallet authorizations'], 'Authorize a personal wallet to act for an organization or treasury wallet', 'session', {

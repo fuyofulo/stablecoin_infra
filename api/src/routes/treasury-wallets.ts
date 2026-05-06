@@ -3,6 +3,11 @@ import { z } from 'zod';
 import { assertOrganizationAccess, assertOrganizationAdmin } from '../organization-access.js';
 import { fetchWalletBalances, SOLANA_CHAIN, USDC_ASSET } from '../solana.js';
 import { getSolUsdPrice } from '../pricing.js';
+import {
+  confirmSquadsTreasuryCreation,
+  createSquadsTreasuryIntent,
+  getSquadsTreasuryStatus,
+} from '../squads-treasury.js';
 import { createTreasuryWallet, listTreasuryWallets, updateTreasuryWallet } from '../treasury-wallets.js';
 import { asyncRoute, listQuerySchema, sendCreated, sendList, sendJson, unwrapItems } from '../route-helpers.js';
 
@@ -27,6 +32,28 @@ const createTreasuryWalletSchema = z.object({
   sourceRef: z.string().optional(),
   notes: z.string().optional(),
   properties: z.record(z.any()).optional(),
+});
+
+const squadsPermissionSchema = z.enum(['initiate', 'vote', 'execute']);
+
+const createSquadsTreasuryIntentSchema = z.object({
+  displayName: z.string().optional().nullable(),
+  creatorPersonalWalletId: z.string().uuid(),
+  threshold: z.number().int().min(1).max(65_535),
+  timeLockSeconds: z.number().int().min(0).max(7_776_000).optional(),
+  vaultIndex: z.number().int().min(0).max(255).optional(),
+  members: z.array(z.object({
+    personalWalletId: z.string().uuid(),
+    permissions: z.array(squadsPermissionSchema).min(1),
+  })).min(1),
+});
+
+const confirmSquadsTreasurySchema = z.object({
+  signature: z.string().min(1),
+  displayName: z.string().optional().nullable(),
+  createKey: z.string().min(1),
+  multisigPda: z.string().min(1),
+  vaultIndex: z.number().int().min(0).max(255).optional(),
 });
 
 const updateTreasuryWalletSchema = z.object({
@@ -92,6 +119,35 @@ treasuryWalletsRouter.post('/organizations/:organizationId/treasury-wallets', as
   const input = createTreasuryWalletSchema.parse(req.body);
   sendCreated(res, await createTreasuryWallet(organizationId, input));
 }));
+
+treasuryWalletsRouter.post(
+  '/organizations/:organizationId/treasury-wallets/squads/create-intent',
+  asyncRoute(async (req, res) => {
+    const { organizationId } = organizationParamsSchema.parse(req.params);
+    await assertOrganizationAdmin(organizationId, req.auth!);
+    const input = createSquadsTreasuryIntentSchema.parse(req.body);
+    sendCreated(res, await createSquadsTreasuryIntent(organizationId, req.auth!.userId, input));
+  }),
+);
+
+treasuryWalletsRouter.post(
+  '/organizations/:organizationId/treasury-wallets/squads/confirm',
+  asyncRoute(async (req, res) => {
+    const { organizationId } = organizationParamsSchema.parse(req.params);
+    await assertOrganizationAdmin(organizationId, req.auth!);
+    const input = confirmSquadsTreasurySchema.parse(req.body);
+    sendCreated(res, await confirmSquadsTreasuryCreation(organizationId, req.auth!.userId, input));
+  }),
+);
+
+treasuryWalletsRouter.get(
+  '/organizations/:organizationId/treasury-wallets/:treasuryWalletId/squads/status',
+  asyncRoute(async (req, res) => {
+    const { organizationId, treasuryWalletId } = treasuryWalletParamsSchema.parse(req.params);
+    await assertOrganizationAccess(organizationId, req.auth!);
+    sendJson(res, await getSquadsTreasuryStatus(organizationId, treasuryWalletId));
+  }),
+);
 
 treasuryWalletsRouter.patch(
   '/organizations/:organizationId/treasury-wallets/:treasuryWalletId',

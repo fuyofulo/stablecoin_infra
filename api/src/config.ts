@@ -14,6 +14,10 @@ type FileConfig = {
   rateLimitEnabled?: boolean;
   publicRateLimitWindowMs?: number;
   publicRateLimitMax?: number;
+  squadsProgramId?: string;
+  squadsDefaultVaultIndex?: number;
+  squadsDefaultTimelockSeconds?: number;
+  squadsProgramTreasury?: string | null;
 };
 
 type DecimalConfig = {
@@ -39,6 +43,10 @@ type DecimalConfig = {
   privyAppId: string;
   privyAppSecret: string;
   privyApiBaseUrl: string;
+  squadsProgramId: string;
+  squadsDefaultVaultIndex: number;
+  squadsDefaultTimelockSeconds: number;
+  squadsProgramTreasury: string | null;
 };
 
 export const config: DecimalConfig = buildConfig();
@@ -73,6 +81,13 @@ function buildConfig(): DecimalConfig {
     privyAppId: (process.env.PRIVY_APP_ID ?? '').trim(),
     privyAppSecret: (process.env.PRIVY_APP_SECRET ?? '').trim(),
     privyApiBaseUrl: normalizeOptionalUrl(process.env.PRIVY_API_BASE_URL) ?? 'https://api.privy.io',
+    squadsProgramId:
+      (process.env.SQUADS_V4_PROGRAM_ID ?? fileConfig.squadsProgramId ?? 'SQDS4ep65T869zMMBKyuUq6aD6EgTu8psMjkvj52pCf').trim(),
+    squadsDefaultVaultIndex: Number(process.env.SQUADS_DEFAULT_VAULT_INDEX ?? fileConfig.squadsDefaultVaultIndex ?? 0),
+    squadsDefaultTimelockSeconds: Number(
+      process.env.SQUADS_DEFAULT_TIMELOCK_SECONDS ?? fileConfig.squadsDefaultTimelockSeconds ?? 0,
+    ),
+    squadsProgramTreasury: normalizeOptionalText(process.env.SQUADS_PROGRAM_TREASURY ?? fileConfig.squadsProgramTreasury),
   };
 
   validateConfig(nextConfig);
@@ -128,6 +143,18 @@ function validateConfig(nextConfig: DecimalConfig) {
     throw new Error('PRIVY_API_BASE_URL must be the Privy REST API base URL, usually https://api.privy.io, not a JWKS endpoint.');
   }
 
+  if (!Number.isInteger(nextConfig.squadsDefaultVaultIndex) || nextConfig.squadsDefaultVaultIndex < 0 || nextConfig.squadsDefaultVaultIndex > 255) {
+    throw new Error('SQUADS_DEFAULT_VAULT_INDEX must be an integer between 0 and 255.');
+  }
+
+  if (
+    !Number.isInteger(nextConfig.squadsDefaultTimelockSeconds)
+    || nextConfig.squadsDefaultTimelockSeconds < 0
+    || nextConfig.squadsDefaultTimelockSeconds > 7_776_000
+  ) {
+    throw new Error('SQUADS_DEFAULT_TIMELOCK_SECONDS must be an integer between 0 and 7776000.');
+  }
+
   if (!nextConfig.isProduction) {
     return;
   }
@@ -148,4 +175,9 @@ function validateConfig(nextConfig: DecimalConfig) {
     throw new Error('config/api.config.json must define publicFrontendUrl in production.');
   }
 
+}
+
+function normalizeOptionalText(value: string | null | undefined) {
+  const trimmed = value?.trim();
+  return trimmed || null;
 }

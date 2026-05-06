@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
 import { after, before, beforeEach, test } from 'node:test';
 import { AddressInfo } from 'node:net';
-import { Keypair } from '@solana/web3.js';
+import { Keypair, PublicKey } from '@solana/web3.js';
 import { createApp } from '../src/app.js';
 import { config } from '../src/config.js';
 import { executeClickHouse } from '../src/clickhouse.js';
 import { prisma } from '../src/prisma.js';
 import { resetRateLimitBuckets } from '../src/rate-limit.js';
+import { setSquadsTreasuryRuntimeForTests } from '../src/squads-treasury.js';
 
 const TRUNCATE_SQL = `
 TRUNCATE TABLE
@@ -71,6 +72,7 @@ before(async () => {
 beforeEach(async () => {
   resetRateLimitBuckets();
   config.rateLimitEnabled = false;
+  setSquadsTreasuryRuntimeForTests(null);
   await executeWithDeadlockRetry(() => prisma.$executeRawUnsafe(TRUNCATE_SQL));
   await clearClickHouseTables();
 });
@@ -381,6 +383,140 @@ test('personal wallets are separate from organization treasury wallets and requi
   assert.ok(revoked.revokedAt);
 });
 
+test('Squads treasury creation prepares a signable transaction and persists the vault PDA after confirmation', async () => {
+  const register = await post('/auth/register', {
+    email: 'squads-treasury@example.com',
+    password: 'DemoPass123!',
+    displayName: 'Squads Treasury',
+  });
+  await verifyRegisteredEmail(register);
+
+  const organization = await post('/organizations', { organizationName: 'Squads Treasury Org' }, register.sessionToken);
+  const creatorWalletAddress = Keypair.generate().publicKey.toBase58();
+  const approverWalletAddress = Keypair.generate().publicKey.toBase58();
+  const creatorWallet = await post(
+    '/personal-wallets/embedded',
+    {
+      walletAddress: creatorWalletAddress,
+      provider: 'privy',
+      providerWalletId: 'privy-squads-creator',
+      label: 'Creator signer',
+    },
+    register.sessionToken,
+  );
+  const approverWallet = await post(
+    '/personal-wallets/embedded',
+    {
+      walletAddress: approverWalletAddress,
+      provider: 'privy',
+      providerWalletId: 'privy-squads-approver',
+      label: 'Approver signer',
+    },
+    register.sessionToken,
+  );
+
+  let onchainMultisig: {
+    createKey: PublicKey;
+    configAuthority: PublicKey;
+    threshold: number;
+    timeLock: number;
+    transactionIndex: { toString(): string };
+    staleTransactionIndex: { toString(): string };
+    members: Array<{ key: PublicKey; permissions: { mask: number } }>;
+  } | null = null;
+  setSquadsTreasuryRuntimeForTests({
+    getProgramTreasury: async () => Keypair.generate().publicKey,
+    getLatestBlockhash: async () => ({
+      blockhash: Keypair.generate().publicKey.toBase58(),
+      lastValidBlockHeight: 123,
+    }),
+    loadMultisig: async () => {
+      assert.ok(onchainMultisig, 'test multisig should be configured before confirmation');
+      return onchainMultisig;
+    },
+  });
+
+  const intent = await post(
+    `/organizations/${organization.organizationId}/treasury-wallets/squads/create-intent`,
+    {
+      displayName: 'Squads Ops Treasury',
+      creatorPersonalWalletId: creatorWallet.userWalletId,
+      threshold: 2,
+      members: [
+        {
+          personalWalletId: creatorWallet.userWalletId,
+          permissions: ['initiate', 'vote', 'execute'],
+        },
+        {
+          personalWalletId: approverWallet.userWalletId,
+          permissions: ['vote'],
+        },
+      ],
+    },
+    register.sessionToken,
+  );
+
+  assert.equal(intent.intent.provider, 'squads_v4');
+  assert.equal(intent.intent.threshold, 2);
+  assert.equal(intent.intent.members.length, 2);
+  assert.equal(intent.transaction.encoding, 'base64');
+  assert.equal(intent.transaction.requiredSigner, creatorWalletAddress);
+  assert.ok(Buffer.from(intent.transaction.serializedTransaction, 'base64').length > 0);
+
+  onchainMultisig = {
+    createKey: Keypair.generate().publicKey,
+    configAuthority: Keypair.generate().publicKey,
+    threshold: 2,
+    timeLock: 0,
+    transactionIndex: { toString: () => '0' },
+    staleTransactionIndex: { toString: () => '0' },
+    members: [],
+  };
+  onchainMultisig.createKey = publicKeyFromString(intent.intent.createKey);
+  onchainMultisig.configAuthority = publicKeyFromString('11111111111111111111111111111111');
+  onchainMultisig.members = [
+    { key: publicKeyFromString(creatorWalletAddress), permissions: { mask: 7 } },
+    { key: publicKeyFromString(approverWalletAddress), permissions: { mask: 2 } },
+  ];
+
+  const treasuryWallet = await post(
+    `/organizations/${organization.organizationId}/treasury-wallets/squads/confirm`,
+    {
+      signature: Keypair.generate().publicKey.toBase58(),
+      displayName: 'Squads Ops Treasury',
+      createKey: intent.intent.createKey,
+      multisigPda: intent.intent.multisigPda,
+      vaultIndex: intent.intent.vaultIndex,
+    },
+    register.sessionToken,
+  );
+
+  assert.equal(treasuryWallet.source, 'squads_v4');
+  assert.equal(treasuryWallet.sourceRef, intent.intent.multisigPda);
+  assert.equal(treasuryWallet.address, intent.intent.vaultPda);
+  assert.equal(treasuryWallet.propertiesJson.squads.threshold, 2);
+  assert.equal(treasuryWallet.propertiesJson.squads.members.length, 2);
+
+  const authorizations = await get(
+    `/organizations/${organization.organizationId}/wallet-authorizations?treasuryWalletId=${treasuryWallet.treasuryWalletId}`,
+    register.sessionToken,
+  );
+  assert.equal(authorizations.items.length, 2);
+  assert.deepEqual(
+    authorizations.items.map((item: { role: string }) => item.role).sort(),
+    ['squads_member', 'squads_member'],
+  );
+
+  const status = await get(
+    `/organizations/${organization.organizationId}/treasury-wallets/${treasuryWallet.treasuryWalletId}/squads/status`,
+    register.sessionToken,
+  );
+  assert.equal(status.provider, 'squads_v4');
+  assert.equal(status.multisigPda, intent.intent.multisigPda);
+  assert.equal(status.vaultPda, intent.intent.vaultPda);
+  assert.equal(status.localStateMatchesChain, true);
+});
+
 test('service token protection only applies to internal routes', async () => {
   const originalServiceToken = config.controlPlaneServiceToken;
   const originalNodeEnv = config.nodeEnv;
@@ -449,6 +585,10 @@ function authHeaders(token: string) {
   return {
     authorization: `Bearer ${token}`,
   };
+}
+
+function publicKeyFromString(value: string) {
+  return new PublicKey(value);
 }
 
 async function clearClickHouseTables() {
