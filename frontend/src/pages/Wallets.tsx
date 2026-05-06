@@ -1,8 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useParams } from 'react-router';
+import { useNavigate, useParams } from 'react-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api';
-import type { AuthenticatedSession } from '../types';
+import type {
+  AuthenticatedSession,
+  CreateSquadsTreasuryIntentResponse,
+  UserWallet,
+} from '../types';
 import {
   computeWalletUsdValue,
   formatRawUsdcCompact,
@@ -53,11 +57,12 @@ function sumSol(values: string[]): string {
   return formatSolFromLamports(total.toString());
 }
 
-export function WalletsPage({ session }: { session: AuthenticatedSession }) {
+export function WalletsPage({ session: _session }: { session: AuthenticatedSession }) {
   const { organizationId } = useParams<{ organizationId: string }>();
   const queryClient = useQueryClient();
   const { success, error: toastError } = useToast();
   const [addOpen, setAddOpen] = useState(false);
+  const [createSquadsOpen, setCreateSquadsOpen] = useState(false);
 
   const balancesQuery = useQuery({
     queryKey: ['treasury-wallet-balances', organizationId] as const,
@@ -65,6 +70,35 @@ export function WalletsPage({ session }: { session: AuthenticatedSession }) {
     enabled: Boolean(organizationId),
     refetchInterval: 15_000,
   });
+
+  // Pulled separately so we can show source-specific UI (Squads badge,
+  // multisig PDA secondary text). The balances endpoint omits source /
+  // sourceRef / propertiesJson — push those into the balances response
+  // backend-side later to drop this round-trip.
+  const treasuryWalletsQuery = useQuery({
+    queryKey: ['treasury-wallets', organizationId] as const,
+    queryFn: () => api.listTreasuryWallets(organizationId!),
+    enabled: Boolean(organizationId),
+  });
+  const treasuryWalletMetaById = useMemo(() => {
+    const map = new Map<string, { source: string; sourceRef: string | null }>();
+    for (const w of treasuryWalletsQuery.data?.items ?? []) {
+      map.set(w.treasuryWalletId, { source: w.source, sourceRef: w.sourceRef });
+    }
+    return map;
+  }, [treasuryWalletsQuery.data]);
+
+  const personalWalletsQuery = useQuery({
+    queryKey: ['personal-wallets'] as const,
+    queryFn: () => api.listPersonalWallets(),
+  });
+  const personalWallets = useMemo(
+    () =>
+      (personalWalletsQuery.data?.items ?? []).filter(
+        (w) => w.status === 'active' && w.chain === 'solana',
+      ),
+    [personalWalletsQuery.data],
+  );
 
   const createMutation = useMutation({
     // Treasury accounts are organization-owned wallets. Their address can
@@ -143,8 +177,15 @@ export function WalletsPage({ session }: { session: AuthenticatedSession }) {
             <RefreshIcon spinning={balancesQuery.isFetching} />
             {balancesQuery.isFetching ? 'Refreshing…' : 'Refresh'}
           </button>
-          <button type="button" className="button button-primary" onClick={() => setAddOpen(true)}>
-            + Add treasury account
+          <button type="button" className="button button-secondary" onClick={() => setAddOpen(true)}>
+            + Add existing address
+          </button>
+          <button
+            type="button"
+            className="button button-primary"
+            onClick={() => setCreateSquadsOpen(true)}
+          >
+            + Create Squads treasury
           </button>
         </div>
       </header>
@@ -182,9 +223,18 @@ export function WalletsPage({ session }: { session: AuthenticatedSession }) {
               <p style={{ margin: '0 0 16px' }}>
                 This is the wallet Decimal monitors and reconciles. Personal signing wallets live on your profile.
               </p>
-              <button type="button" className="button button-primary" onClick={() => setAddOpen(true)}>
-                + Add treasury account
-              </button>
+              <div style={{ display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  className="button button-primary"
+                  onClick={() => setCreateSquadsOpen(true)}
+                >
+                  + Create Squads treasury
+                </button>
+                <button type="button" className="button button-secondary" onClick={() => setAddOpen(true)}>
+                  + Add existing address
+                </button>
+              </div>
             </div>
           ) : (
             <table className="rd-table">
@@ -205,11 +255,26 @@ export function WalletsPage({ session }: { session: AuthenticatedSession }) {
                 </tr>
               </thead>
               <tbody>
-                {rows.map((row) => (
+                {rows.map((row) => {
+                  const meta = treasuryWalletMetaById.get(row.treasuryWalletId);
+                  const isSquads = meta?.source === 'squads_v4';
+                  const multisigPda = isSquads ? meta?.sourceRef : null;
+                  return (
                   <tr key={row.treasuryWalletId}>
                     <td>
                       <div className="rd-payee-main">
-                        <span className="rd-payee-name">{row.displayName ?? 'Untitled wallet'}</span>
+                        <span className="rd-payee-name" style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                          {row.displayName ?? 'Untitled wallet'}
+                          {isSquads ? (
+                            <span
+                              className="rd-pill rd-pill-info"
+                              style={{ fontSize: 10, padding: '2px 8px' }}
+                              title="Backed by a Squads v4 multisig"
+                            >
+                              Squads
+                            </span>
+                          ) : null}
+                        </span>
                         {row.rpcError ? (
                           <span className="rd-payee-ref" style={{ color: 'var(--ax-warning)' }}>
                             {row.rpcError}
@@ -228,6 +293,19 @@ export function WalletsPage({ session }: { session: AuthenticatedSession }) {
                         <span>{shortenAddress(row.address, 4, 4)}</span>
                         <ExternalIcon />
                       </a>
+                      {multisigPda ? (
+                        <div
+                          style={{
+                            fontSize: 11,
+                            color: 'var(--ax-text-muted)',
+                            marginTop: 2,
+                            fontFamily: 'monospace',
+                          }}
+                          title={`Multisig PDA: ${multisigPda}`}
+                        >
+                          multisig {shortenAddress(multisigPda, 4, 4)}
+                        </div>
+                      ) : null}
                     </td>
                     <td className="rd-num">
                       {row.usdcRaw === null ? (
@@ -256,7 +334,8 @@ export function WalletsPage({ session }: { session: AuthenticatedSession }) {
                       </span>
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           )}
@@ -268,6 +347,22 @@ export function WalletsPage({ session }: { session: AuthenticatedSession }) {
           pending={createMutation.isPending}
           onClose={() => setAddOpen(false)}
           onSubmit={(form) => createMutation.mutate(form)}
+        />
+      ) : null}
+
+      {createSquadsOpen ? (
+        <CreateSquadsTreasuryDialog
+          organizationId={organizationId!}
+          personalWallets={personalWallets}
+          personalWalletsLoading={personalWalletsQuery.isLoading}
+          onClose={() => setCreateSquadsOpen(false)}
+          onError={(message) => toastError(message)}
+          onConfirmed={async () => {
+            success('Squads treasury created.');
+            setCreateSquadsOpen(false);
+            await queryClient.invalidateQueries({ queryKey: ['treasury-wallet-balances', organizationId] });
+            await queryClient.invalidateQueries({ queryKey: ['treasury-wallets', organizationId] });
+          }}
         />
       ) : null}
     </main>
@@ -331,6 +426,318 @@ function AddWalletDialog(props: {
           </div>
         </form>
       </div>
+    </div>
+  );
+}
+
+// CreateSquadsTreasuryDialog
+//
+// MVP scope: 1-of-1 Squads treasury where the only signer is the current
+// user's personal wallet. Multi-member, custom threshold, and custom
+// permissions are deferred to a later tranche — see
+// docs/frontend-squads-treasury-handoff.md.
+//
+// Flow:
+//   no-personal-wallet -> empty-state CTA to /profile
+//   config -> name + creator wallet (auto-selected if 1 personal wallet)
+//   review -> backend create-intent fetched; show multisig PDA, vault PDA,
+//             required signer, members
+//   sign-confirm -> placeholder. Real signing requires a backend
+//     "sign-with-Privy" endpoint that doesn't exist yet — frontend has no
+//     Privy SDK. Once codex ships that endpoint, this step becomes:
+//       1) POST to that endpoint with the serialized tx
+//       2) submit signed bytes to chain
+//       3) confirmSquadsTreasury(signature, ...intent identifiers)
+//       4) onConfirmed() to close + invalidate queries
+function CreateSquadsTreasuryDialog(props: {
+  organizationId: string;
+  personalWallets: UserWallet[];
+  personalWalletsLoading: boolean;
+  onClose: () => void;
+  onError: (message: string) => void;
+  onConfirmed: () => Promise<void> | void;
+}) {
+  const { organizationId, personalWallets, personalWalletsLoading, onClose, onError } = props;
+  const navigate = useNavigate();
+  const [step, setStep] = useState<'config' | 'review' | 'sign'>('config');
+  const [name, setName] = useState('');
+  const [creatorWalletId, setCreatorWalletId] = useState('');
+  const [pendingIntent, setPendingIntent] = useState<CreateSquadsTreasuryIntentResponse | null>(null);
+
+  // Auto-select the only wallet if exactly one exists.
+  useEffect(() => {
+    if (!creatorWalletId && personalWallets.length === 1) {
+      setCreatorWalletId(personalWallets[0].userWalletId);
+    }
+  }, [personalWallets, creatorWalletId]);
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') onClose();
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const intentMutation = useMutation({
+    mutationFn: () => {
+      if (!creatorWalletId) {
+        throw new Error('Pick a personal wallet to act as the Squads creator.');
+      }
+      return api.createSquadsTreasuryIntent(organizationId, {
+        displayName: name.trim() || null,
+        creatorPersonalWalletId: creatorWalletId,
+        threshold: 1,
+        members: [
+          {
+            personalWalletId: creatorWalletId,
+            permissions: ['initiate', 'vote', 'execute'],
+          },
+        ],
+      });
+    },
+    onSuccess: (response) => {
+      setPendingIntent(response);
+      setStep('review');
+    },
+    onError: (err) => onError(err instanceof Error ? err.message : 'Could not prepare Squads transaction.'),
+  });
+
+  // Empty state: user has no personal wallet -> can't create a Squads
+  // treasury at all (need at least one signer).
+  if (!personalWalletsLoading && personalWallets.length === 0) {
+    return (
+      <DialogShell labelledBy="rd-squads-empty-title" onClose={onClose}>
+        <h2 id="rd-squads-empty-title" className="rd-dialog-title">
+          Create your signing wallet first
+        </h2>
+        <p className="rd-dialog-body">
+          A Squads treasury needs at least one personal wallet as a member. Create a Privy signing wallet on your profile, then come back here.
+        </p>
+        <div className="rd-dialog-actions" style={{ marginTop: 20 }}>
+          <button type="button" className="button button-secondary" onClick={onClose}>
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="button button-primary"
+            onClick={() => {
+              onClose();
+              navigate('/profile');
+            }}
+          >
+            Go to profile →
+          </button>
+        </div>
+      </DialogShell>
+    );
+  }
+
+  const intent = pendingIntent?.intent;
+  const tx = pendingIntent?.transaction;
+  const requiredSignerWallet =
+    tx && personalWallets.find((w) => w.walletAddress === tx.requiredSigner);
+
+  return (
+    <DialogShell labelledBy="rd-squads-title" onClose={onClose}>
+      {step === 'config' ? (
+        <>
+          <h2 id="rd-squads-title" className="rd-dialog-title">
+            Create Squads treasury
+          </h2>
+          <p className="rd-dialog-body">
+            Create an organization treasury controlled by selected member wallets. Decimal will monitor the Squads vault and use it as the source wallet for payments.
+          </p>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              intentMutation.mutate();
+            }}
+          >
+            <label className="field">
+              Treasury name
+              <input
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Ops treasury"
+                autoComplete="off"
+                autoFocus
+              />
+            </label>
+            <label className="field">
+              Creator wallet
+              <select
+                value={creatorWalletId}
+                onChange={(e) => setCreatorWalletId(e.target.value)}
+                required
+                disabled={personalWallets.length === 1}
+              >
+                {personalWallets.length === 0 ? (
+                  <option value="">Loading…</option>
+                ) : null}
+                {personalWallets.map((w) => (
+                  <option key={w.userWalletId} value={w.userWalletId}>
+                    {(w.label ?? 'Untitled')} · {shortenAddress(w.walletAddress, 4, 4)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <p style={{ fontSize: 12, color: 'var(--ax-text-muted)', margin: '4px 0 16px' }}>
+              MVP default: 1-of-1 Squads multisig. The selected wallet is the only signer with all permissions (initiate, vote, execute). Multi-member treasuries land in a later tranche.
+            </p>
+            <div className="rd-dialog-actions" style={{ marginTop: 20 }}>
+              <button type="button" className="button button-secondary" onClick={onClose} disabled={intentMutation.isPending}>
+                Cancel
+              </button>
+              <button
+                type="submit"
+                className="button button-primary"
+                disabled={!creatorWalletId || intentMutation.isPending}
+                aria-busy={intentMutation.isPending}
+              >
+                {intentMutation.isPending ? 'Preparing…' : 'Prepare transaction'}
+              </button>
+            </div>
+          </form>
+        </>
+      ) : step === 'review' && intent && tx ? (
+        <>
+          <h2 id="rd-squads-title" className="rd-dialog-title">
+            Review Squads treasury
+          </h2>
+          <p className="rd-dialog-body">
+            Verify the prepared multisig before signing. Decimal will persist the vault PDA as the treasury address and the multisig PDA as the source reference.
+          </p>
+          <div className="rd-form-grid" style={{ gap: 12 }}>
+            <SquadsReviewRow label="Treasury name" value={intent.displayName || '(unnamed)'} />
+            <SquadsReviewRow
+              label="Threshold"
+              value={`${intent.threshold} of ${intent.members.length}`}
+            />
+            <SquadsReviewRow
+              label="Required signer"
+              value={
+                <span style={{ fontFamily: 'monospace' }}>
+                  {shortenAddress(tx.requiredSigner, 6, 6)}
+                  {requiredSignerWallet ? (
+                    <span style={{ color: 'var(--ax-text-muted)', marginLeft: 8 }}>
+                      ({requiredSignerWallet.label ?? 'this wallet'})
+                    </span>
+                  ) : null}
+                </span>
+              }
+            />
+            <SquadsReviewRow
+              label="Multisig address"
+              value={<span style={{ fontFamily: 'monospace' }}>{shortenAddress(intent.multisigPda, 6, 6)}</span>}
+            />
+            <SquadsReviewRow
+              label="Treasury vault"
+              value={<span style={{ fontFamily: 'monospace' }}>{shortenAddress(intent.vaultPda, 6, 6)}</span>}
+            />
+            <SquadsReviewRow
+              label="Members"
+              value={
+                <ul style={{ margin: 0, paddingLeft: 16, lineHeight: 1.6 }}>
+                  {intent.members.map((m) => (
+                    <li key={m.personalWalletId} style={{ fontSize: 13 }}>
+                      <span style={{ fontFamily: 'monospace' }}>{shortenAddress(m.walletAddress, 4, 4)}</span>
+                      <span style={{ color: 'var(--ax-text-muted)', marginLeft: 8 }}>
+                        {m.permissions.join(' · ')}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              }
+            />
+          </div>
+          <div className="rd-dialog-actions" style={{ marginTop: 20 }}>
+            <button type="button" className="button button-secondary" onClick={() => setStep('config')}>
+              Back
+            </button>
+            <button type="button" className="button button-primary" onClick={() => setStep('sign')}>
+              Sign and create
+            </button>
+          </div>
+        </>
+      ) : step === 'sign' && intent && tx ? (
+        <>
+          <h2 id="rd-squads-title" className="rd-dialog-title">
+            Sign and confirm
+          </h2>
+          <p className="rd-dialog-body">
+            The Squads transaction is prepared and partially signed by Decimal. Sign with the required personal wallet, submit to chain, and Decimal persists the new treasury.
+          </p>
+          <div
+            style={{
+              padding: 12,
+              border: '1px dashed var(--ax-warning)',
+              borderRadius: 6,
+              background: 'var(--ax-surface-1)',
+              fontSize: 13,
+              lineHeight: 1.5,
+            }}
+          >
+            <strong style={{ display: 'block', marginBottom: 4 }}>Signing not yet wired</strong>
+            <span style={{ color: 'var(--ax-text-muted)' }}>
+              Personal wallets are Privy server-managed and the frontend has no Privy SDK. The next backend tranche should add an endpoint that signs a serialized VersionedTransaction with the user's Privy wallet — once it exists, this dialog calls it, submits the signed bytes, and finishes with{' '}
+              <code>confirmSquadsTreasury</code>.
+            </span>
+          </div>
+          <div style={{ marginTop: 12, fontSize: 12, color: 'var(--ax-text-muted)', fontFamily: 'monospace' }}>
+            createKey: {shortenAddress(intent.createKey, 6, 6)} · multisig:{' '}
+            {shortenAddress(intent.multisigPda, 6, 6)} · vault: {shortenAddress(intent.vaultPda, 6, 6)}
+          </div>
+          <div className="rd-dialog-actions" style={{ marginTop: 20 }}>
+            <button type="button" className="button button-secondary" onClick={() => setStep('review')}>
+              Back
+            </button>
+            <button type="button" className="button button-primary" disabled aria-disabled>
+              Sign and create (pending backend)
+            </button>
+          </div>
+        </>
+      ) : null}
+    </DialogShell>
+  );
+}
+
+function DialogShell(props: {
+  labelledBy: string;
+  onClose: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <div
+      className="rd-dialog-backdrop"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby={props.labelledBy}
+      onClick={(e) => {
+        if (e.target === e.currentTarget) props.onClose();
+      }}
+    >
+      <div className="rd-dialog" style={{ maxWidth: 560 }}>
+        {props.children}
+      </div>
+    </div>
+  );
+}
+
+function SquadsReviewRow({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div
+      style={{
+        display: 'grid',
+        gridTemplateColumns: '160px 1fr',
+        gap: 12,
+        alignItems: 'start',
+        paddingBottom: 8,
+        borderBottom: '1px solid var(--ax-border)',
+      }}
+    >
+      <span style={{ color: 'var(--ax-text-muted)', fontSize: 13 }}>{label}</span>
+      <div style={{ fontSize: 14 }}>{value}</div>
     </div>
   );
 }
