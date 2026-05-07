@@ -79,6 +79,7 @@ export function OrganizationProposalsPage({ session }: { session: AuthenticatedS
 
   async function refreshProposals(decimalProposalId?: string) {
     await queryClient.invalidateQueries({ queryKey: ['organization-proposals', organizationId] });
+    await queryClient.invalidateQueries({ queryKey: ['payment-orders', organizationId] });
     if (decimalProposalId) {
       await queryClient.invalidateQueries({
         queryKey: ['organization-proposal', organizationId, decimalProposalId],
@@ -484,4 +485,3 @@ function MenuItem({
     </button>
   );
 }
-

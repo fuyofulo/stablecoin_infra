@@ -936,6 +936,10 @@ export type PaymentOrderState =
   | 'pending_approval'
   | 'approved'
   | 'ready_for_execution'
+  | 'proposal_prepared'
+  | 'proposal_submitted'
+  | 'proposal_approved'
+  | 'proposal_executed'
   | 'execution_recorded'
   | 'partially_settled'
   | 'settled'
@@ -1140,6 +1144,22 @@ export type PaymentOrder = {
     amountRaw: string;
     requestedAt: string;
   }>;
+  squadsLifecycle: {
+    provider: string;
+    decimalProposalId: string;
+    proposalStatus: string;
+    paymentState: PaymentOrderState;
+    hasSubmittedSignature: boolean;
+    hasExecutedSignature: boolean;
+    submittedSignature: string | null;
+    executedSignature: string | null;
+    submittedAt: string | null;
+    executedAt: string | null;
+    transactionIndex: string | null;
+    treasuryWalletId: string | null;
+  } | null;
+  squadsPaymentProposal: DecimalProposal | null;
+  canCreateSquadsPaymentProposal: boolean;
   events: PaymentOrderEvent[];
   reconciliationDetail: ReconciliationDetail | null;
 };

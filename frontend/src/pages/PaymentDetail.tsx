@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { api } from '../api';
+import { api, ApiError } from '../api';
 import type {
   AuthenticatedSession,
+  DecimalProposal,
   PaymentExecutionPacket,
   PaymentOrder,
   TreasuryWallet,
@@ -39,6 +40,7 @@ type ActionVariant =
   | 'needs_approval'
   | 'ready_to_sign'
   | 'ready_to_propose'
+  | 'proposal_in_progress'
   | 'in_flight'
   | 'settled'
   | 'exception'
@@ -68,7 +70,7 @@ function buildLifecycle(order: PaymentOrder): LifecycleStage[] {
 
   const submitDone = s !== 'draft';
   const approveDone = !['draft', 'pending_approval', 'cancelled'].includes(s);
-  const executionDone = ['execution_recorded', 'partially_settled', 'settled', 'closed', 'exception'].includes(s);
+  const executionDone = ['execution_recorded', 'proposal_executed', 'partially_settled', 'settled', 'closed', 'exception'].includes(s);
   const proofDone = settled;
 
   return [
@@ -131,10 +133,12 @@ function determineVariant(order: PaymentOrder): ActionVariant {
   if (s === 'pending_approval') return 'needs_approval';
   if (s === 'approved' || s === 'ready_for_execution') {
     // Squads-sourced payments need a multisig proposal, not a direct sign.
-    return order.sourceTreasuryWallet?.source === 'squads_v4'
+    return order.sourceTreasuryWallet?.source === 'squads_v4' && order.canCreateSquadsPaymentProposal !== false
       ? 'ready_to_propose'
       : 'ready_to_sign';
   }
+  if (s === 'proposal_prepared' || s === 'proposal_submitted' || s === 'proposal_approved') return 'proposal_in_progress';
+  if (s === 'proposal_executed') return 'in_flight';
   if (s === 'execution_recorded') return 'in_flight';
   if (s === 'settled' || s === 'closed') return 'settled';
   if (s === 'exception' || s === 'partially_settled') return 'exception';
@@ -291,6 +295,83 @@ export function PaymentDetailPage() {
     }
   }, [ownPersonalWallets, proposalCreatorWalletId]);
 
+  const sessionQuery = useQuery<AuthenticatedSession>({
+    queryKey: ['session'] as const,
+    queryFn: () => api.getSession(),
+    enabled: api.hasSessionToken(),
+  });
+  const currentUserId = sessionQuery.data?.user.userId ?? null;
+
+  // Find the user's personal wallet that's a pending voter on the linked
+  // Squads proposal (if any), and the wallet they can execute with.
+  const linkedProposal: DecimalProposal | null = orderQuery.data?.squadsPaymentProposal ?? null;
+  const proposalPendingVoterWalletId = useMemo(() => {
+    if (!linkedProposal?.voting || !currentUserId) return null;
+    const ownAddresses = new Set(ownPersonalWallets.map((w) => w.walletAddress));
+    const match = linkedProposal.voting.pendingVoters.find(
+      (v) => v.personalWallet?.userId === currentUserId && ownAddresses.has(v.walletAddress),
+    );
+    if (!match) return null;
+    return ownPersonalWallets.find((w) => w.walletAddress === match.walletAddress)?.userWalletId ?? null;
+  }, [linkedProposal, ownPersonalWallets, currentUserId]);
+
+  const proposalExecuteWalletId = useMemo(() => {
+    if (!linkedProposal?.voting) return null;
+    const executable = new Set(linkedProposal.voting.canExecuteWalletAddresses);
+    return ownPersonalWallets.find((w) => executable.has(w.walletAddress))?.userWalletId ?? null;
+  }, [linkedProposal, ownPersonalWallets]);
+
+  const proposalApproveMutation = useMutation({
+    mutationFn: async (signerWalletId: string) => {
+      if (!linkedProposal) throw new Error('No linked proposal.');
+      const intent = await api.createProposalApprovalIntent(
+        organizationId!,
+        linkedProposal.decimalProposalId,
+        { memberPersonalWalletId: signerWalletId },
+      );
+      return signAndSubmitIntent({ intent, signerPersonalWalletId: signerWalletId });
+    },
+    onSuccess: async () => {
+      success('Approval submitted.');
+      await queryClient.invalidateQueries({ queryKey: ['payment-order', organizationId, paymentOrderId] });
+      await queryClient.invalidateQueries({ queryKey: ['payment-orders', organizationId] });
+      await queryClient.invalidateQueries({ queryKey: ['organization-proposals', organizationId] });
+    },
+    onError: (err) => {
+      toastError(err instanceof ApiError || err instanceof Error ? err.message : 'Approve failed.');
+    },
+  });
+
+  const proposalExecuteMutation = useMutation({
+    mutationFn: async (signerWalletId: string) => {
+      if (!linkedProposal) throw new Error('No linked proposal.');
+      const intent = await api.createProposalExecuteIntent(
+        organizationId!,
+        linkedProposal.decimalProposalId,
+        { memberPersonalWalletId: signerWalletId },
+      );
+      const sig = await signAndSubmitIntent({
+        intent,
+        signerPersonalWalletId: signerWalletId,
+      });
+      try {
+        await api.confirmProposalExecution(organizationId!, linkedProposal.decimalProposalId, { signature: sig });
+      } catch {
+        // ignore — refetch will catch up
+      }
+      return sig;
+    },
+    onSuccess: async () => {
+      success('Proposal executed.');
+      await queryClient.invalidateQueries({ queryKey: ['payment-order', organizationId, paymentOrderId] });
+      await queryClient.invalidateQueries({ queryKey: ['payment-orders', organizationId] });
+      await queryClient.invalidateQueries({ queryKey: ['organization-proposals', organizationId] });
+    },
+    onError: (err) => {
+      toastError(err instanceof ApiError || err instanceof Error ? err.message : 'Execute failed.');
+    },
+  });
+
   const createProposalMutation = useMutation({
     mutationFn: async () => {
       const order = orderQuery.data;
@@ -326,6 +407,7 @@ export function PaymentDetailPage() {
     onSuccess: async (result) => {
       success('Squads proposal created.');
       await queryClient.invalidateQueries({ queryKey: ['payment-order', organizationId, paymentOrderId] });
+      await queryClient.invalidateQueries({ queryKey: ['payment-orders', organizationId] });
       await queryClient.invalidateQueries({ queryKey: ['organization-proposals', organizationId] });
       if (result.decimalProposalId) {
         navigate(`/organizations/${organizationId}/proposals/${result.decimalProposalId}`);
@@ -443,7 +525,7 @@ export function PaymentDetailPage() {
           variant={variant}
           order={order}
           amountLabel={amountLabel}
-          submittedSignature={latestExec?.submittedSignature ?? null}
+          submittedSignature={latestExec?.submittedSignature ?? order.squadsLifecycle?.executedSignature ?? order.squadsLifecycle?.submittedSignature ?? null}
           matchedAt={match?.matchedAt ?? null}
           sourceAddresses={sourceAddresses}
           effectiveSourceAddressId={effectiveSourceAddressId}
@@ -466,6 +548,13 @@ export function PaymentDetailPage() {
           onSelectProposalCreator={setProposalCreatorWalletId}
           proposing={createProposalMutation.isPending}
           onCreateSquadsProposal={() => createProposalMutation.mutate()}
+          linkedProposal={linkedProposal}
+          proposalPendingVoterWalletId={proposalPendingVoterWalletId}
+          proposalExecuteWalletId={proposalExecuteWalletId}
+          proposalApproving={proposalApproveMutation.isPending}
+          proposalExecuting={proposalExecuteMutation.isPending}
+          onApproveProposal={(signerWalletId) => proposalApproveMutation.mutate(signerWalletId)}
+          onExecuteProposal={(signerWalletId) => proposalExecuteMutation.mutate(signerWalletId)}
         />
 
         <section className="rd-section">
@@ -709,9 +798,17 @@ function PrimaryAction(props: {
   onSelectProposalCreator: (id: string) => void;
   proposing: boolean;
   onCreateSquadsProposal: () => void;
+  linkedProposal: DecimalProposal | null;
+  proposalPendingVoterWalletId: string | null;
+  proposalExecuteWalletId: string | null;
+  proposalApproving: boolean;
+  proposalExecuting: boolean;
+  onApproveProposal: (signerWalletId: string) => void;
+  onExecuteProposal: (signerWalletId: string) => void;
 }) {
   const {
     variant,
+    order,
     amountLabel,
     submittedSignature,
     sourceAddresses,
@@ -733,6 +830,13 @@ function PrimaryAction(props: {
     onSelectProposalCreator,
     proposing,
     onCreateSquadsProposal,
+    linkedProposal,
+    proposalPendingVoterWalletId,
+    proposalExecuteWalletId,
+    proposalApproving,
+    proposalExecuting,
+    onApproveProposal,
+    onExecuteProposal,
   } = props;
 
   if (variant === 'needs_submit') {
@@ -828,6 +932,123 @@ function PrimaryAction(props: {
             {proposing ? 'Creating proposal…' : 'Create Squads proposal'}
             {!proposing ? <span className="rd-btn-arrow" aria-hidden>→</span> : null}
           </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (variant === 'proposal_in_progress') {
+    const proposal = linkedProposal ?? order.squadsPaymentProposal;
+    const status = order.squadsLifecycle?.proposalStatus ?? proposal?.status ?? 'active';
+    const voting = proposal?.voting ?? null;
+    const approvalCount = voting?.approvals.length ?? 0;
+    const threshold = voting?.threshold ?? 0;
+    const pendingCount = voting?.pendingVoters.length ?? 0;
+    const isApproved = status === 'approved';
+    const isExecuted = status === 'executed';
+    const eyebrow = isExecuted
+      ? 'Watching · Settlement'
+      : isApproved
+        ? 'Next step · Execute proposal'
+        : proposalPendingVoterWalletId
+          ? 'Next step · Your approval'
+          : 'Next step · Awaiting voters';
+    const title = isExecuted
+      ? 'Proposal executed — watching for on-chain match'
+      : isApproved
+        ? `Threshold met (${approvalCount} of ${threshold}) — ready to execute`
+        : `${approvalCount} of ${threshold} approvals · ${pendingCount} awaiting`;
+    const detailHref = proposal
+      ? `/organizations/${order.organizationId}/proposals/${proposal.decimalProposalId}`
+      : `/organizations/${order.organizationId}/proposals`;
+
+    return (
+      <div className="rd-primary" data-emphasis={isApproved && proposalExecuteWalletId ? 'action' : undefined}>
+        <p className="rd-primary-eyebrow">{eyebrow}</p>
+        <h2 className="rd-primary-title">{title}</h2>
+        <p className="rd-primary-body">
+          {isExecuted
+            ? 'The on-chain transfer landed. Reconciliation will mark this payment settled once the worker observes the matched transfer.'
+            : isApproved
+              ? 'A Squads member with execute permission needs to submit the execute transaction.'
+              : 'Each voter signs independently — no shared blockhash, no rush.'}
+        </p>
+
+        {voting ? (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, margin: '12px 0' }}>
+            {voting.approvals.map((d) => (
+              <span
+                key={`a-${d.walletAddress}`}
+                title={d.walletAddress}
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 6,
+                  padding: '4px 10px', fontSize: 12, borderRadius: 999,
+                  background: 'rgba(60, 180, 110, 0.18)', color: 'rgb(120, 220, 160)',
+                }}
+              >
+                <span aria-hidden>✓</span>
+                {d.organizationMembership?.user.displayName
+                  ?? d.organizationMembership?.user.email
+                  ?? shortenAddress(d.walletAddress, 4, 4)}
+              </span>
+            ))}
+            {voting.pendingVoters.map((v) => (
+              <span
+                key={`p-${v.walletAddress}`}
+                title={v.walletAddress}
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 6,
+                  padding: '4px 10px', fontSize: 12, borderRadius: 999,
+                  background: 'transparent', color: 'var(--ax-text-muted)',
+                  border: '1px dashed var(--ax-border)',
+                }}
+              >
+                <span aria-hidden>○</span>
+                {v.organizationMembership?.user.displayName
+                  ?? v.organizationMembership?.user.email
+                  ?? shortenAddress(v.walletAddress, 4, 4)}
+              </span>
+            ))}
+          </div>
+        ) : null}
+
+        {order.squadsLifecycle?.transactionIndex || order.squadsLifecycle?.executedSignature ? (
+          <p style={{ fontSize: 12, color: 'var(--ax-text-muted)', margin: '4px 0 12px', fontFamily: 'monospace' }}>
+            {order.squadsLifecycle.transactionIndex ? `Tx index #${order.squadsLifecycle.transactionIndex}` : null}
+            {order.squadsLifecycle.transactionIndex && order.squadsLifecycle.executedSignature ? ' · ' : null}
+            {order.squadsLifecycle.executedSignature ? `exec ${shortenAddress(order.squadsLifecycle.executedSignature, 6, 6)}` : null}
+          </p>
+        ) : null}
+
+        <div className="rd-actions" style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          {proposalPendingVoterWalletId && !isApproved && !isExecuted ? (
+            <button
+              type="button"
+              className="rd-btn rd-btn-primary"
+              onClick={() => onApproveProposal(proposalPendingVoterWalletId)}
+              disabled={proposalApproving || proposalExecuting}
+              aria-busy={proposalApproving}
+            >
+              {proposalApproving ? 'Approving…' : 'Approve proposal'}
+              {!proposalApproving ? <span className="rd-btn-arrow" aria-hidden>→</span> : null}
+            </button>
+          ) : null}
+          {isApproved && proposalExecuteWalletId ? (
+            <button
+              type="button"
+              className="rd-btn rd-btn-primary"
+              onClick={() => onExecuteProposal(proposalExecuteWalletId)}
+              disabled={proposalApproving || proposalExecuting}
+              aria-busy={proposalExecuting}
+            >
+              {proposalExecuting ? 'Executing…' : 'Execute proposal'}
+              {!proposalExecuting ? <span className="rd-btn-arrow" aria-hidden>→</span> : null}
+            </button>
+          ) : null}
+          <Link className="rd-btn rd-btn-secondary" to={detailHref}>
+            Open proposal
+            <span className="rd-btn-arrow" aria-hidden>→</span>
+          </Link>
         </div>
       </div>
     );

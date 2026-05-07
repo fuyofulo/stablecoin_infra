@@ -56,6 +56,9 @@ export function OrganizationProposalDetailPage({ session }: { session: Authentic
     await queryClient.invalidateQueries({
       queryKey: ['organization-proposals', organizationId],
     });
+    await queryClient.invalidateQueries({
+      queryKey: ['payment-orders', organizationId],
+    });
   }
 
   const approveMutation = useMutation({
