@@ -168,6 +168,42 @@ approvalsRouter.post(
           },
         });
 
+        // Advance the linked payment order's state in lockstep so both the
+        // Approvals page and the PaymentDetail page (and Squads-sourced
+        // derivedState which reads paymentOrder.state directly) see the
+        // decision. updateMany scoped to state='pending_approval' makes this
+        // a no-op on already-advanced orders or run-orchestrated orders that
+        // sit in a different state.
+        if (current.paymentOrderId && (input.action === 'approve' || input.action === 'reject')) {
+          const nextOrderState = input.action === 'approve' ? 'approved' : 'cancelled';
+          const updateResult = await tx.paymentOrder.updateMany({
+            where: {
+              paymentOrderId: current.paymentOrderId,
+              organizationId,
+              state: 'pending_approval',
+            },
+            data: { state: nextOrderState },
+          });
+          if (updateResult.count > 0) {
+            await tx.paymentOrderEvent.create({
+              data: {
+                paymentOrderId: current.paymentOrderId,
+                organizationId,
+                eventType: input.action === 'approve' ? 'payment_order_approved' : 'payment_order_rejected',
+                actorType: 'user',
+                actorId: req.auth!.userId,
+                beforeState: 'pending_approval',
+                afterState: nextOrderState,
+                linkedTransferRequestId: transferRequestId,
+                payloadJson: {
+                  approvalDecisionId: decision.approvalDecisionId,
+                  action: input.action,
+                } satisfies Prisma.InputJsonValue,
+              },
+            });
+          }
+        }
+
         return request;
       });
 

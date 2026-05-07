@@ -266,6 +266,8 @@ export function PaymentDetailPage() {
     onSuccess: async () => {
       success('Approved. Ready to sign.');
       await queryClient.invalidateQueries({ queryKey: ['payment-order', organizationId, paymentOrderId] });
+      await queryClient.invalidateQueries({ queryKey: ['payment-orders', organizationId] });
+      await queryClient.invalidateQueries({ queryKey: ['organization-summary', organizationId] });
     },
     onError: (err) => toastError(err instanceof Error ? err.message : 'Could not approve.'),
   });

@@ -77,6 +77,8 @@ export function ApprovalsPage({ session: _session }: { session: AuthenticatedSes
     onSuccess: async (_result, vars) => {
       success(`Marked ${shortenAddress(vars.order.paymentOrderId, 4, 4)} as ${vars.action === 'approve' ? 'approved' : 'rejected'}.`);
       await queryClient.invalidateQueries({ queryKey: ['payment-orders', organizationId] });
+      await queryClient.invalidateQueries({ queryKey: ['payment-order', organizationId, vars.order.paymentOrderId] });
+      await queryClient.invalidateQueries({ queryKey: ['organization-summary', organizationId] });
     },
     onError: (err) => toastError(err instanceof Error ? err.message : 'Could not record decision.'),
   });
@@ -102,6 +104,8 @@ export function ApprovalsPage({ session: _session }: { session: AuthenticatedSes
         success(`${action === 'approve' ? 'Approved' : 'Rejected'} ${done} payment${done === 1 ? '' : 's'}.`);
       }
       await queryClient.invalidateQueries({ queryKey: ['payment-orders', organizationId] });
+      await queryClient.invalidateQueries({ queryKey: ['payment-order', organizationId] });
+      await queryClient.invalidateQueries({ queryKey: ['organization-summary', organizationId] });
     },
     onError: (err) => toastError(err instanceof Error ? err.message : 'Could not record decisions.'),
   });
