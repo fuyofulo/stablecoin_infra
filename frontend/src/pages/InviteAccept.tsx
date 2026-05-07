@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError } from '../api';
+import { AuthDivider, OAuthButton } from '../App';
 import type { AuthenticatedSession, PublicInvite, UserWallet } from '../types';
 
 export function InviteAcceptPage() {
@@ -173,7 +174,8 @@ function renderContent(args: {
   if (!invite) return null;
 
   if (status.kind === 'not-signed-in') {
-    const returnTo = encodeURIComponent(`/invites/${inviteToken ?? ''}`);
+    const returnPath = `/invites/${inviteToken ?? ''}`;
+    const returnToParam = encodeURIComponent(returnPath);
     return (
       <>
         <h1>You're invited to {invite.organization.organizationName}</h1>
@@ -182,11 +184,13 @@ function renderContent(args: {
           <strong>{invite.invitedEmail}</strong> to join as a{' '}
           <strong>{invite.role}</strong>. Sign in with that email to accept.
         </p>
+        <OAuthButton mode="login" returnTo={returnPath} />
+        <AuthDivider />
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-          <a className="button button-primary" href={`/login?returnTo=${returnTo}`}>
-            Sign in
+          <a className="button button-primary" href={`/login?returnTo=${returnToParam}`}>
+            Sign in with email
           </a>
-          <a className="button button-secondary" href={`/register?returnTo=${returnTo}`}>
+          <a className="button button-secondary" href={`/register?returnTo=${returnToParam}`}>
             Create account
           </a>
         </div>

@@ -298,7 +298,13 @@ function AuthTabs({ active }: { active: 'login' | 'register' }) {
   );
 }
 
-function OAuthButton({ mode }: { mode: 'login' | 'register' }) {
+export function OAuthButton({
+  mode,
+  returnTo,
+}: {
+  mode: 'login' | 'register';
+  returnTo?: string | null;
+}) {
   const [isRedirecting, setIsRedirecting] = useState(false);
 
   return (
@@ -308,7 +314,7 @@ function OAuthButton({ mode }: { mode: 'login' | 'register' }) {
       type="button"
       onClick={() => {
         setIsRedirecting(true);
-        window.location.assign(api.getGoogleOAuthStartUrl('/setup'));
+        window.location.assign(api.getGoogleOAuthStartUrl(returnTo ?? '/setup'));
       }}
     >
       <span className="oauth-button-mark" aria-hidden>
@@ -323,7 +329,7 @@ function OAuthButton({ mode }: { mode: 'login' | 'register' }) {
   );
 }
 
-function AuthDivider() {
+export function AuthDivider() {
   return (
     <div className="auth-divider" role="presentation">
       <span />
@@ -442,7 +448,7 @@ function LoginPage() {
     <main className="login-shell">
       <section className="login-panel">
         <AuthTabs active="login" />
-        <OAuthButton mode="login" />
+        <OAuthButton mode="login" returnTo={returnTo} />
         <AuthDivider />
         <form className="login-form" onSubmit={handleSubmit}>
           <label>
@@ -538,7 +544,7 @@ function RegisterPage() {
     <main className="login-shell">
       <section className="login-panel">
         <AuthTabs active="register" />
-        <OAuthButton mode="register" />
+        <OAuthButton mode="register" returnTo={returnTo} />
         <AuthDivider />
         <form className="login-form" onSubmit={handleSubmit}>
           <label>
