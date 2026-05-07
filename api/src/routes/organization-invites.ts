@@ -117,7 +117,7 @@ organizationInvitesRouter.post('/organizations/:organizationId/invites', asyncRo
   sendCreated(res, {
     ...serializeInvite(invite),
     inviteToken: token,
-    inviteLink: buildInviteLink(token),
+    inviteLink: buildInviteLink(token, req.headers.origin),
   });
 }));
 
@@ -295,9 +295,17 @@ function deriveInviteStatus(invite: { status: string; expiresAt: Date }) {
   return invite.status;
 }
 
-function buildInviteLink(token: string) {
-  const base = config.publicFrontendUrl ?? config.publicApiUrl ?? 'http://localhost:5174';
+function buildInviteLink(token: string, requestOrigin: string | string[] | undefined) {
+  const base = pickInviteLinkBase(requestOrigin);
   return `${base.replace(/\/$/, '')}/invites/${token}`;
+}
+
+function pickInviteLinkBase(requestOrigin: string | string[] | undefined) {
+  const origin = Array.isArray(requestOrigin) ? requestOrigin[0] : requestOrigin;
+  if (origin && config.corsOrigins.includes(origin)) {
+    return origin;
+  }
+  return config.publicFrontendUrl ?? config.publicApiUrl ?? 'http://localhost:5174';
 }
 
 function hashInviteToken(token: string) {
