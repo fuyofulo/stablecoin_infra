@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { useParams, useSearchParams } from 'react-router';
+import { Link, useParams, useSearchParams } from 'react-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError } from '../api';
 import type {
@@ -10,6 +10,36 @@ import type {
 import { signAndSubmitIntent } from '../lib/squads-pipeline';
 import { useToast } from '../ui/Toast';
 import { DecimalProposalCard } from '../ui/DecimalProposalCard';
+
+function CreateOption({
+  title,
+  body,
+  to,
+  cta,
+}: {
+  title: string;
+  body: string;
+  to: string;
+  cta: string;
+}) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <strong style={{ fontSize: 13 }}>{title}</strong>
+      <span style={{ fontSize: 12, color: 'var(--ax-text-muted)', lineHeight: 1.5 }}>{body}</span>
+      <Link
+        to={to}
+        style={{
+          fontSize: 12,
+          color: 'var(--ax-accent)',
+          textDecoration: 'none',
+          marginTop: 'auto',
+        }}
+      >
+        {cta} →
+      </Link>
+    </div>
+  );
+}
 
 type BusyKey = string;
 
@@ -172,6 +202,41 @@ export function OrganizationProposalsPage({ session }: { session: AuthenticatedS
           </button>
         </div>
       </header>
+
+      <section
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+          gap: 12,
+          marginBottom: 16,
+          padding: 14,
+          border: '1px dashed var(--ax-border)',
+          borderRadius: 12,
+          background: 'rgba(140, 200, 255, 0.04)',
+        }}
+      >
+        <div style={{ gridColumn: '1 / -1', fontSize: 12, color: 'var(--ax-text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', fontWeight: 600 }}>
+          Create a proposal
+        </div>
+        <CreateOption
+          title="Send a Squads payment"
+          body="Open a payment order whose source is a Squads treasury, then click 'Create Squads proposal'."
+          to={`/organizations/${organizationId}/payments`}
+          cta="Go to payments"
+        />
+        <CreateOption
+          title="Add a member"
+          body="From a Squads treasury's detail page, use '+ Add member'."
+          to={`/organizations/${organizationId}/wallets`}
+          cta="Go to treasury accounts"
+        />
+        <CreateOption
+          title="Change threshold"
+          body="From a Squads treasury's detail page, use 'Change threshold'."
+          to={`/organizations/${organizationId}/wallets`}
+          cta="Go to treasury accounts"
+        />
+      </section>
 
       <div style={{ display: 'flex', gap: 8, marginBottom: 16, alignItems: 'center', flexWrap: 'wrap' }}>
         {(['pending', 'all', 'closed'] as SquadsProposalListStatusFilter[]).map((filter) => {

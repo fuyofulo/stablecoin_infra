@@ -2283,7 +2283,15 @@ function isMissingSquadsAccountError(error: unknown) {
   if (!(error instanceof Error)) {
     return false;
   }
-  return /account.*not.*found|could not find account|no account info/i.test(error.message);
+  // Squads SDK's fromAccountAddress throws "Unable to find <Account> account
+  // at <pda>" when the account doesn't exist on chain. Other RPC providers
+  // return shapes like "Account not found" or "could not find account" or
+  // "no account info". Match all of them so loadProposal /
+  // loadConfigTransaction / loadVaultTransaction can return null instead of
+  // propagating the raw error — important during proposal creation, where
+  // the serializer calls loadLiveProposalState immediately after persisting
+  // the row but BEFORE the create transaction has actually landed on chain.
+  return /account.*not.*found|could not find account|no account info|unable to find .* account/i.test(error.message);
 }
 
 function readSquadsMetadata(value: unknown) {
