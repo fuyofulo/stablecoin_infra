@@ -458,6 +458,151 @@ export type SquadsConfigProposalWithTreasury = SquadsConfigProposal & {
   };
 };
 
+// ---------------------------------------------------------------------------
+// Generic Decimal proposal — unified across config + vault transactions.
+// ---------------------------------------------------------------------------
+
+export type ProposalSemanticType =
+  | 'add_member'
+  | 'remove_member'
+  | 'change_threshold'
+  | 'send_payment'
+  | string;
+
+export type DecimalProposalLocalStatus =
+  | 'prepared'
+  | 'submitted'
+  | 'active'
+  | 'approved'
+  | 'executed'
+  | 'cancelled'
+  | 'rejected'
+  | string;
+
+export type DecimalProposalVoting = {
+  threshold: number;
+  approvals: SquadsProposalDecision[];
+  rejections: SquadsProposalDecision[];
+  cancellations: SquadsProposalDecision[];
+  pendingVoters: SquadsProposalPendingVoter[];
+  canExecuteWalletAddresses: string[];
+};
+
+export type DecimalProposal = {
+  decimalProposalId: string;
+  organizationId: string;
+  treasuryWalletId: string | null;
+  paymentOrderId: string | null;
+  provider: SquadsTreasuryProvider;
+  proposalType: 'config_transaction' | 'vault_transaction' | string;
+  proposalCategory: 'configuration' | 'execution' | string;
+  semanticType: ProposalSemanticType | null;
+  status: SquadsProposalStatus | DecimalProposalLocalStatus;
+  localStatus: DecimalProposalLocalStatus;
+  squads: {
+    programId: string | null;
+    multisigPda: string | null;
+    proposalPda: string | null;
+    transactionPda: string | null;
+    batchPda: string | null;
+    transactionIndex: string | null;
+    vaultIndex: number | null;
+  };
+  voting: DecimalProposalVoting | null;
+  requiredSigner: string | null;
+  creatorPersonalWalletId: string | null;
+  creatorWalletAddress: string | null;
+  submittedSignature: string | null;
+  executedSignature: string | null;
+  submittedAt: string | null;
+  executedAt: string | null;
+  intentJson: Record<string, unknown>;
+  semanticPayloadJson: Record<string, unknown>;
+  metadataJson: Record<string, unknown>;
+  treasuryWallet: {
+    treasuryWalletId: string;
+    address: string;
+    displayName: string | null;
+    source: string;
+    sourceRef: string | null;
+  } | null;
+  paymentOrder: {
+    paymentOrderId: string;
+    state: string;
+    amountRaw: string;
+    asset: string;
+    externalReference: string | null;
+    invoiceNumber: string | null;
+    destination: {
+      destinationId: string;
+      label: string;
+      walletAddress: string;
+      tokenAccountAddress: string | null;
+    };
+  } | null;
+  createdByUser: {
+    userId: string;
+    email: string;
+    displayName: string;
+    avatarUrl: string | null;
+  } | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type DecimalProposalIntentResponse = {
+  intent: {
+    provider: SquadsTreasuryProvider;
+    kind: string;
+    proposalType: string;
+    proposalCategory: string;
+    semanticType: string | null;
+    treasuryWalletId: string;
+    organizationId: string;
+    multisigPda: string;
+    transactionIndex: string;
+    squadsTransactionPda?: string;
+    vaultTransactionPda?: string;
+    proposalPda: string;
+    actions: Record<string, unknown>[];
+  };
+  transaction: {
+    encoding: 'base64';
+    serializedTransaction: string;
+    requiredSigner: string;
+    recentBlockhash: string;
+    lastValidBlockHeight: number;
+  };
+  decimalProposal?: DecimalProposal;
+};
+
+export type CreateSquadsPaymentProposalRequest = {
+  paymentOrderId: string;
+  creatorPersonalWalletId: string;
+  memo?: string | null;
+  autoApprove?: boolean;
+};
+
+export type DecimalProposalApproveRequest = {
+  memberPersonalWalletId: string;
+  memo?: string | null;
+};
+
+export type DecimalProposalExecuteRequest = {
+  memberPersonalWalletId: string;
+};
+
+export type DecimalProposalSignatureRequest = {
+  signature: string;
+};
+
+export type DecimalProposalListFilter = {
+  status?: SquadsProposalListStatusFilter;
+  proposalType?: string;
+  treasuryWalletId?: string;
+  limit?: number;
+};
+
 export type SquadsConfigProposalKind =
   | 'config_proposal_create'
   | 'config_proposal_approval'
@@ -489,6 +634,10 @@ export type SquadsConfigProposalIntentResponse = {
     recentBlockhash: string;
     lastValidBlockHeight: number;
   };
+  // Backend now persists every proposal as a DecimalProposal and returns
+  // the row so the frontend can call confirm-submission/execution and
+  // navigate to the generic detail page.
+  decimalProposal?: DecimalProposal;
 };
 
 export type CreateSquadsAddMemberProposalRequest = {

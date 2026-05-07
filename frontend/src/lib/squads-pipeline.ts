@@ -1,7 +1,19 @@
 import { Connection, VersionedTransaction } from '@solana/web3.js';
 import { api } from '../api';
-import type { SquadsConfigProposalIntentResponse } from '../types';
+import type {
+  DecimalProposalIntentResponse,
+  SquadsConfigProposalIntentResponse,
+} from '../types';
 import { resolveSolanaRpcUrl, waitForSignatureVisible } from './solana-wallet';
+
+// Both shapes carry the same transaction sub-object — just widen here so any
+// caller can hand us either an old config-proposal intent or a new generic
+// DecimalProposal intent without changing the helper.
+type SignableIntent = {
+  transaction: {
+    serializedTransaction: string;
+  };
+};
 
 function decodeBase64ToBytes(base64: string): Uint8Array {
   const binary = atob(base64);
@@ -16,7 +28,7 @@ function decodeBase64ToBytes(base64: string): Uint8Array {
  * getSignatureStatuses (blockhash-agnostic). Returns the on-chain signature.
  */
 export async function signAndSubmitIntent(args: {
-  intent: SquadsConfigProposalIntentResponse;
+  intent: SignableIntent | SquadsConfigProposalIntentResponse | DecimalProposalIntentResponse;
   signerPersonalWalletId: string;
 }): Promise<string> {
   const { intent, signerPersonalWalletId } = args;

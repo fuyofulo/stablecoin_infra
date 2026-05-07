@@ -1,26 +1,29 @@
 import { useMemo, useState } from 'react';
-import { useParams } from 'react-router';
+import { useParams, useSearchParams } from 'react-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError } from '../api';
 import type {
   AuthenticatedSession,
-  SquadsConfigProposalWithTreasury,
+  DecimalProposal,
   SquadsProposalListStatusFilter,
 } from '../types';
 import { signAndSubmitIntent } from '../lib/squads-pipeline';
 import { useToast } from '../ui/Toast';
-import { ProposalCard } from '../ui/SquadsProposalCard';
+import { DecimalProposalCard } from '../ui/DecimalProposalCard';
 
-type BusyKey = string; // `${treasuryWalletId}:${transactionIndex}`
+type BusyKey = string;
 
 export function OrganizationProposalsPage({ session }: { session: AuthenticatedSession }) {
   const { organizationId } = useParams<{ organizationId: string }>();
+  const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const { success, error: toastError } = useToast();
 
   const [statusFilter, setStatusFilter] = useState<SquadsProposalListStatusFilter>('pending');
   const [busyKey, setBusyKey] = useState<BusyKey | null>(null);
   const [busyAction, setBusyAction] = useState<'approve' | 'execute' | null>(null);
+
+  const treasuryWalletFilter = searchParams.get('treasuryWalletId') ?? undefined;
 
   const ownPersonalWalletsQuery = useQuery({
     queryKey: ['personal-wallets'] as const,
@@ -36,43 +39,48 @@ export function OrganizationProposalsPage({ session }: { session: AuthenticatedS
   );
 
   const proposalsQuery = useQuery({
-    queryKey: ['organization-squads-proposals', organizationId, statusFilter] as const,
+    queryKey: [
+      'organization-proposals',
+      organizationId,
+      statusFilter,
+      treasuryWalletFilter,
+    ] as const,
     queryFn: () =>
-      api.listOrganizationSquadsProposals(organizationId!, { status: statusFilter }),
+      api.listOrganizationProposals(organizationId!, {
+        status: statusFilter,
+        treasuryWalletId: treasuryWalletFilter,
+      }),
     enabled: Boolean(organizationId),
     refetchInterval: 20_000,
   });
 
-  async function refreshProposals(treasuryWalletId?: string) {
-    await queryClient.invalidateQueries({
-      queryKey: ['organization-squads-proposals', organizationId],
-    });
-    if (treasuryWalletId) {
+  async function refreshProposals(decimalProposalId?: string) {
+    await queryClient.invalidateQueries({ queryKey: ['organization-proposals', organizationId] });
+    if (decimalProposalId) {
       await queryClient.invalidateQueries({
-        queryKey: ['squads-config-proposals', organizationId, treasuryWalletId],
-      });
-      await queryClient.invalidateQueries({
-        queryKey: ['treasury-wallet-detail', organizationId, treasuryWalletId],
+        queryKey: ['organization-proposal', organizationId, decimalProposalId],
       });
     }
   }
 
   const approveMutation = useMutation({
-    mutationFn: async (input: {
-      proposal: SquadsConfigProposalWithTreasury;
-      signerWalletId: string;
-    }) => {
-      const intent = await api.createSquadsConfigProposalApprovalIntent(
+    mutationFn: async (input: { proposal: DecimalProposal; signerWalletId: string }) => {
+      const intent = await api.createProposalApprovalIntent(
         organizationId!,
-        input.proposal.treasuryWallet.treasuryWalletId,
-        input.proposal.transactionIndex,
+        input.proposal.decimalProposalId,
         { memberPersonalWalletId: input.signerWalletId },
       );
-      return signAndSubmitIntent({ intent, signerPersonalWalletId: input.signerWalletId });
+      const sig = await signAndSubmitIntent({
+        intent,
+        signerPersonalWalletId: input.signerWalletId,
+      });
+      // Approval doesn't have a confirm-step yet on the backend; the next
+      // refresh will pull live status from chain.
+      return { decimalProposalId: input.proposal.decimalProposalId, signature: sig };
     },
-    onSuccess: async (_sig, vars) => {
+    onSuccess: async (result) => {
       success('Approval submitted.');
-      await refreshProposals(vars.proposal.treasuryWallet.treasuryWalletId);
+      await refreshProposals(result.decimalProposalId);
     },
     onError: (err) => {
       toastError(err instanceof ApiError || err instanceof Error ? err.message : 'Approve failed.');
@@ -84,15 +92,11 @@ export function OrganizationProposalsPage({ session }: { session: AuthenticatedS
   });
 
   const executeMutation = useMutation({
-    mutationFn: async (input: {
-      proposal: SquadsConfigProposalWithTreasury;
-      signerWalletId: string;
-    }) => {
-      const treasuryWalletId = input.proposal.treasuryWallet.treasuryWalletId;
-      const intent = await api.createSquadsConfigProposalExecuteIntent(
+    mutationFn: async (input: { proposal: DecimalProposal; signerWalletId: string }) => {
+      const decimalProposalId = input.proposal.decimalProposalId;
+      const intent = await api.createProposalExecuteIntent(
         organizationId!,
-        treasuryWalletId,
-        input.proposal.transactionIndex,
+        decimalProposalId,
         { memberPersonalWalletId: input.signerWalletId },
       );
       const sig = await signAndSubmitIntent({
@@ -100,15 +104,28 @@ export function OrganizationProposalsPage({ session }: { session: AuthenticatedS
         signerPersonalWalletId: input.signerWalletId,
       });
       try {
-        await api.syncSquadsTreasuryMembers(organizationId!, treasuryWalletId);
+        await api.confirmProposalExecution(organizationId!, decimalProposalId, { signature: sig });
       } catch {
-        // ignore — sync failure is recoverable from the treasury detail page
+        // Confirm failure is recoverable — local status will catch up via the
+        // 20s refetch or next approve/execute cycle.
       }
-      return sig;
+      // Sync Squads members for config_transactions so the local Decimal
+      // authorization table reflects the new on-chain config.
+      if (input.proposal.proposalType === 'config_transaction' && input.proposal.treasuryWalletId) {
+        try {
+          await api.syncSquadsTreasuryMembers(organizationId!, input.proposal.treasuryWalletId);
+        } catch {
+          // ignore
+        }
+      }
+      return { decimalProposalId, signature: sig };
     },
-    onSuccess: async (_sig, vars) => {
-      success('Proposal executed and synced.');
-      await refreshProposals(vars.proposal.treasuryWallet.treasuryWalletId);
+    onSuccess: async (result) => {
+      success('Proposal executed.');
+      await refreshProposals(result.decimalProposalId);
+      await queryClient.invalidateQueries({
+        queryKey: ['treasury-wallet-detail', organizationId],
+      });
     },
     onError: (err) => {
       toastError(err instanceof ApiError || err instanceof Error ? err.message : 'Execute failed.');
@@ -131,17 +148,16 @@ export function OrganizationProposalsPage({ session }: { session: AuthenticatedS
   }
 
   const items = proposalsQuery.data?.items ?? [];
+  const treasuryFilterApplied = Boolean(treasuryWalletFilter);
 
   return (
     <main className="page-frame">
       <header className="page-header">
         <div>
           <p className="eyebrow">Operations</p>
-          <h1>Squads proposals</h1>
+          <h1>Proposals</h1>
           <p>
-            Config proposals across every Squads treasury you sign for in this
-            organization. Approve and execute from here, or open a proposal for
-            the full detail.
+            Squads config and payment proposals across every treasury you sign for in this organization. Each proposal is its own on-chain transaction; sign approvals independently.
           </p>
         </div>
         <div className="page-actions">
@@ -157,7 +173,7 @@ export function OrganizationProposalsPage({ session }: { session: AuthenticatedS
         </div>
       </header>
 
-      <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 16, alignItems: 'center', flexWrap: 'wrap' }}>
         {(['pending', 'all', 'closed'] as SquadsProposalListStatusFilter[]).map((filter) => {
           const active = statusFilter === filter;
           return (
@@ -180,6 +196,28 @@ export function OrganizationProposalsPage({ session }: { session: AuthenticatedS
             </button>
           );
         })}
+        {treasuryFilterApplied ? (
+          <button
+            type="button"
+            onClick={() => {
+              const next = new URLSearchParams(searchParams);
+              next.delete('treasuryWalletId');
+              setSearchParams(next, { replace: true });
+            }}
+            style={{
+              padding: '6px 14px',
+              fontSize: 12,
+              borderRadius: 999,
+              border: '1px dashed var(--ax-border)',
+              background: 'rgba(140, 200, 255, 0.08)',
+              color: 'var(--ax-text-muted)',
+              cursor: 'pointer',
+            }}
+            title="Clear treasury filter"
+          >
+            ✕ Treasury filter
+          </button>
+        ) : null}
       </div>
 
       {proposalsQuery.isLoading ? (
@@ -212,18 +250,20 @@ export function OrganizationProposalsPage({ session }: { session: AuthenticatedS
       ) : (
         <section style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           {items.map((proposal) => {
-            const key: BusyKey = `${proposal.treasuryWallet.treasuryWalletId}:${proposal.transactionIndex}`;
-            const treasuryName = proposal.treasuryWallet.displayName || 'Untitled Squads treasury';
+            const key: BusyKey = proposal.decimalProposalId;
+            const treasuryLink = proposal.treasuryWalletId
+              ? `/organizations/${organizationId}/wallets/${proposal.treasuryWalletId}`
+              : null;
             return (
-              <ProposalCard
+              <DecimalProposalCard
                 key={key}
                 proposal={proposal}
                 ownPersonalWallets={ownPersonalWallets}
                 currentUserId={session.user.userId}
                 busy={busyKey === key ? busyAction : null}
-                treasuryLabel={treasuryName}
-                treasuryLinkTo={`/organizations/${organizationId}/wallets/${proposal.treasuryWallet.treasuryWalletId}`}
-                detailLinkTo={`/organizations/${organizationId}/wallets/${proposal.treasuryWallet.treasuryWalletId}/proposals/${proposal.transactionIndex}`}
+                detailLinkTo={`/organizations/${organizationId}/proposals/${proposal.decimalProposalId}`}
+                treasuryLinkTo={treasuryLink}
+                showTreasuryLabel={!treasuryFilterApplied}
                 onApprove={(signerWalletId) => {
                   setBusyKey(key);
                   setBusyAction('approve');

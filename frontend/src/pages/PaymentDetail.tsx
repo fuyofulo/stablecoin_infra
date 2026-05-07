@@ -21,7 +21,9 @@ import {
   type BrowserWalletOption,
 } from '../domain';
 import { displayPaymentStatus, statusToneForPayment } from '../status-labels';
+import { signAndSubmitIntent } from '../lib/squads-pipeline';
 import { useToast } from '../ui/Toast';
+import type { UserWallet } from '../types';
 
 type StageState = 'complete' | 'current' | 'pending' | 'blocked';
 
@@ -36,6 +38,7 @@ type ActionVariant =
   | 'needs_submit'
   | 'needs_approval'
   | 'ready_to_sign'
+  | 'ready_to_propose'
   | 'in_flight'
   | 'settled'
   | 'exception'
@@ -126,7 +129,12 @@ function determineVariant(order: PaymentOrder): ActionVariant {
   const s = order.derivedState;
   if (s === 'draft') return 'needs_submit';
   if (s === 'pending_approval') return 'needs_approval';
-  if (s === 'approved' || s === 'ready_for_execution') return 'ready_to_sign';
+  if (s === 'approved' || s === 'ready_for_execution') {
+    // Squads-sourced payments need a multisig proposal, not a direct sign.
+    return order.sourceTreasuryWallet?.source === 'squads_v4'
+      ? 'ready_to_propose'
+      : 'ready_to_sign';
+  }
   if (s === 'execution_recorded') return 'in_flight';
   if (s === 'settled' || s === 'closed') return 'settled';
   if (s === 'exception' || s === 'partially_settled') return 'exception';
@@ -260,6 +268,74 @@ export function PaymentDetailPage() {
     onError: (err) => toastError(err instanceof Error ? err.message : 'Could not cancel.'),
   });
 
+  // Personal wallets needed when the source is a Squads vault — we use one
+  // of the user's wallets that's an on-chain Squads voter (with `initiate`)
+  // to sign the proposal-create transaction.
+  const ownPersonalWalletsQuery = useQuery({
+    queryKey: ['personal-wallets'] as const,
+    queryFn: () => api.listPersonalWallets(),
+    enabled: Boolean(organizationId),
+  });
+  const ownPersonalWallets: UserWallet[] = useMemo(
+    () =>
+      (ownPersonalWalletsQuery.data?.items ?? []).filter(
+        (w) => w.status === 'active' && w.chain === 'solana',
+      ),
+    [ownPersonalWalletsQuery.data],
+  );
+
+  const [proposalCreatorWalletId, setProposalCreatorWalletId] = useState('');
+  useEffect(() => {
+    if (!proposalCreatorWalletId && ownPersonalWallets.length > 0) {
+      setProposalCreatorWalletId(ownPersonalWallets[0]!.userWalletId);
+    }
+  }, [ownPersonalWallets, proposalCreatorWalletId]);
+
+  const createProposalMutation = useMutation({
+    mutationFn: async () => {
+      const order = orderQuery.data;
+      if (!order?.sourceTreasuryWallet?.treasuryWalletId) {
+        throw new Error('No source treasury wallet on this payment order.');
+      }
+      if (!proposalCreatorWalletId) {
+        throw new Error('Pick a personal wallet to initiate the proposal.');
+      }
+      const intent = await api.createSquadsPaymentProposalIntent(
+        organizationId!,
+        order.sourceTreasuryWallet.treasuryWalletId,
+        {
+          paymentOrderId: order.paymentOrderId,
+          creatorPersonalWalletId: proposalCreatorWalletId,
+          autoApprove: true,
+        },
+      );
+      const signature = await signAndSubmitIntent({
+        intent,
+        signerPersonalWalletId: proposalCreatorWalletId,
+      });
+      const decimalProposalId = intent.decimalProposal?.decimalProposalId ?? null;
+      if (decimalProposalId) {
+        try {
+          await api.confirmProposalSubmission(organizationId!, decimalProposalId, { signature });
+        } catch {
+          // ignore — local status will catch up on refetch
+        }
+      }
+      return { decimalProposalId, signature };
+    },
+    onSuccess: async (result) => {
+      success('Squads proposal created.');
+      await queryClient.invalidateQueries({ queryKey: ['payment-order', organizationId, paymentOrderId] });
+      await queryClient.invalidateQueries({ queryKey: ['organization-proposals', organizationId] });
+      if (result.decimalProposalId) {
+        navigate(`/organizations/${organizationId}/proposals/${result.decimalProposalId}`);
+      }
+    },
+    onError: (err) => {
+      toastError(err instanceof Error ? err.message : 'Could not create Squads proposal.');
+    },
+  });
+
   if (!organizationId || !paymentOrderId) {
     return (
       <main className="page-frame" data-layout="rd">
@@ -385,6 +461,11 @@ export function PaymentDetailPage() {
           onSign={() => signMutation.mutate()}
           onExportProof={() => proofMutation.mutate()}
           onCancel={() => cancelMutation.mutate()}
+          ownPersonalWallets={ownPersonalWallets}
+          proposalCreatorWalletId={proposalCreatorWalletId}
+          onSelectProposalCreator={setProposalCreatorWalletId}
+          proposing={createProposalMutation.isPending}
+          onCreateSquadsProposal={() => createProposalMutation.mutate()}
         />
 
         <section className="rd-section">
@@ -623,6 +704,11 @@ function PrimaryAction(props: {
   onSign: () => void;
   onExportProof: () => void;
   onCancel: () => void;
+  ownPersonalWallets: UserWallet[];
+  proposalCreatorWalletId: string;
+  onSelectProposalCreator: (id: string) => void;
+  proposing: boolean;
+  onCreateSquadsProposal: () => void;
 }) {
   const {
     variant,
@@ -642,6 +728,11 @@ function PrimaryAction(props: {
     onApprove,
     onSign,
     onExportProof,
+    ownPersonalWallets,
+    proposalCreatorWalletId,
+    onSelectProposalCreator,
+    proposing,
+    onCreateSquadsProposal,
   } = props;
 
   if (variant === 'needs_submit') {
@@ -684,6 +775,58 @@ function PrimaryAction(props: {
             aria-busy={approving}
           >
             {approving ? 'Approving…' : 'Approve'}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (variant === 'ready_to_propose') {
+    const hasPersonalWallets = ownPersonalWallets.length > 0;
+    return (
+      <div className="rd-primary" data-emphasis="action">
+        <p className="rd-primary-eyebrow">Next step · Squads proposal</p>
+        <h2 className="rd-primary-title">
+          <span className="rd-mono">{amountLabel}</span> ready for multisig
+        </h2>
+        <p className="rd-primary-body">
+          The source treasury is a Squads multisig. Create a payment proposal that other signers can approve before the vault releases funds.
+        </p>
+        <div className="rd-primary-grid">
+          <label className="rd-field">
+            <span className="rd-field-label">Initiating wallet</span>
+            {hasPersonalWallets ? (
+              <select
+                className="rd-select"
+                value={proposalCreatorWalletId}
+                onChange={(e) => onSelectProposalCreator(e.target.value)}
+              >
+                {ownPersonalWallets.map((w) => (
+                  <option key={w.userWalletId} value={w.userWalletId}>
+                    {(w.label ?? 'Untitled')} · {shortenAddress(w.walletAddress, 4, 4)}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <span className="rd-field-label" style={{ color: 'var(--ax-warning)' }}>
+                Create a personal wallet on /profile first.
+              </span>
+            )}
+          </label>
+        </div>
+        <p style={{ fontSize: 12, color: 'var(--ax-text-muted)', margin: '0 0 12px' }}>
+          Must be one of your personal wallets that's an on-chain Squads member with the <strong>Initiate</strong> permission. Your signature counts as the first approval.
+        </p>
+        <div className="rd-actions">
+          <button
+            type="button"
+            className="rd-btn rd-btn-primary"
+            onClick={onCreateSquadsProposal}
+            disabled={proposing || !hasPersonalWallets || !proposalCreatorWalletId}
+            aria-busy={proposing}
+          >
+            {proposing ? 'Creating proposal…' : 'Create Squads proposal'}
+            {!proposing ? <span className="rd-btn-arrow" aria-hidden>→</span> : null}
           </button>
         </div>
       </div>

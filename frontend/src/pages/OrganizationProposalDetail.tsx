@@ -4,41 +4,30 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError } from '../api';
 import type {
   AuthenticatedSession,
-  SquadsConfigProposal,
+  DecimalProposal,
   SquadsProposalDecision,
   SquadsProposalPendingVoter,
-  TreasuryWallet,
 } from '../types';
 import { signAndSubmitIntent } from '../lib/squads-pipeline';
 import { orbAccountUrl, shortenAddress } from '../domain';
 import { useToast } from '../ui/Toast';
 import {
-  ActionsSummary,
   DecisionPill,
   PendingVoterPill,
   StatusPill,
-  summarizeActions,
-} from '../ui/SquadsProposalCard';
+  TypePill,
+  proposalTypeLabel,
+  summarizeProposal,
+} from '../ui/DecimalProposalCard';
 
-export function SquadsProposalDetailPage({ session }: { session: AuthenticatedSession }) {
-  const { organizationId, treasuryWalletId, transactionIndex } = useParams<{
+export function OrganizationProposalDetailPage({ session }: { session: AuthenticatedSession }) {
+  const { organizationId, decimalProposalId } = useParams<{
     organizationId: string;
-    treasuryWalletId: string;
-    transactionIndex: string;
+    decimalProposalId: string;
   }>();
   const queryClient = useQueryClient();
   const { success, error: toastError } = useToast();
   const [busyAction, setBusyAction] = useState<'approve' | 'execute' | null>(null);
-
-  const treasuryListQuery = useQuery({
-    queryKey: ['treasury-wallets', organizationId] as const,
-    queryFn: () => api.listTreasuryWallets(organizationId!),
-    enabled: Boolean(organizationId),
-  });
-  const wallet: TreasuryWallet | undefined = useMemo(
-    () => treasuryListQuery.data?.items.find((w) => w.treasuryWalletId === treasuryWalletId),
-    [treasuryListQuery.data, treasuryWalletId],
-  );
 
   const ownPersonalWalletsQuery = useQuery({
     queryKey: ['personal-wallets'] as const,
@@ -54,44 +43,26 @@ export function SquadsProposalDetailPage({ session }: { session: AuthenticatedSe
   );
 
   const proposalQuery = useQuery({
-    queryKey: [
-      'squads-config-proposal',
-      organizationId,
-      treasuryWalletId,
-      transactionIndex,
-    ] as const,
-    queryFn: () =>
-      api.getSquadsConfigProposal(organizationId!, treasuryWalletId!, transactionIndex!),
-    enabled: Boolean(organizationId && treasuryWalletId && transactionIndex),
+    queryKey: ['organization-proposal', organizationId, decimalProposalId] as const,
+    queryFn: () => api.getOrganizationProposal(organizationId!, decimalProposalId!),
+    enabled: Boolean(organizationId && decimalProposalId),
     refetchInterval: 15_000,
   });
 
   async function refreshAll() {
     await queryClient.invalidateQueries({
-      queryKey: [
-        'squads-config-proposal',
-        organizationId,
-        treasuryWalletId,
-        transactionIndex,
-      ],
+      queryKey: ['organization-proposal', organizationId, decimalProposalId],
     });
     await queryClient.invalidateQueries({
-      queryKey: ['squads-config-proposals', organizationId, treasuryWalletId],
-    });
-    await queryClient.invalidateQueries({
-      queryKey: ['organization-squads-proposals', organizationId],
-    });
-    await queryClient.invalidateQueries({
-      queryKey: ['treasury-wallet-detail', organizationId, treasuryWalletId],
+      queryKey: ['organization-proposals', organizationId],
     });
   }
 
   const approveMutation = useMutation({
-    mutationFn: async (input: { proposal: SquadsConfigProposal; signerWalletId: string }) => {
-      const intent = await api.createSquadsConfigProposalApprovalIntent(
+    mutationFn: async (input: { proposal: DecimalProposal; signerWalletId: string }) => {
+      const intent = await api.createProposalApprovalIntent(
         organizationId!,
-        treasuryWalletId!,
-        input.proposal.transactionIndex,
+        input.proposal.decimalProposalId,
         { memberPersonalWalletId: input.signerWalletId },
       );
       return signAndSubmitIntent({ intent, signerPersonalWalletId: input.signerWalletId });
@@ -107,11 +78,10 @@ export function SquadsProposalDetailPage({ session }: { session: AuthenticatedSe
   });
 
   const executeMutation = useMutation({
-    mutationFn: async (input: { proposal: SquadsConfigProposal; signerWalletId: string }) => {
-      const intent = await api.createSquadsConfigProposalExecuteIntent(
+    mutationFn: async (input: { proposal: DecimalProposal; signerWalletId: string }) => {
+      const intent = await api.createProposalExecuteIntent(
         organizationId!,
-        treasuryWalletId!,
-        input.proposal.transactionIndex,
+        input.proposal.decimalProposalId,
         { memberPersonalWalletId: input.signerWalletId },
       );
       const sig = await signAndSubmitIntent({
@@ -119,15 +89,27 @@ export function SquadsProposalDetailPage({ session }: { session: AuthenticatedSe
         signerPersonalWalletId: input.signerWalletId,
       });
       try {
-        await api.syncSquadsTreasuryMembers(organizationId!, treasuryWalletId!);
+        await api.confirmProposalExecution(organizationId!, input.proposal.decimalProposalId, {
+          signature: sig,
+        });
       } catch {
-        // ignore — sync is recoverable from the treasury detail page
+        // ignore — local status will catch up via refetch
+      }
+      if (input.proposal.proposalType === 'config_transaction' && input.proposal.treasuryWalletId) {
+        try {
+          await api.syncSquadsTreasuryMembers(organizationId!, input.proposal.treasuryWalletId);
+        } catch {
+          // ignore
+        }
       }
       return sig;
     },
     onSuccess: async () => {
-      success('Proposal executed and synced.');
+      success('Proposal executed.');
       await refreshAll();
+      await queryClient.invalidateQueries({
+        queryKey: ['treasury-wallet-detail', organizationId],
+      });
     },
     onError: (err) => {
       toastError(err instanceof ApiError || err instanceof Error ? err.message : 'Execute failed.');
@@ -135,7 +117,7 @@ export function SquadsProposalDetailPage({ session }: { session: AuthenticatedSe
     onSettled: () => setBusyAction(null),
   });
 
-  if (!organizationId || !treasuryWalletId || !transactionIndex) {
+  if (!organizationId || !decimalProposalId) {
     return (
       <main className="page-frame">
         <div className="rd-state">
@@ -153,9 +135,9 @@ export function SquadsProposalDetailPage({ session }: { session: AuthenticatedSe
   const isMissing = proposalError instanceof ApiError && proposalError.status === 404;
 
   const pendingVoterWallet = useMemo(() => {
-    if (!proposal) return null;
+    if (!proposal?.voting) return null;
     const ownAddresses = new Set(ownPersonalWallets.map((w) => w.walletAddress));
-    const match = proposal.pendingVoters.find(
+    const match = proposal.voting.pendingVoters.find(
       (v) =>
         v.personalWallet?.userId === session.user.userId
         && ownAddresses.has(v.walletAddress),
@@ -165,8 +147,8 @@ export function SquadsProposalDetailPage({ session }: { session: AuthenticatedSe
   }, [proposal, ownPersonalWallets, session.user.userId]);
 
   const executeWallet = useMemo(() => {
-    if (!proposal) return null;
-    const executable = new Set(proposal.canExecuteWalletAddresses);
+    if (!proposal?.voting) return null;
+    const executable = new Set(proposal.voting.canExecuteWalletAddresses);
     return ownPersonalWallets.find((w) => executable.has(w.walletAddress)) ?? null;
   }, [proposal, ownPersonalWallets]);
 
@@ -175,19 +157,27 @@ export function SquadsProposalDetailPage({ session }: { session: AuthenticatedSe
       <header className="page-header">
         <div>
           <p className="eyebrow">
-            <Link
-              to={`/organizations/${organizationId}/wallets/${treasuryWalletId}/proposals`}
-            >
-              ← Proposals · {wallet?.displayName || 'Treasury wallet'}
-            </Link>
+            <Link to={`/organizations/${organizationId}/proposals`}>← Proposals</Link>
           </p>
           <h1 style={{ display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap' }}>
-            {proposal ? summarizeActions(proposal.actions) : `Proposal #${transactionIndex}`}
+            {proposal ? summarizeProposal(proposal) : 'Proposal'}
             {proposal ? <StatusPill status={proposal.status} /> : null}
           </h1>
-          <p>
-            On-chain Squads config proposal #{transactionIndex} on{' '}
-            <strong>{wallet?.displayName ?? 'this treasury'}</strong>.
+          <p style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            {proposal ? <TypePill label={proposalTypeLabel(proposal)} /> : null}
+            {proposal?.treasuryWallet ? (
+              <Link
+                to={`/organizations/${organizationId}/wallets/${proposal.treasuryWallet.treasuryWalletId}`}
+                style={{ color: 'inherit', textDecoration: 'underline', textDecorationColor: 'rgba(255,255,255,0.25)' }}
+              >
+                {proposal.treasuryWallet.displayName ?? 'Treasury'}
+              </Link>
+            ) : null}
+            {proposal?.squads.transactionIndex ? (
+              <span style={{ fontSize: 12, color: 'var(--ax-text-muted)' }}>
+                · #{proposal.squads.transactionIndex}
+              </span>
+            ) : null}
           </p>
         </div>
         <div className="page-actions">
@@ -208,8 +198,7 @@ export function SquadsProposalDetailPage({ session }: { session: AuthenticatedSe
           <div className="rd-empty-cell" style={{ padding: '48px 24px' }}>
             <strong>Not a Squads member</strong>
             <p style={{ margin: 0 }}>
-              You're not a signer on this Squads treasury, so this proposal isn't
-              visible to you.
+              You're not a signer on the treasury this proposal targets, so its detail isn't visible to you.
             </p>
           </div>
         </section>
@@ -217,10 +206,7 @@ export function SquadsProposalDetailPage({ session }: { session: AuthenticatedSe
         <section className="rd-section">
           <div className="rd-empty-cell" style={{ padding: '48px 24px' }}>
             <strong>Proposal not found</strong>
-            <p style={{ margin: 0 }}>
-              The proposal account doesn't exist on chain. It may have been cancelled
-              and cleaned up.
-            </p>
+            <p style={{ margin: 0 }}>The proposal record doesn't exist.</p>
           </div>
         </section>
       ) : proposalQuery.isLoading ? (
@@ -265,7 +251,7 @@ function ProposalDetailBody({
   onApprove,
   onExecute,
 }: {
-  proposal: SquadsConfigProposal;
+  proposal: DecimalProposal;
   pendingVoterWallet: { userWalletId: string; walletAddress: string } | null;
   executeWallet: { userWalletId: string; walletAddress: string } | null;
   busy: 'approve' | 'execute' | null;
@@ -277,6 +263,7 @@ function ProposalDetailBody({
     proposal.status === 'executed'
     || proposal.status === 'cancelled'
     || proposal.status === 'rejected';
+  const voting = proposal.voting;
 
   return (
     <>
@@ -303,7 +290,9 @@ function ProposalDetailBody({
                     ? `Execute as ${shortenAddress(executeWallet.walletAddress, 4, 4)}`
                     : isReadyToExecute
                       ? 'A member with execute permission needs to submit the execute transaction.'
-                      : `${proposal.threshold - proposal.approvals.length} more approval${proposal.threshold - proposal.approvals.length === 1 ? '' : 's'} required.`}
+                      : voting
+                        ? `${voting.threshold - voting.approvals.length} more approval${voting.threshold - voting.approvals.length === 1 ? '' : 's'} required.`
+                        : 'Voting state not yet available.'}
               </div>
             </div>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
@@ -334,43 +323,50 @@ function ProposalDetailBody({
         </section>
       ) : null}
 
-      <section className="rd-section" style={{ marginTop: 16 }}>
-        <header style={{ marginBottom: 12 }}>
-          <h2 style={{ margin: 0, fontSize: 16, fontWeight: 500 }}>Actions</h2>
-        </header>
-        <ActionsSummary actions={proposal.actions} />
-      </section>
+      {proposal.semanticType === 'send_payment' ? (
+        <PaymentSummary proposal={proposal} />
+      ) : (
+        <SemanticSummary proposal={proposal} />
+      )}
 
       <section className="rd-section" style={{ marginTop: 24 }}>
         <header style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 12 }}>
           <h2 style={{ margin: 0, fontSize: 16, fontWeight: 500 }}>Approvals</h2>
-          <span style={{ fontSize: 12, color: 'var(--ax-text-muted)' }}>
-            {proposal.approvals.length} of {proposal.threshold} required
-          </span>
+          {voting ? (
+            <span style={{ fontSize: 12, color: 'var(--ax-text-muted)' }}>
+              {voting.approvals.length} of {voting.threshold} required
+            </span>
+          ) : null}
         </header>
-        <div className="rd-table-shell">
-          <table className="rd-table">
-            <thead>
-              <tr>
-                <th>Voter</th>
-                <th>Wallet</th>
-                <th>Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {[
-                ...proposal.approvals.map((d) => ({ kind: 'approval' as const, decision: d })),
-                ...proposal.rejections.map((d) => ({ kind: 'rejection' as const, decision: d })),
-                ...proposal.cancellations.map((d) => ({ kind: 'cancellation' as const, decision: d })),
-              ].map(({ kind, decision }) => (
-                <DecisionRow key={`${kind}-${decision.walletAddress}`} kind={kind} decision={decision} />
-              ))}
-              {proposal.pendingVoters.map((voter) => (
-                <PendingRow key={`pending-${voter.walletAddress}`} voter={voter} />
-              ))}
-            </tbody>
-          </table>
-        </div>
+        {voting ? (
+          <div className="rd-table-shell">
+            <table className="rd-table">
+              <thead>
+                <tr>
+                  <th>Voter</th>
+                  <th>Wallet</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {[
+                  ...voting.approvals.map((d) => ({ kind: 'approval' as const, decision: d })),
+                  ...voting.rejections.map((d) => ({ kind: 'rejection' as const, decision: d })),
+                  ...voting.cancellations.map((d) => ({ kind: 'cancellation' as const, decision: d })),
+                ].map(({ kind, decision }) => (
+                  <DecisionRow key={`${kind}-${decision.walletAddress}`} kind={kind} decision={decision} />
+                ))}
+                {voting.pendingVoters.map((voter) => (
+                  <PendingRow key={`pending-${voter.walletAddress}`} voter={voter} />
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="rd-empty-cell" style={{ padding: '24px' }}>
+            Voting state not yet available.
+          </div>
+        )}
       </section>
 
       <section className="rd-section" style={{ marginTop: 24 }}>
@@ -384,20 +380,160 @@ function ProposalDetailBody({
             gap: '14px 24px',
           }}
         >
-          <InfoRow label="Proposal account">
-            <ChainLink address={proposal.proposalPda} />
-          </InfoRow>
-          <InfoRow label="Config transaction">
-            <ChainLink address={proposal.configTransactionPda} />
-          </InfoRow>
-          <InfoRow label="Tx index">{proposal.transactionIndex}</InfoRow>
-          <InfoRow label="Stale tx index">{proposal.staleTransactionIndex}</InfoRow>
-          <InfoRow label="Threshold (snapshot)">{proposal.threshold}</InfoRow>
-          <InfoRow label="Status">{proposal.status}</InfoRow>
+          {proposal.squads.proposalPda ? (
+            <InfoRow label="Proposal account">
+              <ChainLink address={proposal.squads.proposalPda} />
+            </InfoRow>
+          ) : null}
+          {proposal.squads.transactionPda ? (
+            <InfoRow label="Squads transaction">
+              <ChainLink address={proposal.squads.transactionPda} />
+            </InfoRow>
+          ) : null}
+          {proposal.squads.multisigPda ? (
+            <InfoRow label="Multisig">
+              <ChainLink address={proposal.squads.multisigPda} />
+            </InfoRow>
+          ) : null}
+          {proposal.squads.transactionIndex ? (
+            <InfoRow label="Tx index">{proposal.squads.transactionIndex}</InfoRow>
+          ) : null}
+          <InfoRow label="Proposal type">{proposal.proposalType}</InfoRow>
+          <InfoRow label="Local status">{proposal.localStatus}</InfoRow>
+          {proposal.submittedSignature ? (
+            <InfoRow label="Submitted sig">
+              <ChainLink address={proposal.submittedSignature} />
+            </InfoRow>
+          ) : null}
+          {proposal.executedSignature ? (
+            <InfoRow label="Executed sig">
+              <ChainLink address={proposal.executedSignature} />
+            </InfoRow>
+          ) : null}
+          {proposal.createdAt ? (
+            <InfoRow label="Created">{new Date(proposal.createdAt).toLocaleString()}</InfoRow>
+          ) : null}
         </div>
       </section>
     </>
   );
+}
+
+function PaymentSummary({ proposal }: { proposal: DecimalProposal }) {
+  const payload = proposal.semanticPayloadJson as {
+    amountRaw?: string;
+    asset?: string;
+    destinationWalletAddress?: string;
+    destinationTokenAccountAddress?: string;
+    sourceWalletAddress?: string;
+    token?: { symbol?: string; mint?: string; decimals?: number };
+    reference?: string | null;
+    memo?: string | null;
+  };
+  const order = proposal.paymentOrder;
+  return (
+    <section className="rd-section" style={{ marginTop: 16 }}>
+      <header style={{ marginBottom: 12 }}>
+        <h2 style={{ margin: 0, fontSize: 16, fontWeight: 500 }}>Payment details</h2>
+      </header>
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+          gap: '14px 24px',
+        }}
+      >
+        <InfoRow label="Amount">
+          {payload?.amountRaw ? (
+            <span>
+              {formatRawAmount(payload.amountRaw, payload.token?.decimals ?? 6)}{' '}
+              {payload.token?.symbol ?? payload.asset?.toUpperCase() ?? ''}
+            </span>
+          ) : (
+            '—'
+          )}
+        </InfoRow>
+        {payload?.destinationWalletAddress ? (
+          <InfoRow label="Destination">
+            <ChainLink address={payload.destinationWalletAddress} />
+            {order?.destination?.label ? (
+              <div style={{ fontSize: 11, opacity: 0.7 }}>{order.destination.label}</div>
+            ) : null}
+          </InfoRow>
+        ) : null}
+        {payload?.sourceWalletAddress ? (
+          <InfoRow label="Source vault">
+            <ChainLink address={payload.sourceWalletAddress} />
+          </InfoRow>
+        ) : null}
+        {order ? (
+          <InfoRow label="Payment order">
+            <Link
+              to={`/organizations/${proposal.organizationId}/payments/${order.paymentOrderId}`}
+              style={{ color: 'inherit', textDecoration: 'underline', textDecorationColor: 'rgba(255,255,255,0.25)' }}
+            >
+              {order.invoiceNumber ?? order.externalReference ?? shortenAddress(order.paymentOrderId, 4, 4)}
+            </Link>
+          </InfoRow>
+        ) : null}
+        {payload?.reference ? <InfoRow label="Reference">{payload.reference}</InfoRow> : null}
+        {payload?.memo ? <InfoRow label="Memo">{payload.memo}</InfoRow> : null}
+      </div>
+    </section>
+  );
+}
+
+function SemanticSummary({ proposal }: { proposal: DecimalProposal }) {
+  const semantic = proposal.semanticType ?? '';
+  const payload = proposal.semanticPayloadJson as Record<string, unknown>;
+
+  if (semantic === 'add_member') {
+    const walletAddress = (payload.walletAddress as string | undefined) ?? null;
+    const permissions = (payload.permissions as string[] | undefined) ?? [];
+    const newThreshold = payload.newThreshold as number | undefined;
+    return (
+      <section className="rd-section" style={{ marginTop: 16 }}>
+        <header style={{ marginBottom: 12 }}>
+          <h2 style={{ margin: 0, fontSize: 16, fontWeight: 500 }}>Action: Add member</h2>
+        </header>
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+            gap: '14px 24px',
+          }}
+        >
+          {walletAddress ? (
+            <InfoRow label="New member">
+              <ChainLink address={walletAddress} />
+            </InfoRow>
+          ) : null}
+          <InfoRow label="Permissions">
+            {permissions.length ? permissions.join(' / ') : '—'}
+          </InfoRow>
+          {newThreshold !== undefined ? (
+            <InfoRow label="Threshold (after)">{newThreshold}</InfoRow>
+          ) : null}
+        </div>
+      </section>
+    );
+  }
+
+  if (semantic === 'change_threshold') {
+    const newThreshold = payload.newThreshold as number | undefined;
+    return (
+      <section className="rd-section" style={{ marginTop: 16 }}>
+        <header style={{ marginBottom: 12 }}>
+          <h2 style={{ margin: 0, fontSize: 16, fontWeight: 500 }}>Action: Change threshold</h2>
+        </header>
+        <div style={{ fontSize: 14 }}>
+          New threshold: <strong>{newThreshold ?? '—'}</strong>
+        </div>
+      </section>
+    );
+  }
+
+  return null;
 }
 
 function DecisionRow({
@@ -503,4 +639,19 @@ function ChainLink({ address }: { address: string }) {
       {shortenAddress(address, 6, 6)}
     </a>
   );
+}
+
+function formatRawAmount(amountRaw: string | null, decimals: number): string {
+  if (!amountRaw) return '?';
+  try {
+    const value = BigInt(amountRaw);
+    if (decimals === 0) return value.toString();
+    const scale = 10n ** BigInt(decimals);
+    const whole = value / scale;
+    const frac = value % scale;
+    const fracStr = frac.toString().padStart(decimals, '0').replace(/0+$/, '');
+    return fracStr ? `${whole.toString()}.${fracStr}` : whole.toString();
+  } catch {
+    return amountRaw;
+  }
 }

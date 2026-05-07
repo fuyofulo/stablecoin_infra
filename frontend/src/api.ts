@@ -40,6 +40,13 @@ import type {
   CreateSquadsTreasuryIntentResponse,
   CreateSquadsAddMemberProposalRequest,
   CreateSquadsChangeThresholdProposalRequest,
+  CreateSquadsPaymentProposalRequest,
+  DecimalProposal,
+  DecimalProposalApproveRequest,
+  DecimalProposalExecuteRequest,
+  DecimalProposalIntentResponse,
+  DecimalProposalListFilter,
+  DecimalProposalSignatureRequest,
   SquadsConfigProposal,
   SquadsConfigProposalApproveRequest,
   SquadsConfigProposalWithTreasury,
@@ -685,6 +692,78 @@ export const api = {
   ) {
     return request<SquadsConfigProposal>(
       `/organizations/${organizationId}/treasury-wallets/${treasuryWalletId}/squads/config-proposals/${transactionIndex}`,
+    );
+  },
+
+  // Generic Decimal proposal surface (replaces the Squads-specific listing
+  // and detail in new UI). Covers config_transaction + vault_transaction.
+  listOrganizationProposals(
+    organizationId: string,
+    filter: DecimalProposalListFilter = {},
+  ) {
+    const params = new URLSearchParams();
+    if (filter.status) params.set('status', filter.status);
+    if (filter.proposalType) params.set('proposalType', filter.proposalType);
+    if (filter.treasuryWalletId) params.set('treasuryWalletId', filter.treasuryWalletId);
+    if (filter.limit !== undefined) params.set('limit', String(filter.limit));
+    const query = params.toString();
+    return request<{ items: DecimalProposal[] }>(
+      `/organizations/${organizationId}/proposals${query ? `?${query}` : ''}`,
+    );
+  },
+  getOrganizationProposal(organizationId: string, decimalProposalId: string) {
+    return request<DecimalProposal>(
+      `/organizations/${organizationId}/proposals/${decimalProposalId}`,
+    );
+  },
+  confirmProposalSubmission(
+    organizationId: string,
+    decimalProposalId: string,
+    input: DecimalProposalSignatureRequest,
+  ) {
+    return request<DecimalProposal>(
+      `/organizations/${organizationId}/proposals/${decimalProposalId}/confirm-submission`,
+      { method: 'POST', body: JSON.stringify(input) },
+    );
+  },
+  confirmProposalExecution(
+    organizationId: string,
+    decimalProposalId: string,
+    input: DecimalProposalSignatureRequest,
+  ) {
+    return request<DecimalProposal>(
+      `/organizations/${organizationId}/proposals/${decimalProposalId}/confirm-execution`,
+      { method: 'POST', body: JSON.stringify(input) },
+    );
+  },
+  createProposalApprovalIntent(
+    organizationId: string,
+    decimalProposalId: string,
+    input: DecimalProposalApproveRequest,
+  ) {
+    return request<DecimalProposalIntentResponse>(
+      `/organizations/${organizationId}/proposals/${decimalProposalId}/approve-intent`,
+      { method: 'POST', body: JSON.stringify(input) },
+    );
+  },
+  createProposalExecuteIntent(
+    organizationId: string,
+    decimalProposalId: string,
+    input: DecimalProposalExecuteRequest,
+  ) {
+    return request<DecimalProposalIntentResponse>(
+      `/organizations/${organizationId}/proposals/${decimalProposalId}/execute-intent`,
+      { method: 'POST', body: JSON.stringify(input) },
+    );
+  },
+  createSquadsPaymentProposalIntent(
+    organizationId: string,
+    treasuryWalletId: string,
+    input: CreateSquadsPaymentProposalRequest,
+  ) {
+    return request<DecimalProposalIntentResponse>(
+      `/organizations/${organizationId}/treasury-wallets/${treasuryWalletId}/squads/vault-proposals/payment-intent`,
+      { method: 'POST', body: JSON.stringify(input) },
     );
   },
 

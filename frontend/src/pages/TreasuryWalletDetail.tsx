@@ -217,7 +217,7 @@ export function TreasuryWalletDetailPage({ session }: { session: AuthenticatedSe
                 type="button"
                 className="button button-secondary"
                 onClick={() =>
-                  navigate(`/organizations/${organizationId}/wallets/${treasuryWalletId}/proposals`)
+                  navigate(`/organizations/${organizationId}/proposals?treasuryWalletId=${treasuryWalletId}`)
                 }
               >
                 Proposals
@@ -757,6 +757,18 @@ function AddMemberDialog(props: {
         intent,
         signerPersonalWalletId: creatorWalletId,
       });
+      // Record the creation tx signature against the persisted DecimalProposal
+      // record so the org-level proposal listing shows localStatus=submitted
+      // until the next chain refetch. Backend now returns the proposal row
+      // alongside the intent.
+      const decimalProposalId = intent.decimalProposal?.decimalProposalId ?? null;
+      if (decimalProposalId) {
+        try {
+          await api.confirmProposalSubmission(organizationId, decimalProposalId, { signature: sig });
+        } catch {
+          // ignore — local status will catch up on refresh
+        }
+      }
       // After create+autoApprove: if the multisig was 1-of-1, the proposal
       // already meets the threshold (creator just approved). Otherwise, more
       // signers need to approve before it can execute.
@@ -778,6 +790,13 @@ function AddMemberDialog(props: {
           intent: execIntent,
           signerPersonalWalletId: executorWalletId,
         });
+        if (decimalProposalId) {
+          try {
+            await api.confirmProposalExecution(organizationId, decimalProposalId, { signature: execSig });
+          } catch {
+            // ignore
+          }
+        }
         setState((s) => ({ ...s, phase: 'syncing', executeSignature: execSig }));
         await api.syncSquadsTreasuryMembers(organizationId, treasuryWalletId);
         setState((s) => ({ ...s, phase: 'done' }));
@@ -1102,6 +1121,14 @@ function ChangeThresholdDialog(props: {
         intent,
         signerPersonalWalletId: creatorWalletId,
       });
+      const decimalProposalId = intent.decimalProposal?.decimalProposalId ?? null;
+      if (decimalProposalId) {
+        try {
+          await api.confirmProposalSubmission(organizationId, decimalProposalId, { signature: sig });
+        } catch {
+          // ignore — local status will catch up on refresh
+        }
+      }
       if (detail.squads.threshold <= 1) {
         const executorWalletId =
           eligibleExecutors.find((w) => w.userWalletId === creatorWalletId)?.userWalletId
@@ -1118,6 +1145,13 @@ function ChangeThresholdDialog(props: {
           intent: execIntent,
           signerPersonalWalletId: executorWalletId,
         });
+        if (decimalProposalId) {
+          try {
+            await api.confirmProposalExecution(organizationId, decimalProposalId, { signature: execSig });
+          } catch {
+            // ignore
+          }
+        }
         setState((s) => ({ ...s, phase: 'syncing', executeSignature: execSig }));
         await api.syncSquadsTreasuryMembers(organizationId, treasuryWalletId);
         setState((s) => ({ ...s, phase: 'done' }));
