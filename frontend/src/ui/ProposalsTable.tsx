@@ -138,6 +138,9 @@ function ProposalRow({
     proposal.status === 'executed'
     || proposal.status === 'cancelled'
     || proposal.status === 'rejected';
+  // Squads only accepts approve/reject votes while status === 'active'.
+  // Late voters can't change a proposal that already met threshold.
+  const canCastVote = pendingVoterWallet !== null && proposal.status === 'active';
   const isThisRowBusy = busy?.decimalProposalId === proposal.decimalProposalId;
   const isAnyRowBusy = busy !== null;
 
@@ -196,7 +199,7 @@ function ProposalRow({
           <span className="rd-btn-arrow" style={{ color: 'var(--ax-text-muted)' }} aria-hidden>
             →
           </span>
-        ) : pendingVoterWallet ? (
+        ) : canCastVote && pendingVoterWallet ? (
           <button
             type="button"
             className="button button-primary"

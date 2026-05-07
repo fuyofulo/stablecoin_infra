@@ -298,6 +298,11 @@ function ProposalDetailBody({
     proposal.status === 'executed'
     || proposal.status === 'cancelled'
     || proposal.status === 'rejected';
+  // Squads' proposalApprove / proposalReject only accept proposals in
+  // status === 'active'. Once threshold is met or the proposal moves on,
+  // late voters cannot change the outcome — hide the action even if
+  // pendingVoters still lists them.
+  const canCastVote = pendingVoterWallet !== null && proposal.status === 'active';
   const voting = proposal.voting;
 
   return (
@@ -310,7 +315,7 @@ function ProposalDetailBody({
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
             <div>
               <strong style={{ fontSize: 14 }}>
-                {pendingVoterWallet
+                {canCastVote
                   ? 'Your signature is needed'
                   : isReadyToExecute && executeWallet
                     ? 'Threshold met — you can execute'
@@ -319,7 +324,7 @@ function ProposalDetailBody({
                       : 'Awaiting other signers'}
               </strong>
               <div style={{ fontSize: 12, color: 'var(--ax-text-muted)', marginTop: 4 }}>
-                {pendingVoterWallet
+                {canCastVote && pendingVoterWallet
                   ? `Approve as ${shortenAddress(pendingVoterWallet.walletAddress, 4, 4)}`
                   : isReadyToExecute && executeWallet
                     ? `Execute as ${shortenAddress(executeWallet.walletAddress, 4, 4)}`
@@ -331,7 +336,7 @@ function ProposalDetailBody({
               </div>
             </div>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-              {pendingVoterWallet ? (
+              {pendingVoterWallet && proposal.status === 'active' ? (
                 <>
                   <button
                     type="button"

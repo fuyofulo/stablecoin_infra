@@ -155,6 +155,8 @@ export function DecimalProposalCard({
 
   const isReadyToExecute = status === 'approved';
   const isClosed = status === 'executed' || status === 'cancelled' || status === 'rejected';
+  // Squads only accepts approve/reject votes while status === 'active'.
+  const canCastVote = pendingVoterWallet !== null && status === 'active';
   const approvalCount = voting?.approvals.length ?? 0;
   const threshold = voting?.threshold ?? 0;
 
@@ -283,7 +285,7 @@ export function DecimalProposalCard({
             flexWrap: 'wrap',
           }}
         >
-          {pendingVoterWallet ? (
+          {canCastVote && pendingVoterWallet ? (
             <button
               type="button"
               className="button button-primary"
@@ -307,7 +309,7 @@ export function DecimalProposalCard({
               {busy === 'execute' ? 'Executing…' : 'Execute proposal'}
             </button>
           ) : null}
-          {!pendingVoterWallet && !isReadyToExecute ? (
+          {!canCastVote && !isReadyToExecute ? (
             <span style={{ fontSize: 12, color: 'var(--ax-text-muted)', alignSelf: 'center' }}>
               Awaiting other signers
             </span>
