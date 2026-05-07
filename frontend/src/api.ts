@@ -311,10 +311,13 @@ export const api = {
       body: JSON.stringify(input),
     });
   },
-  // Permanently deletes a Privy-embedded personal wallet. Backend
-  // calls Privy's DELETE /v1/wallets/:id (Privy keys destroyed),
-  // archives the local row (status=archived), clears providerWalletId,
-  // and revokes any active org wallet authorizations referencing the
+  // Archives a Privy-embedded personal wallet from Decimal. Backend
+  // attempts Privy's DELETE /v1/wallets/:id (best-effort — Privy now
+  // requires an authorization signature for destructive ops, which we
+  // don't yet generate, so this currently fails with a non-null
+  // remoteDeleteError but the local archive still succeeds), archives
+  // the local row (status=archived), clears providerWalletId, and
+  // revokes any active org wallet authorizations referencing the
   // wallet. Funds in the wallet at delete time are unrecoverable —
   // caller is responsible for transferring out first.
   deletePersonalWallet(userWalletId: string) {
@@ -322,6 +325,7 @@ export const api = {
       deleted: true;
       remoteDeleted: boolean;
       remoteAlreadyMissing: boolean;
+      remoteDeleteError: string | null;
       revokedAuthorizationCount: number;
       wallet: UserWallet;
     }>(`/personal-wallets/${userWalletId}`, {

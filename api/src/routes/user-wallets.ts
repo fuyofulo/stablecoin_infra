@@ -360,12 +360,33 @@ userWalletsRouter.delete(
         throw new ApiError(400, 'unsupported_wallet_delete', 'Only Privy embedded Solana wallets can be deleted through this endpoint.');
       }
 
-      const deleted = await deletePrivyWallet({ providerWalletId: wallet.providerWalletId });
+      // Privy DELETE /v1/wallets/:id requires a privy-authorization-signature
+      // header (P-256 ECDSA over a JCS-canonicalized request) on top of app
+      // Basic auth — we don't ship that signing infrastructure yet, so the
+      // remote call will return "Missing auth token." Treat the remote delete
+      // as best-effort: record the failure in metadata and keep archiving
+      // locally so Decimal stops surfacing the wallet. The Privy wallet itself
+      // remains an orphan until we add an authorization key + signing helper.
+      // TODO: implement the signature path (PRIVY_AUTHORIZATION_KEY_PRIVATE_PEM
+      // + JCS canonicalize + secp256r1 sign) and remove this swallow.
+      let deleted: Awaited<ReturnType<typeof deletePrivyWallet>>;
+      let remoteDeleteError: string | null = null;
+      try {
+        deleted = await deletePrivyWallet({ providerWalletId: wallet.providerWalletId });
+      } catch (err) {
+        remoteDeleteError = err instanceof Error ? err.message : 'Unknown Privy delete error';
+        deleted = {
+          providerWalletId: wallet.providerWalletId,
+          remoteDeleted: false,
+          remoteAlreadyMissing: false,
+        };
+      }
       const archivedAt = new Date();
       const archivedMetadata = appendWalletDeletionMetadata(wallet.metadataJson, {
         archivedAt,
         remoteDeleted: deleted.remoteDeleted,
         remoteAlreadyMissing: deleted.remoteAlreadyMissing,
+        remoteDeleteError,
       });
 
       const result = await prisma.$transaction(async (tx) => {
@@ -396,6 +417,7 @@ userWalletsRouter.delete(
         deleted: true,
         remoteDeleted: deleted.remoteDeleted,
         remoteAlreadyMissing: deleted.remoteAlreadyMissing,
+        remoteDeleteError,
         revokedAuthorizationCount: result.revokedAuthorizationCount,
         wallet: serializeUserWallet(result.archivedWallet),
       });
@@ -745,6 +767,7 @@ function appendWalletDeletionMetadata(metadataJson: unknown, input: {
   archivedAt: Date;
   remoteDeleted: boolean;
   remoteAlreadyMissing: boolean;
+  remoteDeleteError?: string | null;
 }) {
   const metadata = metadataJson && typeof metadataJson === 'object' && !Array.isArray(metadataJson)
     ? { ...metadataJson }
@@ -756,6 +779,7 @@ function appendWalletDeletionMetadata(metadataJson: unknown, input: {
       archivedAt: input.archivedAt.toISOString(),
       remoteDeleted: input.remoteDeleted,
       remoteAlreadyMissing: input.remoteAlreadyMissing,
+      remoteDeleteError: input.remoteDeleteError ?? null,
     },
   };
 }
