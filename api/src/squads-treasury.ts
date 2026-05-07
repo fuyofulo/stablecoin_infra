@@ -6,6 +6,7 @@ import { config } from './config.js';
 import { prisma } from './prisma.js';
 import { submitPaymentOrder } from './payment-orders.js';
 import {
+  buildDestinationAtaCreateInstruction,
   buildUsdcTransferTransactionInstructions,
   deriveUsdcAtaForWallet,
   getSolanaConnection,
@@ -336,12 +337,17 @@ export async function createSquadsPaymentProposalIntent(
   const sourceTokenAccount = wallet.usdcAtaAddress ?? deriveUsdcAtaForWallet(vaultPda.toBase58());
   const destinationTokenAccount = paymentOrder.destination.tokenAccountAddress
     ?? deriveUsdcAtaForWallet(paymentOrder.destination.walletAddress);
+  // Skip the destination ATA-create here. It can't run inside the vault
+  // inner transaction because the vault PDA pays no rent (no native SOL).
+  // The wrapping vaultTransactionExecute will prepend a paid-by-executor
+  // ATA-create instead. See createDecimalProposalExecuteIntent below.
   const transferInstructions = buildUsdcTransferTransactionInstructions({
     sourceWallet: vaultPda.toBase58(),
     sourceTokenAccount,
     destinationWallet: paymentOrder.destination.walletAddress,
     destinationTokenAccount,
     amountRaw: paymentOrder.amountRaw,
+    includeDestinationAtaCreate: false,
   });
 
   const transactionIndex = BigInt(multisigAccount.transactionIndex.toString()) + 1n;
@@ -828,6 +834,30 @@ export async function createDecimalProposalExecuteIntent(
     member: new PublicKey(member.walletAddress),
     programId,
   });
+  // For payment proposals, prepend a destination-ATA create instruction
+  // payed by the executor. The vault inner transaction omits the ATA create
+  // because the vault PDA holds tokens but no native SOL (createATA needs
+  // ~0.00204 SOL of rent). The executor's wallet, which signs the wrapping
+  // transaction, has SOL and pays the rent. The instruction is idempotent —
+  // if the ATA already exists it's a no-op.
+  const wrappingInstructions: TransactionInstruction[] = [];
+  if (proposal.semanticType === 'send_payment') {
+    const semantic = proposal.semanticPayloadJson as
+      | { destinationWalletAddress?: string; destinationTokenAccountAddress?: string }
+      | null;
+    const destinationWalletAddress = semantic?.destinationWalletAddress;
+    const destinationTokenAccountAddress = semantic?.destinationTokenAccountAddress;
+    if (destinationWalletAddress && destinationTokenAccountAddress) {
+      wrappingInstructions.push(
+        buildDestinationAtaCreateInstruction({
+          payer: member.walletAddress,
+          destinationWallet: destinationWalletAddress,
+          destinationTokenAccount: destinationTokenAccountAddress,
+        }),
+      );
+    }
+  }
+  wrappingInstructions.push(executable.instruction);
   return buildSquadsSignableResponse({
     wallet,
     programId,
@@ -835,7 +865,7 @@ export async function createDecimalProposalExecuteIntent(
     transactionIndex,
     signerWalletAddress: member.walletAddress,
     latestBlockhash,
-    instructions: [executable.instruction],
+    instructions: wrappingInstructions,
     addressLookupTableAccounts: executable.lookupTableAccounts,
     kind: 'proposal_execution',
     proposalType: proposal.proposalType,

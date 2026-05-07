@@ -174,6 +174,7 @@ export function buildUsdcTransferInstructions(args: {
   destinationWallet: string;
   destinationTokenAccount: string;
   amountRaw: string | bigint;
+  includeDestinationAtaCreate?: boolean;
 }) {
   return buildUsdcTransferTransactionInstructions(args).map(serializeSolanaInstruction);
 }
@@ -184,18 +185,21 @@ export function buildUsdcTransferTransactionInstructions(args: {
   destinationWallet: string;
   destinationTokenAccount: string;
   amountRaw: string | bigint;
+  // Whether to prepend createAssociatedTokenAccountIdempotentInstruction so
+  // the destination ATA exists. Defaults to true, which works for direct-
+  // sign transfers where the source wallet has SOL to pay ATA rent.
+  // For Squads vault transfers we set this to false because the vault PDA
+  // has no SOL — the destination ATA is created by the wrapping
+  // vaultTransactionExecute caller (executor) instead. See
+  // buildDestinationAtaCreateInstruction.
+  includeDestinationAtaCreate?: boolean;
 }) {
+  const includeAtaCreate = args.includeDestinationAtaCreate ?? true;
   const sourceWallet = new PublicKey(args.sourceWallet);
   const sourceTokenAccount = new PublicKey(args.sourceTokenAccount);
   const destinationWallet = new PublicKey(args.destinationWallet);
   const destinationTokenAccount = new PublicKey(args.destinationTokenAccount);
 
-  const ensureDestinationAta = createAssociatedTokenAccountIdempotentInstruction(
-    sourceWallet,
-    destinationTokenAccount,
-    destinationWallet,
-    USDC_MINT,
-  );
   const transfer = createTransferCheckedInstruction(
     sourceTokenAccount,
     USDC_MINT,
@@ -207,5 +211,34 @@ export function buildUsdcTransferTransactionInstructions(args: {
     TOKEN_PROGRAM_ID,
   );
 
+  if (!includeAtaCreate) {
+    return [transfer];
+  }
+
+  const ensureDestinationAta = createAssociatedTokenAccountIdempotentInstruction(
+    sourceWallet,
+    destinationTokenAccount,
+    destinationWallet,
+    USDC_MINT,
+  );
   return [ensureDestinationAta, transfer];
+}
+
+/**
+ * Build a standalone createAssociatedTokenAccountIdempotentInstruction with
+ * an explicit payer. Used by the Squads vault execute path so the executor's
+ * regular SOL-funded wallet pays the ATA rent on the wrapping transaction
+ * (the vault PDA can't, since it holds tokens but no lamports).
+ */
+export function buildDestinationAtaCreateInstruction(args: {
+  payer: string;
+  destinationWallet: string;
+  destinationTokenAccount: string;
+}) {
+  return createAssociatedTokenAccountIdempotentInstruction(
+    new PublicKey(args.payer),
+    new PublicKey(args.destinationTokenAccount),
+    new PublicKey(args.destinationWallet),
+    USDC_MINT,
+  );
 }
