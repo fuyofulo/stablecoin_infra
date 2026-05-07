@@ -33,6 +33,7 @@ TRUNCATE TABLE
   collection_sources,
   payment_runs,
   payment_order_events,
+  decimal_proposals,
   payment_orders,
   payment_requests,
   transfer_requests,
@@ -754,6 +755,9 @@ test('Squads treasury creation prepares a signable transaction and persists the 
     addMemberIntent.intent.actions.map((action: { kind: string }) => action.kind),
     ['add_member', 'change_threshold'],
   );
+  assert.equal(addMemberIntent.decimalProposal.proposalType, 'config_transaction');
+  assert.equal(addMemberIntent.decimalProposal.semanticType, 'add_member');
+  assert.equal(addMemberIntent.decimalProposal.squads.transactionIndex, '1');
   proposalsByPda.set(addMemberIntent.intent.proposalPda, {
     transactionIndex: { toString: () => '1' },
     status: { __kind: 'Active' },
@@ -795,6 +799,14 @@ test('Squads treasury creation prepares a signable transaction and persists the 
     approver.sessionToken,
   );
   assert.equal(singleProposal.proposalPda, addMemberIntent.intent.proposalPda);
+
+  const decimalProposals = await get(
+    `/organizations/${organization.organizationId}/proposals?status=all`,
+    approver.sessionToken,
+  );
+  assert.equal(decimalProposals.items.length, 1);
+  assert.equal(decimalProposals.items[0].decimalProposalId, addMemberIntent.decimalProposal.decimalProposalId);
+  assert.equal(decimalProposals.items[0].voting.approvals[0].walletAddress, creatorWalletAddress);
 
   const blockedNonMemberProposalRead = await fetch(
     `${baseUrl}/organizations/${organization.organizationId}/treasury-wallets/${treasuryWallet.treasuryWalletId}/squads/config-proposals`,
@@ -888,6 +900,160 @@ test('Squads treasury creation prepares a signable transaction and persists the 
     changeThresholdIntent.intent.actions.map((action: { kind: string }) => action.kind),
     ['change_threshold'],
   );
+});
+
+test('Squads vault payment proposals turn payment orders into executable treasury proposals', async () => {
+  const register = await post('/auth/register', {
+    email: 'squads-payment@example.com',
+    password: 'DemoPass123!',
+    displayName: 'Squads Payment',
+  });
+  await verifyRegisteredEmail(register);
+  const organization = await post('/organizations', { organizationName: 'Squads Payment Org' }, register.sessionToken);
+  const signerWalletAddress = Keypair.generate().publicKey.toBase58();
+  const signerWallet = await post(
+    '/personal-wallets/embedded',
+    {
+      walletAddress: signerWalletAddress,
+      provider: 'privy',
+      providerWalletId: 'privy-squads-payment-signer',
+      label: 'Payment signer',
+    },
+    register.sessionToken,
+  );
+
+  const programTreasury = Keypair.generate().publicKey;
+  let onchainMultisig: {
+    createKey: PublicKey;
+    configAuthority: PublicKey;
+    threshold: number;
+    timeLock: number;
+    transactionIndex: { toString(): string };
+    staleTransactionIndex: { toString(): string };
+    members: Array<{ key: PublicKey; permissions: { mask: number } }>;
+  } | null = null;
+  const proposalsByPda = new Map<string, {
+    transactionIndex: { toString(): string };
+    status: { __kind: string };
+    approved: PublicKey[];
+    rejected: PublicKey[];
+    cancelled: PublicKey[];
+  }>();
+  setSquadsTreasuryRuntimeForTests({
+    getProgramTreasury: async () => programTreasury,
+    getLatestBlockhash: async () => ({
+      blockhash: Keypair.generate().publicKey.toBase58(),
+      lastValidBlockHeight: 456,
+    }),
+    loadMultisig: async () => {
+      assert.ok(onchainMultisig, 'test multisig should be configured before confirmation');
+      return onchainMultisig;
+    },
+    loadProposal: async (proposalPda) => proposalsByPda.get(proposalPda.toBase58()) ?? null,
+    loadConfigTransaction: async () => null,
+    loadVaultTransaction: async () => null,
+  });
+
+  const createIntent = await post(
+    `/organizations/${organization.organizationId}/treasury-wallets/squads/create-intent`,
+    {
+      displayName: 'Payment Treasury',
+      creatorPersonalWalletId: signerWallet.userWalletId,
+      threshold: 1,
+      members: [{
+        personalWalletId: signerWallet.userWalletId,
+        permissions: ['initiate', 'vote', 'execute'],
+      }],
+    },
+    register.sessionToken,
+  );
+  onchainMultisig = {
+    createKey: publicKeyFromString(createIntent.intent.createKey),
+    configAuthority: publicKeyFromString('11111111111111111111111111111111'),
+    threshold: 1,
+    timeLock: 0,
+    transactionIndex: { toString: () => '0' },
+    staleTransactionIndex: { toString: () => '0' },
+    members: [{ key: publicKeyFromString(signerWalletAddress), permissions: { mask: 7 } }],
+  };
+  const treasuryWallet = await post(
+    `/organizations/${organization.organizationId}/treasury-wallets/squads/confirm`,
+    {
+      signature: Keypair.generate().publicKey.toBase58(),
+      displayName: 'Payment Treasury',
+      createKey: createIntent.intent.createKey,
+      multisigPda: createIntent.intent.multisigPda,
+      vaultIndex: createIntent.intent.vaultIndex,
+    },
+    register.sessionToken,
+  );
+
+  const counterparty = await post(
+    `/organizations/${organization.organizationId}/counterparties`,
+    { displayName: 'Vendor' },
+    register.sessionToken,
+  );
+  const destination = await post(
+    `/organizations/${organization.organizationId}/destinations`,
+    {
+      walletAddress: Keypair.generate().publicKey.toBase58(),
+      label: 'Vendor wallet',
+      counterpartyId: counterparty.counterpartyId,
+      trustState: 'trusted',
+    },
+    register.sessionToken,
+  );
+  const paymentOrder = await post(
+    `/organizations/${organization.organizationId}/payment-orders`,
+    {
+      destinationId: destination.destinationId,
+      sourceTreasuryWalletId: treasuryWallet.treasuryWalletId,
+      amountRaw: '10000',
+      externalReference: 'INV-SQUADS-1',
+    },
+    register.sessionToken,
+  );
+
+  const paymentProposal = await post(
+    `/organizations/${organization.organizationId}/treasury-wallets/${treasuryWallet.treasuryWalletId}/squads/vault-proposals/payment-intent`,
+    {
+      paymentOrderId: paymentOrder.paymentOrderId,
+      creatorPersonalWalletId: signerWallet.userWalletId,
+    },
+    register.sessionToken,
+  );
+  assert.equal(paymentProposal.intent.kind, 'vault_payment_proposal_create');
+  assert.equal(paymentProposal.intent.proposalType, 'vault_transaction');
+  assert.equal(paymentProposal.intent.semanticType, 'send_payment');
+  assert.equal(paymentProposal.intent.transactionIndex, '1');
+  assert.equal(paymentProposal.transaction.requiredSigner, signerWalletAddress);
+  assert.equal(paymentProposal.decimalProposal.proposalType, 'vault_transaction');
+  assert.equal(paymentProposal.decimalProposal.paymentOrderId, paymentOrder.paymentOrderId);
+  assert.equal(paymentProposal.decimalProposal.semanticPayloadJson.amountRaw, '10000');
+
+  proposalsByPda.set(paymentProposal.intent.proposalPda, {
+    transactionIndex: { toString: () => '1' },
+    status: { __kind: 'Approved' },
+    approved: [publicKeyFromString(signerWalletAddress)],
+    rejected: [],
+    cancelled: [],
+  });
+  onchainMultisig.transactionIndex = { toString: () => '1' };
+
+  const proposals = await get(
+    `/organizations/${organization.organizationId}/proposals?status=all`,
+    register.sessionToken,
+  );
+  assert.equal(proposals.items.length, 1);
+  assert.equal(proposals.items[0].status, 'approved');
+  assert.equal(proposals.items[0].voting.approvals[0].walletAddress, signerWalletAddress);
+
+  const confirmed = await post(
+    `/organizations/${organization.organizationId}/proposals/${paymentProposal.decimalProposal.decimalProposalId}/confirm-submission`,
+    { signature: Keypair.generate().publicKey.toBase58() },
+    register.sessionToken,
+  );
+  assert.equal(confirmed.localStatus, 'submitted');
 });
 
 test('Privy personal wallet signing endpoint signs only transactions requiring that wallet', async () => {

@@ -9,6 +9,7 @@ import {
   createSquadsChangeThresholdProposalIntent,
   createSquadsConfigProposalApprovalIntent,
   createSquadsConfigProposalExecuteIntent,
+  createSquadsPaymentProposalIntent,
   createSquadsTreasuryIntent,
   getSquadsConfigProposal,
   getSquadsTreasuryDetail,
@@ -77,6 +78,13 @@ const createSquadsAddMemberProposalSchema = z.object({
 const createSquadsChangeThresholdProposalSchema = z.object({
   creatorPersonalWalletId: z.string().uuid(),
   newThreshold: z.number().int().min(1).max(65_535),
+  memo: z.string().optional().nullable(),
+  autoApprove: z.boolean().optional(),
+});
+
+const createSquadsPaymentProposalSchema = z.object({
+  paymentOrderId: z.string().uuid(),
+  creatorPersonalWalletId: z.string().uuid(),
   memo: z.string().optional().nullable(),
   autoApprove: z.boolean().optional(),
 });
@@ -243,6 +251,16 @@ treasuryWalletsRouter.post(
     await assertOrganizationAdmin(organizationId, req.auth!);
     const input = createSquadsChangeThresholdProposalSchema.parse(req.body);
     sendCreated(res, await createSquadsChangeThresholdProposalIntent(organizationId, treasuryWalletId, req.auth!.userId, input));
+  }),
+);
+
+treasuryWalletsRouter.post(
+  '/organizations/:organizationId/treasury-wallets/:treasuryWalletId/squads/vault-proposals/payment-intent',
+  asyncRoute(async (req, res) => {
+    const { organizationId, treasuryWalletId } = treasuryWalletParamsSchema.parse(req.params);
+    await assertOrganizationAccess(organizationId, req.auth!);
+    const input = createSquadsPaymentProposalSchema.parse(req.body);
+    sendCreated(res, await createSquadsPaymentProposalIntent(organizationId, treasuryWalletId, req.auth!.userId, input));
   }),
 );
 

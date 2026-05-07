@@ -468,6 +468,40 @@ CREATE TABLE IF NOT EXISTS payment_orders
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS decimal_proposals
+(
+  decimal_proposal_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  organization_id UUID NOT NULL REFERENCES organizations(organization_id) ON DELETE CASCADE,
+  treasury_wallet_id UUID REFERENCES treasury_wallets(treasury_wallet_id) ON DELETE SET NULL,
+  payment_order_id UUID REFERENCES payment_orders(payment_order_id) ON DELETE SET NULL,
+  provider TEXT NOT NULL DEFAULT 'squads_v4',
+  proposal_type TEXT NOT NULL,
+  proposal_category TEXT NOT NULL,
+  semantic_type TEXT,
+  status TEXT NOT NULL DEFAULT 'prepared',
+  squads_program_id TEXT,
+  squads_multisig_pda TEXT,
+  squads_proposal_pda TEXT,
+  squads_transaction_pda TEXT,
+  squads_batch_pda TEXT,
+  transaction_index TEXT,
+  vault_index INTEGER,
+  required_signer TEXT,
+  creator_personal_wallet_id UUID,
+  creator_wallet_address TEXT,
+  submitted_signature TEXT,
+  executed_signature TEXT,
+  submitted_at TIMESTAMPTZ,
+  executed_at TIMESTAMPTZ,
+  intent_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  semantic_payload_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_by_user_id UUID REFERENCES users(user_id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT decimal_proposals_squads_unique UNIQUE (organization_id, provider, squads_multisig_pda, transaction_index)
+);
+
 CREATE TABLE IF NOT EXISTS payment_runs
 (
   payment_run_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -903,6 +937,14 @@ CREATE INDEX IF NOT EXISTS idx_payment_orders_destination_created_at
   ON payment_orders(destination_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_payment_orders_source_created_at
   ON payment_orders(source_treasury_wallet_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_decimal_proposals_org_status_created_at
+  ON decimal_proposals(organization_id, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_decimal_proposals_org_type_created_at
+  ON decimal_proposals(organization_id, proposal_type, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_decimal_proposals_treasury_created_at
+  ON decimal_proposals(treasury_wallet_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_decimal_proposals_payment_order_created_at
+  ON decimal_proposals(payment_order_id, created_at DESC);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_payment_orders_unique_active_reference
   ON payment_orders(organization_id, destination_id, amount_raw, lower(coalesce(external_reference, invoice_number)))
   WHERE coalesce(external_reference, invoice_number) IS NOT NULL
@@ -1026,6 +1068,11 @@ FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 DROP TRIGGER IF EXISTS trg_payment_orders_updated_at ON payment_orders;
 CREATE TRIGGER trg_payment_orders_updated_at
 BEFORE UPDATE ON payment_orders
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+DROP TRIGGER IF EXISTS trg_decimal_proposals_updated_at ON decimal_proposals;
+CREATE TRIGGER trg_decimal_proposals_updated_at
+BEFORE UPDATE ON decimal_proposals
 FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 DROP TRIGGER IF EXISTS trg_payment_runs_updated_at ON payment_runs;

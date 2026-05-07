@@ -1,10 +1,20 @@
 import type { Prisma } from '@prisma/client';
 import * as multisig from '@sqds/multisig';
-import { Keypair, PublicKey, TransactionMessage, VersionedTransaction, type TransactionInstruction } from '@solana/web3.js';
+import { Keypair, PublicKey, TransactionMessage, VersionedTransaction, type AddressLookupTableAccount, type TransactionInstruction } from '@solana/web3.js';
 import { ApiError, badRequest, notFound } from './api-errors.js';
 import { config } from './config.js';
 import { prisma } from './prisma.js';
-import { deriveUsdcAtaForWallet, getSolanaConnection, SOLANA_CHAIN, USDC_ASSET } from './solana.js';
+import { submitPaymentOrder } from './payment-orders.js';
+import {
+  buildUsdcTransferTransactionInstructions,
+  deriveUsdcAtaForWallet,
+  getSolanaConnection,
+  serializeSolanaInstruction,
+  SOLANA_CHAIN,
+  USDC_ASSET,
+  USDC_DECIMALS,
+  USDC_MINT,
+} from './solana.js';
 
 const SQUADS_SOURCE = 'squads_v4';
 // Squads v4 uses the same program id on devnet and mainnet. The value remains
@@ -36,6 +46,11 @@ type SquadsConfigTransactionAccountLike = {
   index: { toString(): string };
   actions: multisig.types.ConfigAction[];
 };
+type SquadsVaultTransactionAccountLike = {
+  index: { toString(): string };
+  vaultIndex: number;
+  message: unknown;
+};
 
 type SquadsTreasuryRuntime = {
   getLatestBlockhash: () => Promise<{ blockhash: string; lastValidBlockHeight: number }>;
@@ -43,6 +58,7 @@ type SquadsTreasuryRuntime = {
   loadMultisig: (multisigPda: PublicKey) => Promise<SquadsMultisigAccountLike>;
   loadProposal: (proposalPda: PublicKey) => Promise<SquadsProposalAccountLike | null>;
   loadConfigTransaction: (configTransactionPda: PublicKey) => Promise<SquadsConfigTransactionAccountLike | null>;
+  loadVaultTransaction: (vaultTransactionPda: PublicKey) => Promise<SquadsVaultTransactionAccountLike | null>;
 };
 
 const defaultRuntime: SquadsTreasuryRuntime = {
@@ -62,6 +78,16 @@ const defaultRuntime: SquadsTreasuryRuntime = {
   loadConfigTransaction: async (configTransactionPda) => {
     try {
       return await multisig.accounts.ConfigTransaction.fromAccountAddress(getSolanaConnection(), configTransactionPda);
+    } catch (error) {
+      if (isMissingSquadsAccountError(error)) {
+        return null;
+      }
+      throw error;
+    }
+  },
+  loadVaultTransaction: async (vaultTransactionPda) => {
+    try {
+      return await multisig.accounts.VaultTransaction.fromAccountAddress(getSolanaConnection(), vaultTransactionPda);
     } catch (error) {
       if (isMissingSquadsAccountError(error)) {
         return null;
@@ -105,6 +131,24 @@ export type CreateSquadsChangeThresholdProposalInput = {
   newThreshold: number;
   memo?: string | null;
   autoApprove?: boolean;
+};
+
+export type CreateSquadsPaymentProposalInput = {
+  paymentOrderId: string;
+  creatorPersonalWalletId: string;
+  memo?: string | null;
+  autoApprove?: boolean;
+};
+
+export type ListDecimalProposalsInput = {
+  status?: 'pending' | 'all' | 'closed';
+  proposalType?: string;
+  treasuryWalletId?: string;
+  limit?: number;
+};
+
+export type ConfirmDecimalProposalSignatureInput = {
+  signature: string;
 };
 
 export type ListSquadsConfigProposalsInput = {
@@ -217,6 +261,7 @@ export async function createSquadsAddMemberProposalIntent(
     actions,
     memo: normalizeOptionalText(input.memo) ?? `Add ${newMember.walletAddress} to Decimal treasury`,
     autoApprove: input.autoApprove ?? true,
+    semanticType: 'add_member',
   });
 }
 
@@ -235,7 +280,179 @@ export async function createSquadsChangeThresholdProposalIntent(
     actions: [{ __kind: 'ChangeThreshold', newThreshold: normalizeThreshold(input.newThreshold) }],
     memo: normalizeOptionalText(input.memo) ?? `Change Decimal treasury threshold to ${input.newThreshold}`,
     autoApprove: input.autoApprove ?? true,
+    semanticType: 'change_threshold',
   });
+}
+
+export async function createSquadsPaymentProposalIntent(
+  organizationId: string,
+  treasuryWalletId: string,
+  actorUserId: string,
+  input: CreateSquadsPaymentProposalInput,
+) {
+  const creator = await loadActorPersonalWallet(actorUserId, input.creatorPersonalWalletId);
+  const { wallet, programId, multisigPda, vaultPda, vaultIndex, multisigAccount } = await loadSquadsTreasury(organizationId, treasuryWalletId);
+  if (creator.userId !== actorUserId) {
+    throw badRequest('creatorPersonalWalletId must belong to the authenticated user.');
+  }
+  assertOnchainMemberPermission(multisigAccount, creator.walletAddress, 'initiate');
+
+  let paymentOrder = await loadPaymentOrderForSquadsProposal(organizationId, input.paymentOrderId);
+  if (paymentOrder.sourceTreasuryWalletId && paymentOrder.sourceTreasuryWalletId !== treasuryWalletId) {
+    throw badRequest('Payment order is already assigned to a different source treasury.');
+  }
+  if (!paymentOrder.sourceTreasuryWalletId) {
+    await prisma.paymentOrder.update({
+      where: { paymentOrderId: paymentOrder.paymentOrderId },
+      data: { sourceTreasuryWalletId: treasuryWalletId },
+    });
+    paymentOrder = await loadPaymentOrderForSquadsProposal(organizationId, input.paymentOrderId);
+  }
+  if (!paymentOrder.transferRequests.length && paymentOrder.state === 'draft') {
+    await submitPaymentOrder({
+      organizationId,
+      paymentOrderId: paymentOrder.paymentOrderId,
+      actorUserId,
+      actorType: 'user',
+      actorId: actorUserId,
+    });
+    paymentOrder = await loadPaymentOrderForSquadsProposal(organizationId, input.paymentOrderId);
+  }
+
+  const transferRequest = paymentOrder.transferRequests[0] ?? null;
+  if (!transferRequest) {
+    throw badRequest('Submit the payment order before creating a Squads payment proposal.');
+  }
+  if (transferRequest.status === 'pending_approval' || transferRequest.status === 'escalated') {
+    throw badRequest('Payment order requires approval before a Squads payment proposal can be created.');
+  }
+  if (!['approved', 'ready_for_execution'].includes(transferRequest.status)) {
+    throw badRequest(`Payment order cannot be proposed while request is ${transferRequest.status}.`);
+  }
+  if (paymentOrder.asset.toLowerCase() !== USDC_ASSET) {
+    throw badRequest(`Squads payment proposals currently support USDC only, received ${paymentOrder.asset}.`);
+  }
+
+  const sourceTokenAccount = wallet.usdcAtaAddress ?? deriveUsdcAtaForWallet(vaultPda.toBase58());
+  const destinationTokenAccount = paymentOrder.destination.tokenAccountAddress
+    ?? deriveUsdcAtaForWallet(paymentOrder.destination.walletAddress);
+  const transferInstructions = buildUsdcTransferTransactionInstructions({
+    sourceWallet: vaultPda.toBase58(),
+    sourceTokenAccount,
+    destinationWallet: paymentOrder.destination.walletAddress,
+    destinationTokenAccount,
+    amountRaw: paymentOrder.amountRaw,
+  });
+
+  const transactionIndex = BigInt(multisigAccount.transactionIndex.toString()) + 1n;
+  const latestBlockhash = await runtime.getLatestBlockhash();
+  const creatorPublicKey = new PublicKey(creator.walletAddress);
+  const vaultTransactionMessage = new TransactionMessage({
+    payerKey: vaultPda,
+    recentBlockhash: latestBlockhash.blockhash,
+    instructions: transferInstructions,
+  });
+  const instructions = [
+    multisig.instructions.vaultTransactionCreate({
+      multisigPda,
+      transactionIndex,
+      creator: creatorPublicKey,
+      rentPayer: creatorPublicKey,
+      vaultIndex,
+      ephemeralSigners: 0,
+      transactionMessage: vaultTransactionMessage,
+      memo: normalizeOptionalText(input.memo) ?? `Decimal payment ${paymentOrder.paymentOrderId}`,
+      programId,
+    }),
+    multisig.instructions.proposalCreate({
+      multisigPda,
+      transactionIndex,
+      creator: creatorPublicKey,
+      rentPayer: creatorPublicKey,
+      isDraft: false,
+      programId,
+    }),
+    ...(input.autoApprove ?? true
+      ? [
+        multisig.instructions.proposalApprove({
+          multisigPda,
+          transactionIndex,
+          member: creatorPublicKey,
+          memo: 'Auto-approve Decimal payment proposal creator',
+          programId,
+        }),
+      ]
+      : []),
+  ];
+
+  const semanticPayload = {
+    paymentOrderId: paymentOrder.paymentOrderId,
+    transferRequestId: transferRequest.transferRequestId,
+    destinationId: paymentOrder.destinationId,
+    destinationWalletAddress: paymentOrder.destination.walletAddress,
+    destinationTokenAccountAddress: destinationTokenAccount,
+    sourceTreasuryWalletId: treasuryWalletId,
+    sourceWalletAddress: vaultPda.toBase58(),
+    sourceTokenAccountAddress: sourceTokenAccount,
+    amountRaw: paymentOrder.amountRaw.toString(),
+    asset: paymentOrder.asset,
+    token: {
+      symbol: 'USDC',
+      mint: USDC_MINT.toBase58(),
+      decimals: USDC_DECIMALS,
+    },
+    reference: paymentOrder.externalReference ?? paymentOrder.invoiceNumber ?? null,
+    memo: paymentOrder.memo,
+    instructions: transferInstructions.map(serializeSolanaInstruction),
+  };
+
+  const response = buildSquadsSignableResponse({
+    wallet,
+    programId,
+    multisigPda,
+    transactionIndex,
+    signerWalletAddress: creator.walletAddress,
+    latestBlockhash,
+    instructions,
+    kind: 'vault_payment_proposal_create',
+    proposalType: 'vault_transaction',
+    proposalCategory: 'execution',
+    semanticType: 'send_payment',
+    actions: [{
+      type: 'send_payment',
+      asset: paymentOrder.asset,
+      amountRaw: paymentOrder.amountRaw.toString(),
+      destinationWalletAddress: paymentOrder.destination.walletAddress,
+      destinationTokenAccountAddress: destinationTokenAccount,
+      paymentOrderId: paymentOrder.paymentOrderId,
+    }],
+  });
+
+  const decimalProposal = await persistDecimalProposal({
+    organizationId,
+    treasuryWalletId,
+    paymentOrderId: paymentOrder.paymentOrderId,
+    createdByUserId: actorUserId,
+    creatorPersonalWalletId: creator.userWalletId,
+    creatorWalletAddress: creator.walletAddress,
+    requiredSigner: creator.walletAddress,
+    proposalType: 'vault_transaction',
+    proposalCategory: 'execution',
+    semanticType: 'send_payment',
+    status: 'prepared',
+    response,
+    vaultIndex,
+    semanticPayload,
+    metadataJson: {
+      transferRequestId: transferRequest.transferRequestId,
+      autoApprove: input.autoApprove ?? true,
+    },
+  });
+
+  return {
+    ...response,
+    decimalProposal,
+  };
 }
 
 export async function createSquadsConfigProposalApprovalIntent(
@@ -270,6 +487,9 @@ export async function createSquadsConfigProposalApprovalIntent(
     latestBlockhash,
     instructions: [instruction],
     kind: 'config_proposal_approval',
+    proposalType: 'config_transaction',
+    proposalCategory: 'configuration',
+    semanticType: 'approve_proposal',
     actions: [],
   });
 }
@@ -305,6 +525,9 @@ export async function createSquadsConfigProposalExecuteIntent(
     latestBlockhash,
     instructions: [instruction],
     kind: 'config_proposal_execution',
+    proposalType: 'config_transaction',
+    proposalCategory: 'configuration',
+    semanticType: 'execute_proposal',
     actions: [],
   });
 }
@@ -417,6 +640,209 @@ export async function getSquadsConfigProposal(
     throw notFound('Squads config proposal not found');
   }
   return proposal;
+}
+
+export async function listDecimalProposals(
+  organizationId: string,
+  actorUserId: string,
+  input: ListDecimalProposalsInput = {},
+) {
+  const limit = Math.min(Math.max(input.limit ?? 100, 1), 250);
+  const rows = await prisma.decimalProposal.findMany({
+    where: {
+      organizationId,
+      ...(input.proposalType ? { proposalType: input.proposalType } : {}),
+      ...(input.treasuryWalletId ? { treasuryWalletId: input.treasuryWalletId } : {}),
+      ...(input.status && input.status !== 'all' ? statusFilterWhere(input.status) : {}),
+    },
+    include: decimalProposalInclude,
+    orderBy: { createdAt: 'desc' },
+    take: limit,
+  });
+  const visible = [];
+  for (const row of rows) {
+    if (row.provider === SQUADS_SOURCE && row.treasuryWalletId) {
+      try {
+        const { multisigAccount } = await loadSquadsTreasury(organizationId, row.treasuryWalletId);
+        await assertActorIsSquadsMember(organizationId, multisigAccount, actorUserId);
+      } catch (err) {
+        if (err instanceof ApiError && err.code === 'not_squads_member') {
+          continue;
+        }
+        throw err;
+      }
+    }
+    visible.push(await serializeDecimalProposal(row));
+  }
+  return { items: visible };
+}
+
+export async function getDecimalProposal(
+  organizationId: string,
+  actorUserId: string,
+  decimalProposalId: string,
+) {
+  const row = await prisma.decimalProposal.findFirst({
+    where: { organizationId, decimalProposalId },
+    include: decimalProposalInclude,
+  });
+  if (!row) {
+    throw notFound('Proposal not found');
+  }
+  if (row.provider === SQUADS_SOURCE && row.treasuryWalletId) {
+    const { multisigAccount } = await loadSquadsTreasury(organizationId, row.treasuryWalletId);
+    await assertActorIsSquadsMember(organizationId, multisigAccount, actorUserId);
+  }
+  return serializeDecimalProposal(row);
+}
+
+export async function confirmDecimalProposalSubmission(
+  organizationId: string,
+  actorUserId: string,
+  decimalProposalId: string,
+  input: ConfirmDecimalProposalSignatureInput,
+) {
+  await getDecimalProposal(organizationId, actorUserId, decimalProposalId);
+  const updated = await prisma.decimalProposal.update({
+    where: { decimalProposalId },
+    data: {
+      submittedSignature: input.signature.trim(),
+      submittedAt: new Date(),
+      status: 'submitted',
+    },
+    include: decimalProposalInclude,
+  });
+  return serializeDecimalProposal(updated);
+}
+
+export async function confirmDecimalProposalExecution(
+  organizationId: string,
+  actorUserId: string,
+  decimalProposalId: string,
+  input: ConfirmDecimalProposalSignatureInput,
+) {
+  await getDecimalProposal(organizationId, actorUserId, decimalProposalId);
+  const updated = await prisma.decimalProposal.update({
+    where: { decimalProposalId },
+    data: {
+      executedSignature: input.signature.trim(),
+      executedAt: new Date(),
+      status: 'executed',
+    },
+    include: decimalProposalInclude,
+  });
+  return serializeDecimalProposal(updated);
+}
+
+export async function createDecimalProposalApprovalIntent(
+  organizationId: string,
+  actorUserId: string,
+  decimalProposalId: string,
+  input: {
+    memberPersonalWalletId: string;
+    memo?: string | null;
+  },
+) {
+  const proposal = await prisma.decimalProposal.findFirst({
+    where: { organizationId, decimalProposalId },
+  });
+  if (!proposal || !proposal.treasuryWalletId || !proposal.transactionIndex) {
+    throw notFound('Proposal not found');
+  }
+  const member = await loadActorPersonalWallet(actorUserId, input.memberPersonalWalletId);
+  const { wallet, programId, multisigPda, multisigAccount } = await loadSquadsTreasury(organizationId, proposal.treasuryWalletId);
+  assertOnchainMemberPermission(multisigAccount, member.walletAddress, 'vote');
+  const transactionIndex = parseTransactionIndex(proposal.transactionIndex);
+  const latestBlockhash = await runtime.getLatestBlockhash();
+  const instruction = multisig.instructions.proposalApprove({
+    multisigPda,
+    transactionIndex,
+    member: new PublicKey(member.walletAddress),
+    memo: normalizeOptionalText(input.memo) ?? undefined,
+    programId,
+  });
+  return buildSquadsSignableResponse({
+    wallet,
+    programId,
+    multisigPda,
+    transactionIndex,
+    signerWalletAddress: member.walletAddress,
+    latestBlockhash,
+    instructions: [instruction],
+    kind: 'proposal_approval',
+    proposalType: proposal.proposalType,
+    proposalCategory: proposal.proposalCategory,
+    semanticType: 'approve_proposal',
+    actions: [],
+  });
+}
+
+export async function createDecimalProposalExecuteIntent(
+  organizationId: string,
+  actorUserId: string,
+  decimalProposalId: string,
+  input: { memberPersonalWalletId: string },
+) {
+  const proposal = await prisma.decimalProposal.findFirst({
+    where: { organizationId, decimalProposalId },
+  });
+  if (!proposal || !proposal.treasuryWalletId || !proposal.transactionIndex) {
+    throw notFound('Proposal not found');
+  }
+  const member = await loadActorPersonalWallet(actorUserId, input.memberPersonalWalletId);
+  const { wallet, programId, multisigPda, multisigAccount } = await loadSquadsTreasury(organizationId, proposal.treasuryWalletId);
+  assertOnchainMemberPermission(multisigAccount, member.walletAddress, 'execute');
+  const transactionIndex = parseTransactionIndex(proposal.transactionIndex);
+  const latestBlockhash = await runtime.getLatestBlockhash();
+  if (proposal.proposalType === 'config_transaction') {
+    const instruction = multisig.instructions.configTransactionExecute({
+      multisigPda,
+      transactionIndex,
+      member: new PublicKey(member.walletAddress),
+      rentPayer: new PublicKey(member.walletAddress),
+      programId,
+    });
+    return buildSquadsSignableResponse({
+      wallet,
+      programId,
+      multisigPda,
+      transactionIndex,
+      signerWalletAddress: member.walletAddress,
+      latestBlockhash,
+      instructions: [instruction],
+      kind: 'proposal_execution',
+      proposalType: proposal.proposalType,
+      proposalCategory: proposal.proposalCategory,
+      semanticType: 'execute_proposal',
+      actions: [],
+    });
+  }
+
+  if (proposal.proposalType !== 'vault_transaction') {
+    throw badRequest(`Unsupported executable proposal type: ${proposal.proposalType}`);
+  }
+  const executable = await multisig.instructions.vaultTransactionExecute({
+    connection: getSolanaConnection(),
+    multisigPda,
+    transactionIndex,
+    member: new PublicKey(member.walletAddress),
+    programId,
+  });
+  return buildSquadsSignableResponse({
+    wallet,
+    programId,
+    multisigPda,
+    transactionIndex,
+    signerWalletAddress: member.walletAddress,
+    latestBlockhash,
+    instructions: [executable.instruction],
+    addressLookupTableAccounts: executable.lookupTableAccounts,
+    kind: 'proposal_execution',
+    proposalType: proposal.proposalType,
+    proposalCategory: proposal.proposalCategory,
+    semanticType: 'execute_proposal',
+    actions: [],
+  });
 }
 
 export async function syncSquadsTreasuryMembers(organizationId: string, treasuryWalletId: string) {
@@ -730,6 +1156,7 @@ async function createSquadsConfigProposalIntent(args: {
   actions: multisig.types.ConfigAction[];
   memo: string;
   autoApprove: boolean;
+  semanticType: string;
 }) {
   const { wallet, programId, multisigPda, multisigAccount } = await loadSquadsTreasury(args.organizationId, args.treasuryWalletId);
   if (args.creator.userId !== args.actorUserId) {
@@ -772,7 +1199,7 @@ async function createSquadsConfigProposalIntent(args: {
       : []),
   ];
 
-  return buildSquadsSignableResponse({
+  const response = buildSquadsSignableResponse({
     wallet,
     programId,
     multisigPda,
@@ -781,8 +1208,34 @@ async function createSquadsConfigProposalIntent(args: {
     latestBlockhash,
     instructions,
     kind: 'config_proposal_create',
+    proposalType: 'config_transaction',
+    proposalCategory: 'configuration',
+    semanticType: args.semanticType,
     actions: serializeConfigActions(args.actions),
   });
+
+  const decimalProposal = await persistDecimalProposal({
+    organizationId: args.organizationId,
+    treasuryWalletId: args.treasuryWalletId,
+    paymentOrderId: null,
+    createdByUserId: args.actorUserId,
+    creatorPersonalWalletId: args.creator.userWalletId,
+    creatorWalletAddress: args.creator.walletAddress,
+    requiredSigner: args.creator.walletAddress,
+    proposalType: 'config_transaction',
+    proposalCategory: 'configuration',
+    semanticType: args.semanticType,
+    status: 'prepared',
+    response,
+    vaultIndex: null,
+    semanticPayload: { actions: serializeConfigActions(args.actions) },
+    metadataJson: { autoApprove: args.autoApprove },
+  });
+
+  return {
+    ...response,
+    decimalProposal,
+  };
 }
 
 function buildSquadsSignableResponse(args: {
@@ -797,10 +1250,14 @@ function buildSquadsSignableResponse(args: {
   signerWalletAddress: string;
   latestBlockhash: { blockhash: string; lastValidBlockHeight: number };
   instructions: TransactionInstruction[];
+  addressLookupTableAccounts?: AddressLookupTableAccount[];
   kind: string;
+  proposalType: string;
+  proposalCategory: string;
+  semanticType: string | null;
   actions: Array<Record<string, unknown>>;
 }) {
-  const [configTransactionPda] = multisig.getTransactionPda({
+  const [transactionPda] = multisig.getTransactionPda({
     multisigPda: args.multisigPda,
     index: args.transactionIndex,
     programId: args.programId,
@@ -815,7 +1272,7 @@ function buildSquadsSignableResponse(args: {
     payerKey: new PublicKey(args.signerWalletAddress),
     recentBlockhash: args.latestBlockhash.blockhash,
     instructions: args.instructions,
-  }).compileToV0Message();
+  }).compileToV0Message(args.addressLookupTableAccounts);
   const transaction = new VersionedTransaction(message);
 
   return {
@@ -827,7 +1284,12 @@ function buildSquadsSignableResponse(args: {
       organizationId: args.wallet.organizationId,
       multisigPda: args.multisigPda.toBase58(),
       transactionIndex: args.transactionIndex.toString(),
-      configTransactionPda: configTransactionPda.toBase58(),
+      proposalType: args.proposalType,
+      proposalCategory: args.proposalCategory,
+      semanticType: args.semanticType,
+      squadsTransactionPda: transactionPda.toBase58(),
+      configTransactionPda: args.proposalType === 'config_transaction' ? transactionPda.toBase58() : null,
+      vaultTransactionPda: args.proposalType === 'vault_transaction' ? transactionPda.toBase58() : null,
       proposalPda: proposalPda.toBase58(),
       actions: args.actions,
     },
@@ -839,6 +1301,223 @@ function buildSquadsSignableResponse(args: {
       lastValidBlockHeight: args.latestBlockhash.lastValidBlockHeight,
     },
   };
+}
+
+const decimalProposalInclude = {
+  treasuryWallet: {
+    select: {
+      treasuryWalletId: true,
+      address: true,
+      displayName: true,
+      source: true,
+      sourceRef: true,
+    },
+  },
+  paymentOrder: {
+    select: {
+      paymentOrderId: true,
+      state: true,
+      amountRaw: true,
+      asset: true,
+      externalReference: true,
+      invoiceNumber: true,
+      destination: {
+        select: {
+          destinationId: true,
+          label: true,
+          walletAddress: true,
+          tokenAccountAddress: true,
+        },
+      },
+    },
+  },
+  createdByUser: {
+    select: {
+      userId: true,
+      email: true,
+      displayName: true,
+      avatarUrl: true,
+    },
+  },
+} satisfies Prisma.DecimalProposalInclude;
+
+type DecimalProposalWithRelations = Prisma.DecimalProposalGetPayload<{ include: typeof decimalProposalInclude }>;
+
+async function persistDecimalProposal(args: {
+  organizationId: string;
+  treasuryWalletId: string | null;
+  paymentOrderId: string | null;
+  createdByUserId: string | null;
+  creatorPersonalWalletId: string | null;
+  creatorWalletAddress: string | null;
+  requiredSigner: string | null;
+  proposalType: string;
+  proposalCategory: string;
+  semanticType: string | null;
+  status: string;
+  response: ReturnType<typeof buildSquadsSignableResponse>;
+  vaultIndex: number | null;
+  semanticPayload: Prisma.InputJsonValue;
+  metadataJson: Prisma.InputJsonValue;
+}) {
+  const intent = args.response.intent;
+  const row = await prisma.decimalProposal.upsert({
+    where: {
+      organizationId_provider_squadsMultisigPda_transactionIndex: {
+        organizationId: args.organizationId,
+        provider: SQUADS_SOURCE,
+        squadsMultisigPda: intent.multisigPda,
+        transactionIndex: intent.transactionIndex,
+      },
+    },
+    create: {
+      organizationId: args.organizationId,
+      treasuryWalletId: args.treasuryWalletId,
+      paymentOrderId: args.paymentOrderId,
+      provider: SQUADS_SOURCE,
+      proposalType: args.proposalType,
+      proposalCategory: args.proposalCategory,
+      semanticType: args.semanticType,
+      status: args.status,
+      squadsProgramId: intent.programId,
+      squadsMultisigPda: intent.multisigPda,
+      squadsProposalPda: intent.proposalPda,
+      squadsTransactionPda: intent.squadsTransactionPda,
+      transactionIndex: intent.transactionIndex,
+      vaultIndex: args.vaultIndex,
+      requiredSigner: args.requiredSigner,
+      creatorPersonalWalletId: args.creatorPersonalWalletId,
+      creatorWalletAddress: args.creatorWalletAddress,
+      intentJson: intent as Prisma.InputJsonValue,
+      semanticPayloadJson: args.semanticPayload,
+      metadataJson: args.metadataJson,
+      createdByUserId: args.createdByUserId,
+    },
+    update: {
+      treasuryWalletId: args.treasuryWalletId,
+      paymentOrderId: args.paymentOrderId,
+      proposalType: args.proposalType,
+      proposalCategory: args.proposalCategory,
+      semanticType: args.semanticType,
+      squadsProgramId: intent.programId,
+      squadsProposalPda: intent.proposalPda,
+      squadsTransactionPda: intent.squadsTransactionPda,
+      vaultIndex: args.vaultIndex,
+      requiredSigner: args.requiredSigner,
+      creatorPersonalWalletId: args.creatorPersonalWalletId,
+      creatorWalletAddress: args.creatorWalletAddress,
+      intentJson: intent as Prisma.InputJsonValue,
+      semanticPayloadJson: args.semanticPayload,
+      metadataJson: args.metadataJson,
+    },
+    include: decimalProposalInclude,
+  });
+
+  return serializeDecimalProposal(row);
+}
+
+async function serializeDecimalProposal(row: DecimalProposalWithRelations) {
+  const live = await loadLiveProposalState(row);
+  return {
+    decimalProposalId: row.decimalProposalId,
+    organizationId: row.organizationId,
+    treasuryWalletId: row.treasuryWalletId,
+    paymentOrderId: row.paymentOrderId,
+    provider: row.provider,
+    proposalType: row.proposalType,
+    proposalCategory: row.proposalCategory,
+    semanticType: row.semanticType,
+    status: live?.status ?? row.status,
+    localStatus: row.status,
+    squads: {
+      programId: row.squadsProgramId,
+      multisigPda: row.squadsMultisigPda,
+      proposalPda: row.squadsProposalPda,
+      transactionPda: row.squadsTransactionPda,
+      batchPda: row.squadsBatchPda,
+      transactionIndex: row.transactionIndex,
+      vaultIndex: row.vaultIndex,
+    },
+    voting: live?.voting ?? null,
+    requiredSigner: row.requiredSigner,
+    creatorPersonalWalletId: row.creatorPersonalWalletId,
+    creatorWalletAddress: row.creatorWalletAddress,
+    submittedSignature: row.submittedSignature,
+    executedSignature: row.executedSignature,
+    submittedAt: row.submittedAt?.toISOString() ?? null,
+    executedAt: row.executedAt?.toISOString() ?? null,
+    intentJson: row.intentJson,
+    semanticPayloadJson: row.semanticPayloadJson,
+    metadataJson: row.metadataJson,
+    treasuryWallet: row.treasuryWallet,
+    paymentOrder: row.paymentOrder
+      ? {
+        ...row.paymentOrder,
+        amountRaw: row.paymentOrder.amountRaw.toString(),
+      }
+      : null,
+    createdByUser: row.createdByUser,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+  };
+}
+
+async function loadLiveProposalState(row: DecimalProposalWithRelations) {
+  if (!row.squadsProposalPda || !row.treasuryWalletId) {
+    return null;
+  }
+  const proposal = await runtime.loadProposal(new PublicKey(row.squadsProposalPda));
+  if (!proposal) {
+    return null;
+  }
+  const { multisigAccount } = await loadSquadsTreasury(row.organizationId, row.treasuryWalletId);
+  const approvals = addressesFromPublicKeys(proposal.approved);
+  const rejections = addressesFromPublicKeys(proposal.rejected);
+  const cancellations = addressesFromPublicKeys(proposal.cancelled);
+  const voterMembers = multisigAccount.members
+    .filter((member) => (member.permissions.mask & SQUADS_PERMISSION_MAP.vote) === SQUADS_PERMISSION_MAP.vote)
+    .map((member) => ({
+      walletAddress: member.key.toBase58(),
+      permissions: permissionNamesFromMask(member.permissions.mask),
+    }));
+  const decidedVoters = new Set([...approvals, ...rejections]);
+  const pendingVoters = voterMembers.filter((member) => !decidedVoters.has(member.walletAddress));
+  const executeMembers = multisigAccount.members
+    .filter((member) => (member.permissions.mask & SQUADS_PERMISSION_MAP.execute) === SQUADS_PERMISSION_MAP.execute)
+    .map((member) => member.key.toBase58());
+  const linkedMembers = await loadDetailedMembersByWalletAddresses(
+    row.organizationId,
+    row.treasuryWalletId,
+    uniqueStrings([
+      ...approvals,
+      ...rejections,
+      ...cancellations,
+      ...pendingVoters.map((member) => member.walletAddress),
+      ...executeMembers,
+    ]),
+  );
+  return {
+    status: normalizeProposalStatus(proposal.status),
+    voting: {
+      threshold: Number(multisigAccount.threshold),
+      approvals: approvals.map((walletAddress) => serializeProposalDecision(walletAddress, linkedMembers)),
+      rejections: rejections.map((walletAddress) => serializeProposalDecision(walletAddress, linkedMembers)),
+      cancellations: cancellations.map((walletAddress) => serializeProposalDecision(walletAddress, linkedMembers)),
+      pendingVoters: pendingVoters.map((member) => ({
+        walletAddress: member.walletAddress,
+        permissions: member.permissions,
+        ...serializeProposalMemberLink(member.walletAddress, linkedMembers),
+      })),
+      canExecuteWalletAddresses: executeMembers,
+    },
+  };
+}
+
+function statusFilterWhere(status: 'pending' | 'closed') {
+  if (status === 'closed') {
+    return { status: { in: ['executed', 'cancelled', 'rejected'] } };
+  }
+  return { status: { notIn: ['executed', 'cancelled', 'rejected'] } };
 }
 
 async function loadSquadsConfigProposal(
@@ -1062,6 +1741,26 @@ async function loadOrganizationPersonalWallet(organizationId: string, personalWa
     throw badRequest('newMemberPersonalWalletId must be an active personal wallet owned by an active organization member.');
   }
   return wallet;
+}
+
+async function loadPaymentOrderForSquadsProposal(organizationId: string, paymentOrderId: string) {
+  const paymentOrder = await prisma.paymentOrder.findFirst({
+    where: { organizationId, paymentOrderId },
+    include: {
+      destination: true,
+      transferRequests: {
+        orderBy: { requestedAt: 'desc' },
+        take: 1,
+      },
+    },
+  });
+  if (!paymentOrder) {
+    throw notFound('Payment order not found');
+  }
+  if (paymentOrder.state === 'cancelled' || paymentOrder.state === 'closed') {
+    throw badRequest(`Payment order is ${paymentOrder.state}.`);
+  }
+  return paymentOrder;
 }
 
 async function loadAndValidateMembers(

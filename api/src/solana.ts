@@ -175,6 +175,16 @@ export function buildUsdcTransferInstructions(args: {
   destinationTokenAccount: string;
   amountRaw: string | bigint;
 }) {
+  return buildUsdcTransferTransactionInstructions(args).map(serializeSolanaInstruction);
+}
+
+export function buildUsdcTransferTransactionInstructions(args: {
+  sourceWallet: string;
+  sourceTokenAccount: string;
+  destinationWallet: string;
+  destinationTokenAccount: string;
+  amountRaw: string | bigint;
+}) {
   const sourceWallet = new PublicKey(args.sourceWallet);
   const sourceTokenAccount = new PublicKey(args.sourceTokenAccount);
   const destinationWallet = new PublicKey(args.destinationWallet);
@@ -197,5 +207,5 @@ export function buildUsdcTransferInstructions(args: {
     TOKEN_PROGRAM_ID,
   );
 
-  return [ensureDestinationAta, transfer].map(serializeSolanaInstruction);
+  return [ensureDestinationAta, transfer];
 }

@@ -22,6 +22,7 @@ import { opsRouter } from './routes/ops.js';
 import { paymentOrdersRouter } from './routes/payment-orders.js';
 import { paymentRequestsRouter } from './routes/payment-requests.js';
 import { paymentRunsRouter } from './routes/payment-runs.js';
+import { proposalsRouter } from './routes/proposals.js';
 import { publicRateLimitMiddleware } from './rate-limit.js';
 import { treasuryWalletsRouter } from './routes/treasury-wallets.js';
 import { userWalletsRouter } from './routes/user-wallets.js';
@@ -107,6 +108,7 @@ export function createApp() {
   app.use(paymentRequestsRouter);
   app.use(paymentRunsRouter);
   app.use(paymentOrdersRouter);
+  app.use(proposalsRouter);
   app.use(collectionsRouter);
   app.use(eventsRouter);
 

@@ -91,6 +91,10 @@ export const API_ENDPOINTS = [
     scope: 'organization:write',
     requestBody: { creatorPersonalWalletId: 'uuid', newThreshold: 'number' },
   }),
+  endpoint('create_squads_payment_proposal_intent', 'POST', '/organizations/{organizationId}/treasury-wallets/{treasuryWalletId}/squads/vault-proposals/payment-intent', ['treasury wallets', 'squads', 'proposals'], 'Prepare a signable Squads vault proposal that pays a Decimal payment order', 'session', {
+    scope: 'execution:write',
+    requestBody: { paymentOrderId: 'uuid', creatorPersonalWalletId: 'uuid', memo: 'string optional', autoApprove: 'boolean optional' },
+  }),
   endpoint('approve_squads_config_proposal_intent', 'POST', '/organizations/{organizationId}/treasury-wallets/{treasuryWalletId}/squads/config-proposals/{transactionIndex}/approve-intent', ['treasury wallets', 'squads'], 'Prepare a signable Squads proposal approval transaction', 'session', {
     scope: 'organization:write',
     requestBody: { memberPersonalWalletId: 'uuid', memo: 'string optional' },
@@ -100,6 +104,24 @@ export const API_ENDPOINTS = [
     requestBody: { memberPersonalWalletId: 'uuid' },
   }),
   endpoint('sync_squads_members', 'POST', '/organizations/{organizationId}/treasury-wallets/{treasuryWalletId}/squads/sync-members', ['treasury wallets', 'squads'], 'Sync local Squads member authorizations from onchain multisig state', 'session', { scope: 'organization:write' }),
+  endpoint('list_decimal_proposals', 'GET', '/organizations/{organizationId}/proposals', ['proposals'], 'List Decimal proposal records including Squads-backed config and vault proposals', 'session', { scope: 'organization:read' }),
+  endpoint('get_decimal_proposal', 'GET', '/organizations/{organizationId}/proposals/{decimalProposalId}', ['proposals'], 'Read one Decimal proposal record with live Squads voting state when available', 'session', { scope: 'organization:read' }),
+  endpoint('confirm_decimal_proposal_submission', 'POST', '/organizations/{organizationId}/proposals/{decimalProposalId}/confirm-submission', ['proposals'], 'Attach the proposal creation transaction signature after client submission', 'session', {
+    scope: 'execution:write',
+    requestBody: { signature: 'string' },
+  }),
+  endpoint('confirm_decimal_proposal_execution', 'POST', '/organizations/{organizationId}/proposals/{decimalProposalId}/confirm-execution', ['proposals'], 'Attach the proposal execution transaction signature after client submission', 'session', {
+    scope: 'execution:write',
+    requestBody: { signature: 'string' },
+  }),
+  endpoint('approve_decimal_proposal_intent', 'POST', '/organizations/{organizationId}/proposals/{decimalProposalId}/approve-intent', ['proposals', 'squads'], 'Prepare a signable Squads approval transaction for a Decimal proposal', 'session', {
+    scope: 'execution:write',
+    requestBody: { memberPersonalWalletId: 'uuid', memo: 'string optional' },
+  }),
+  endpoint('execute_decimal_proposal_intent', 'POST', '/organizations/{organizationId}/proposals/{decimalProposalId}/execute-intent', ['proposals', 'squads'], 'Prepare a signable Squads execution transaction for a Decimal proposal', 'session', {
+    scope: 'execution:write',
+    requestBody: { memberPersonalWalletId: 'uuid' },
+  }),
   endpoint('update_treasury_wallet', 'PATCH', '/organizations/{organizationId}/treasury-wallets/{treasuryWalletId}', ['address book'], 'Update owned treasury wallet', 'session', { scope: 'organization:write' }),
   endpoint('list_wallet_authorizations', 'GET', '/organizations/{organizationId}/wallet-authorizations', ['wallet authorizations'], 'List personal wallet authorizations for an organization', 'session', { scope: 'organization:read' }),
   endpoint('create_wallet_authorization', 'POST', '/organizations/{organizationId}/wallet-authorizations', ['wallet authorizations'], 'Authorize a personal wallet to act for an organization or treasury wallet', 'session', {

@@ -19,6 +19,7 @@ model Organization {
   sessions         AuthSession[]
   counterparties   Counterparty[]
   treasuryWallets TreasuryWallet[]
+  decimalProposals DecimalProposal[]
   destinations Destination[]
   collectionSources CollectionSource[]
   transferRequests TransferRequest[]
@@ -65,6 +66,7 @@ model User {
   approvalDecisions          ApprovalDecision[]
   executionRecords           ExecutionRecord[]        @relation("ExecutionRecordExecutorUser")
   paymentOrdersCreated       PaymentOrder[]           @relation("PaymentOrderCreatedByUser")
+  decimalProposalsCreated    DecimalProposal[]        @relation("DecimalProposalCreatedByUser")
   paymentRequestsCreated     PaymentRequest[]         @relation("PaymentRequestRequestedByUser")
   paymentRunsCreated         PaymentRun[]             @relation("PaymentRunCreatedByUser")
   collectionRequestsCreated  CollectionRequest[]      @relation("CollectionRequestCreatedByUser")
@@ -219,6 +221,7 @@ model TreasuryWallet {
   sourcePaymentRuns        PaymentRun[]      @relation("PaymentRunSourceWallet")
   receivingCollections     CollectionRequest[] @relation("CollectionReceivingWallet")
   receivingCollectionRuns  CollectionRun[]     @relation("CollectionRunReceivingWallet")
+  decimalProposals         DecimalProposal[]
 
   @@unique([organizationId, address])
   @@map("treasury_wallets")
@@ -401,6 +404,7 @@ model PaymentOrder {
   createdByUser             User?               @relation("PaymentOrderCreatedByUser", fields: [createdByUserId], references: [userId], onDelete: SetNull)
   transferRequests          TransferRequest[]
   events                    PaymentOrderEvent[]
+  proposals                 DecimalProposal[]
 
   @@index([organizationId, state, createdAt(sort: Desc)])
   @@index([paymentRequestId])
@@ -408,6 +412,49 @@ model PaymentOrder {
   @@index([destinationId, createdAt(sort: Desc)])
   @@index([sourceTreasuryWalletId, createdAt(sort: Desc)])
   @@map("payment_orders")
+}
+
+model DecimalProposal {
+  decimalProposalId      String          @id @default(dbgenerated("gen_random_uuid()")) @map("decimal_proposal_id") @db.Uuid
+  organizationId         String          @map("organization_id") @db.Uuid
+  treasuryWalletId       String?         @map("treasury_wallet_id") @db.Uuid
+  paymentOrderId         String?         @map("payment_order_id") @db.Uuid
+  provider               String          @default("squads_v4")
+  proposalType           String          @map("proposal_type")
+  proposalCategory       String          @map("proposal_category")
+  semanticType           String?         @map("semantic_type")
+  status                 String          @default("prepared")
+  squadsProgramId        String?         @map("squads_program_id")
+  squadsMultisigPda      String?         @map("squads_multisig_pda")
+  squadsProposalPda      String?         @map("squads_proposal_pda")
+  squadsTransactionPda   String?         @map("squads_transaction_pda")
+  squadsBatchPda         String?         @map("squads_batch_pda")
+  transactionIndex       String?         @map("transaction_index")
+  vaultIndex             Int?            @map("vault_index")
+  requiredSigner         String?         @map("required_signer")
+  creatorPersonalWalletId String?        @map("creator_personal_wallet_id") @db.Uuid
+  creatorWalletAddress   String?         @map("creator_wallet_address")
+  submittedSignature     String?         @map("submitted_signature")
+  executedSignature      String?         @map("executed_signature")
+  submittedAt            DateTime?       @map("submitted_at") @db.Timestamptz(6)
+  executedAt             DateTime?       @map("executed_at") @db.Timestamptz(6)
+  intentJson             Json            @default("{}") @map("intent_json")
+  semanticPayloadJson    Json            @default("{}") @map("semantic_payload_json")
+  metadataJson           Json            @default("{}") @map("metadata_json")
+  createdByUserId        String?         @map("created_by_user_id") @db.Uuid
+  createdAt              DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt              DateTime        @updatedAt @map("updated_at") @db.Timestamptz(6)
+  organization           Organization    @relation(fields: [organizationId], references: [organizationId], onDelete: Cascade)
+  treasuryWallet         TreasuryWallet? @relation(fields: [treasuryWalletId], references: [treasuryWalletId], onDelete: SetNull)
+  paymentOrder           PaymentOrder?   @relation(fields: [paymentOrderId], references: [paymentOrderId], onDelete: SetNull)
+  createdByUser          User?           @relation("DecimalProposalCreatedByUser", fields: [createdByUserId], references: [userId], onDelete: SetNull)
+
+  @@unique([organizationId, provider, squadsMultisigPda, transactionIndex])
+  @@index([organizationId, status, createdAt(sort: Desc)])
+  @@index([organizationId, proposalType, createdAt(sort: Desc)])
+  @@index([treasuryWalletId, createdAt(sort: Desc)])
+  @@index([paymentOrderId, createdAt(sort: Desc)])
+  @@map("decimal_proposals")
 }
 
 model PaymentRequest {
