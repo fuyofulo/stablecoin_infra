@@ -31,6 +31,7 @@ export function ProposalsTable({
   organizationId,
   busy,
   showTreasuryColumn,
+  emptyHint,
   onApprove,
   onExecute,
 }: {
@@ -40,6 +41,7 @@ export function ProposalsTable({
   organizationId: string;
   busy: ProposalsTableBusy | null;
   showTreasuryColumn: boolean;
+  emptyHint?: string;
   onApprove: (proposal: DecimalProposal, signerWalletId: string) => void;
   onExecute: (proposal: DecimalProposal, signerWalletId: string) => void;
 }) {
@@ -61,8 +63,10 @@ export function ProposalsTable({
           {proposals.length === 0 ? (
             <tr>
               <td colSpan={colCount} className="rd-empty-cell">
-                <strong>No proposals yet</strong>
-                <p style={{ margin: 0 }}>Pending proposals will show up here.</p>
+                <strong>No proposals</strong>
+                <p style={{ margin: 0 }}>
+                  {emptyHint ?? 'Pending proposals will show up here.'}
+                </p>
               </td>
             </tr>
           ) : (

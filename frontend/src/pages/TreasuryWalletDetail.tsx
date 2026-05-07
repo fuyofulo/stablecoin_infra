@@ -392,12 +392,6 @@ export function TreasuryWalletDetailPage({ session }: { session: AuthenticatedSe
                 Couldn't load proposals.
               </span>
             </div>
-          ) : treasuryProposals.length === 0 ? (
-            <div className="rd-empty-cell" style={{ padding: '24px' }}>
-              <span style={{ fontSize: 13, color: 'var(--ax-text-muted)' }}>
-                No pending proposals for this treasury.
-              </span>
-            </div>
           ) : (
             <ProposalsTable
               proposals={treasuryProposals}
@@ -406,6 +400,7 @@ export function TreasuryWalletDetailPage({ session }: { session: AuthenticatedSe
               organizationId={organizationId}
               busy={proposalsBusy}
               showTreasuryColumn={false}
+              emptyHint="No pending proposals for this treasury."
               onApprove={(proposal, signerWalletId) => {
                 setProposalsBusy({ decimalProposalId: proposal.decimalProposalId, action: 'approve' });
                 proposalApproveMutation.mutate({ proposal, signerWalletId });

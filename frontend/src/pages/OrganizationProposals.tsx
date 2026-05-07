@@ -225,17 +225,6 @@ export function OrganizationProposalsPage({ session }: { session: AuthenticatedS
             </p>
           </div>
         </section>
-      ) : items.length === 0 ? (
-        <section className="rd-section">
-          <div className="rd-empty-cell" style={{ padding: '48px 24px' }}>
-            <strong>No proposals match these filters</strong>
-            <p style={{ margin: 0 }}>
-              {statusFilter === 'pending'
-                ? "When a proposal needs your signature, it'll show up here."
-                : 'Try a different status or clear the filters.'}
-            </p>
-          </div>
-        </section>
       ) : (
         <ProposalsTable
           proposals={items}
@@ -244,6 +233,11 @@ export function OrganizationProposalsPage({ session }: { session: AuthenticatedS
           organizationId={organizationId}
           busy={busy}
           showTreasuryColumn={showTreasuryColumn}
+          emptyHint={
+            statusFilter === 'pending'
+              ? 'No pending proposals — try the All or Closed filter to see history.'
+              : 'No proposals match these filters.'
+          }
           onApprove={(proposal, signerWalletId) => {
             setBusy({ decimalProposalId: proposal.decimalProposalId, action: 'approve' });
             approveMutation.mutate({ proposal, signerWalletId });
