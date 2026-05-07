@@ -1,6 +1,6 @@
 # 03 Backend Control Plane
 
-The backend is the product source of truth. The frontend is a client.
+The backend is the product source of truth. The frontend is one client.
 
 The backend lives in `api/`.
 
@@ -8,19 +8,19 @@ The backend lives in `api/`.
 
 ```text
 api/src/server.ts
-Starts the HTTP server.
+  Starts the HTTP server.
 
 api/src/app.ts
-Creates the Express app, middleware, route mounting, and error handling.
-
-api/src/prisma.ts
-Exports the Prisma client.
+  Creates the Express app, middleware, route mounting, and error handling.
 
 api/prisma/schema.prisma
-Defines the Postgres schema.
+  Defines the Postgres schema.
+
+api/src/prisma.ts
+  Exports the Prisma client.
 
 api/src/api-contract.ts
-Defines the API contract used to generate OpenAPI.
+  Defines the API contract used to generate OpenAPI.
 ```
 
 ## Express App Composition
@@ -33,282 +33,205 @@ Defines the API contract used to generate OpenAPI.
 4. JSON body parser.
 5. Matching-index invalidation middleware.
 6. Public routes.
-7. Authentication middleware.
-8. Idempotency middleware.
-9. Protected routes.
-10. Error handler.
+7. Internal/public auth-adjacent routes.
+8. `requireAuth()`.
+9. Idempotency middleware.
+10. Protected route groups.
+11. Error handler.
 
-This ordering matters.
+Public routes must be mounted before `requireAuth()`.
 
-Public routes must be mounted before `requireAuth()`. Protected routes must be mounted after it.
+Protected product routes are organization-scoped.
 
-## Request IDs
+## Auth
 
-Every request gets a request ID from:
+Current auth supports:
 
-- Existing `x-request-id` header if present.
-- Generated random UUID if absent.
+- email/password registration
+- email/password login
+- email verification
+- Google OAuth
+- bearer sessions
+- logout/session invalidation
 
-Responses include `x-request-id`.
+Sessions are stored in `AuthSession`.
 
-Errors include `requestId` in JSON.
+The frontend stores the session token in browser storage and sends it as:
 
-This is important for debugging frontend failures and API clients.
+```text
+Authorization: Bearer <session-token>
+```
 
-## CORS
+Google OAuth is implemented in `api/src/routes/auth.ts`.
 
-The API accepts configured origins plus local development origins:
+## Organization Access
 
-- `http://localhost:*`
-- `http://127.0.0.1:*`
+Access helpers live in `api/src/organization-access.ts`.
 
-This was necessary because Vite sometimes uses different local ports.
+Important checks:
 
-## Authentication
+- `assertOrganizationAccess` — user must be an active member.
+- `assertOrganizationAdmin` — user must be `owner` or `admin`.
 
-Authentication is email + password user sessions.
+Squads approval/execution routes intentionally use `assertOrganizationAccess`, then check the user's personal wallet against live on-chain Squads permissions. This allows a regular org `member` who is a Squads voter to approve proposals.
 
-Routes (all in `api/src/routes/auth.ts`):
+## Personal Wallets And Privy
 
-- `POST /auth/register` — create a user (email + password). Hashes the password and writes a `User` row + a fresh session.
-- `POST /auth/login` — exchange email + password for a bearer session token.
-- `GET  /auth/session` — return the current session (requires `Authorization: Bearer <token>`).
-- `POST /auth/logout` — invalidate the current session.
+Personal wallet routes live in `api/src/routes/user-wallets.ts`.
 
-The session token is stored in Postgres as `AuthSession`. The frontend persists it in `localStorage` under `usdc_ops_v2.session_token` (with a legacy fallback key for migration).
+Privy integration lives in `api/src/privy-wallets.ts`.
 
-A first-signup walkthrough tutorial in the sidebar guides new users through wallets → destinations → policy → first payment.
+Supported backend operations:
 
-Session auth context includes:
+- list user's personal wallets
+- list org members' active personal wallets
+- register embedded Privy wallet
+- delete user's own Privy wallet
+- sign a versioned transaction through Privy
 
-- `authType: user_session`
-- user id
-- email
-- display name
-- actor type `user`
+The backend never treats a personal wallet as org treasury funds. It is only a signer.
 
 ## Idempotency
 
 Mutation requests can include:
 
 ```text
-Idempotency-Key: some-client-generated-key
+Idempotency-Key: client-generated-key
 ```
 
-The middleware applies to:
-
-- `POST`
-- `PATCH`
-- `DELETE`
+The idempotency middleware applies to `POST`, `PATCH`, and `DELETE`.
 
 It stores:
 
-- actor type
-- actor id
+- actor
 - method
 - path
 - key
 - stable request body hash
-- completed response body
+- response body
 
-Behavior:
-
-- Same key and same body returns cached response.
-- Same key and different body returns `409 idempotency_conflict`.
-- Same key while prior request is in progress returns `409 idempotency_in_progress`.
-
-This is important for agents because they may retry requests after network failures.
+Same key + same body returns cached response. Same key + different body returns conflict.
 
 ## Matching-Index Invalidation
 
-After relevant mutations complete successfully, the API notifies subscribers that the matching index should refresh.
+After relevant mutations succeed, the API notifies matching-index subscribers.
 
-The invalidation middleware watches paths involving:
+The worker listens to:
 
-- organizations
-- workspaces
-- addresses
-- destinations
-- payment requests
-- payment runs
-- payment orders
-- transfer requests
+```text
+GET /internal/matching-index/events
+```
+
+This avoids polling. The worker refreshes its in-memory index when the API emits an invalidation.
+
+## Core Route Groups
+
+Protected route groups:
+
+- organizations and invites
+- members and ops
+- personal wallets
+- treasury wallets
+- Squads treasury routes
+- wallet authorizations
+- counterparties and destinations
+- collection sources
+- payment requests/runs/orders
+- collections/runs
 - approvals
-- executions
+- reconciliation/events/exceptions
 
-The Yellowstone worker subscribes to matching-index events and refreshes without polling.
+See [13 API Route Catalog](./13-api-route-catalog.md) for exact routes.
 
-## Public Routes
+## Important Service Modules
 
-Public routes include:
+### `auth.ts` / `routes/auth.ts`
 
-- Health.
-- Capabilities.
-- OpenAPI.
-- Auth.
-- Internal worker endpoints.
+Session auth, password auth, Google OAuth, email verification.
 
-Internal worker endpoints are protected by service token logic where applicable, not regular user sessions.
+### `organization-access.ts`
 
-## Protected Route Groups
+Organization access and admin checks.
 
-Protected routes include:
+### `user-wallets.ts` / `privy-wallets.ts`
 
-- Organization management.
-- Workspace operations.
-- Treasury wallets (`/workspaces/:id/treasury-wallets`, `/balances`).
-- Counterparties and Destinations.
-- Payment requests.
-- Payment runs.
-- Payment orders.
-- Approval policy and inbox.
-- Events/reconciliation/exceptions.
-- Agent task endpoints.
+Personal wallet registration, deletion, and signing.
 
-## Error Handling
+### `treasury-wallets.ts`
 
-The API maps:
+Manual organization treasury wallet CRUD, balances, ATA derivation, serialization.
 
-- Zod validation errors to `400 ValidationError`.
-- Known domain errors through `mapKnownError`.
-- Regular `Error` objects to `400`.
-- Unknown errors to `500 InternalError`.
+### `squads-treasury.ts`
 
-This is pragmatic for MVP but not ideal long-term. Some domain errors should become explicit typed errors instead of generic `Error`.
+Squads v4 integration:
 
-## API Contract And OpenAPI
+- create multisig treasury intent
+- confirm treasury
+- detail/status reads
+- config proposal creation
+- proposal listing/detail
+- approve/execute intents
+- sync local member authorizations from chain
 
-`api/src/api-contract.ts` is the canonical route list for API documentation.
+### `destinations.ts`
 
-The OpenAPI route is mounted publicly. This matters for:
+Counterparties and destination wallets.
 
-- Developer onboarding.
-- API-first usage.
-- Agent tool generation.
-- Keeping frontend and backend aligned.
+### `collection-sources.ts`
 
-If you add a route, update:
-
-- Route implementation.
-- Tests if applicable.
-- `api-contract.ts`.
-- OpenAPI descriptions if the route should be agent/client visible.
-
-## Core Backend Modules
+Expected inbound payer wallets.
 
 ### `payment-requests.ts`
 
-Handles input-layer requests.
-
-Responsibilities:
-
-- Create payment requests.
-- List and fetch requests.
-- Import requests from CSV.
-- Preview CSV imports.
-- Promote a payment request to a payment order.
-- Cancel requests.
+Manual and CSV-created input payment requests.
 
 ### `payment-runs.ts`
 
-Handles batch workflows.
-
-Responsibilities:
-
-- Import CSV batches.
-- Create payment run records.
-- Create request/order rows for each imported line.
-- Prepare batch execution.
-- Attach batch signatures.
-- Close/cancel runs.
-- Build run detail read models.
+Batch payment imports, execution preparation, signature attachment, close/cancel.
 
 ### `payment-orders.ts`
 
-Handles the main payment lifecycle.
+Single payment lifecycle: create, submit, approve, prepare execution, attach signature, proof.
 
-Responsibilities:
+### `collections.ts`
 
-- Create payment orders.
-- Submit payment orders.
-- Evaluate approval policy.
-- Create lower-level transfer requests.
-- Prepare Solana execution packets.
-- Attach signatures or execution references.
-- Cancel orders.
-- Serialize read models.
-- Pull reconciliation detail into payment order views.
-
-This is currently one of the most important and largest service modules.
+Inbound collection requests and collection runs.
 
 ### `approval-policy.ts`
 
-Handles workspace approval rules.
-
-Responsibilities:
-
-- Create default approval policy.
-- Evaluate whether a request/order needs approval.
-- Produce human-readable policy reason summaries.
+Approval policy evaluation against destinations, internal/external classification, and thresholds.
 
 ### `execution-records.ts`
 
-Handles execution evidence.
-
-Responsibilities:
-
-- Create execution records.
-- Serialize execution records.
-- Represent whether an execution was prepared, submitted, observed, or failed.
+Execution evidence and submitted signatures.
 
 ### `reconciliation.ts`
 
-Reads ClickHouse reconciliation data and overlays Postgres operator metadata.
+Reads ClickHouse facts, overlays Postgres metadata, classifies settlement state, and handles exceptions.
 
-Responsibilities:
+### `proof-packet.ts`, `payment-order-proof.ts`, `payment-run-proof.ts`
 
-- List observed transfers.
-- List reconciliation queue.
-- Fetch reconciliation detail.
-- Explain reconciliation state.
-- List exceptions.
-- Apply exception actions.
-- Add exception notes.
+Deterministic JSON proof generation and digest helpers.
 
-### `proof-packet.ts`
+## Error Handling
 
-Builds canonical digest data for proofs.
+The app maps:
 
-Proof routes build human-readable Markdown and/or compact JSON proof packets around these primitives.
+- Zod errors -> `400 validation_error`
+- `ApiError` -> configured HTTP status and code
+- known Prisma errors -> typed API errors
+- generic `Error` -> `400`
+- unknown -> `500`
 
-### `agent-tasks.ts`
+Some legacy routes still throw generic `Error`. Prefer `ApiError`, `badRequest`, `forbidden`, `notFound`, and `conflict` for new code.
 
-Builds a machine-readable task list for agents.
+## API-First Principle
 
-It merges:
+For every frontend workflow, a script should be able to perform the same sequence through documented HTTP calls.
 
-- Approval inbox items.
-- Payment orders requiring execution/reconciliation attention.
-- Open exceptions.
+If critical sequencing exists only in React state, move it into:
 
-Each task includes recommended actions and API hrefs.
-
-## Route Modules
-
-Routes are in `api/src/routes/`.
-
-The route modules should stay thin. Business logic should live in service modules.
-
-Current reality:
-
-- Many routes are thin enough.
-- Some validation/request shaping is in routes.
-- Some service modules are large and should later be split into smaller domain services.
-
-## Backend Design Principle
-
-The API should be a complete product surface independent of the frontend.
-
-If a feature only works because the frontend knows hidden sequencing logic, it is not API-first enough.
-
-For every important frontend workflow, an agent or CLI should be able to do the same thing through documented API calls.
+- explicit backend endpoints
+- API contract documentation
+- tests
+- proof/audit events

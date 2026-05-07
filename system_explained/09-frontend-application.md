@@ -1,252 +1,265 @@
 # 09 Frontend Application
 
-The frontend lives in `frontend/` and is a Vite + React + TypeScript app with React Router and TanStack Query. It talks to the API only — no direct ClickHouse or Postgres access. The backend enforces every business rule; the frontend is one client over the same HTTP API that scripts can also call with user sessions.
+The frontend lives in `frontend/`. It is a Vite + React + TypeScript app using React Router and TanStack Query.
 
-## High-level shape
+It talks to the API only. It does not access Postgres or ClickHouse directly.
 
-- `frontend/src/App.tsx` — router shell + shared layout + auth gate. Still ~5,280 lines because some legacy inline page components (Policy, Exceptions, parts of the address book) and shared row/table primitives haven't been extracted yet. Most user-facing pages have been moved out.
-- `frontend/src/Sidebar.tsx` — institutional sidebar: workspace switcher, nav groups (**Operations** / **Registry** / **Advanced**), theme toggle, profile menu, walkthrough tutorial trigger on first signup.
-- `frontend/src/pages/*.tsx` — one file per top-level extracted page (see "Page-by-page notes" below).
-- `frontend/src/pages/landing/*.tsx` — landing page composed of `Hero`, `Features`, `Workflow`, `ProductUI`, `CodeWall`, `FinalCTA`, `Icons`, `heroVisuals/`. Shipped via Vercel at https://decimal.finance.
-- `frontend/src/api.ts` — typed HTTP client for every endpoint the UI uses.
-- `frontend/src/public-config.ts` — reads `config/frontend.public.json` for `apiBaseUrl` (`https://api.decimal.finance` in prod) and the public Solana RPC URL.
-- `frontend/src/domain.ts` — cross-cutting helpers: address shortening, USDC formatting, Solana wallet discovery / signing, USD value computation.
-- `frontend/src/ui/Toast.tsx` — toast provider used by every page for success / error / info notices.
-- `frontend/src/styles/` — the design system (see below).
+## Current Shape
 
-## Deployment
+Important files:
 
-Frontend is deployed to Vercel CDN at https://decimal.finance. `vercel.json` configures it as a static SPA: `buildCommand: "cd frontend && npm install && npm run build"`, `outputDirectory: "frontend/dist"`, framework null, with a single SPA-fallback rewrite to `index.html`. There are NO Vercel functions and NO API proxy — the browser hits the API directly at `https://api.decimal.finance` (Cloudflare tunnel to the laptop).
+- `frontend/src/App.tsx` — route table, auth gate, setup flow, shared layout.
+- `frontend/src/Sidebar.tsx` — organization switcher, nav groups, theme toggle.
+- `frontend/src/api.ts` — typed HTTP client.
+- `frontend/src/types.ts` — frontend domain/API types.
+- `frontend/src/public-config.ts` — browser-safe config.
+- `frontend/src/domain.ts` — formatting, explorer URLs, wallet helpers.
+- `frontend/src/lib/squads-pipeline.ts` — sign/submit helper for Squads transaction intents.
+- `frontend/src/ui/Toast.tsx` — toast provider.
+- `frontend/src/ui/SquadsProposalCard.tsx` — reusable proposal card for treasury and org proposal pages.
+- `frontend/src/pages/*.tsx` — top-level pages.
 
-## Design system
+## Current Route Shape
 
-Institutional, not consumer. Dual theme — light-default, dark first-class. References: Linear, Mercury, Stripe, Bloomberg Terminal. Source of truth for the brand lives in `brand.md` at the repo root.
+Active routes are organization-scoped:
 
-### Tokens
+```text
+/organizations/:organizationId/...
+```
 
-All colors, spacing, and typography hang off `--ax-*` CSS variables defined in `frontend/src/styles/design-tokens.css`. Two theme roots:
+The old `/workspaces/:workspaceId/...` frontend route shape is stale.
 
-- `:root` — light defaults.
-- `:root[data-theme='dark']` — dark overrides.
+## Main Pages
 
-Key token families (full list in `brand.md`):
+### Landing
 
-- Surfaces: `--ax-surface-0` through `--ax-surface-3`.
-- Text: `--ax-text`, `--ax-text-secondary`, `--ax-text-muted`, `--ax-text-faint`.
-- Borders: `--ax-border`, `--ax-border-strong`.
-- Accent (verified-green): `--ax-accent`, `--ax-accent-hover`, `--ax-accent-dim`, `--ax-on-accent`.
-- Semantic: `--ax-warning`, `--ax-danger`, `--ax-info`.
-- Typography: Geist Variable for UI, system mono stack for numbers / addresses / signatures (`font-variant-numeric: tabular-nums`).
+Files:
 
-Never hardcode colors or spacing. If you need a new shade, add a token.
+- `frontend/src/pages/Landing.tsx`
+- `frontend/src/pages/landing/*`
 
-### Stylesheets
+Public marketing page.
 
-- `frontend/src/styles/design-tokens.css` — the tokens above.
-- `frontend/src/styles/canonical.css` — canonical components: buttons (`rd-btn`, `rd-btn-primary`, `rd-btn-secondary`, `rd-btn-ghost`, `rd-btn-danger`), inputs (`.field`, `.rd-input`, `.rd-select`), dialogs (`.rd-dialog-backdrop`, `.rd-dialog`), tables (`.rd-table-shell`, `.rd-table`), pills (`.rd-pill`), metric blocks (`.rd-metrics`, `.rd-metric`).
-- `frontend/src/styles/run-detail.css` — the `rd-*` layer used everywhere: recipient blocks, filter bars, tables, signature/address links, primary action cards, skeleton loaders. Amount columns use `.rd-num` (left-aligned, mono, tabular-nums).
-- `frontend/src/styles/sidebar.css` — sidebar layout, nav items, theme toggle.
-- `frontend/src/styles/app-dark.css` — dark-theme overrides applied at `:root[data-theme='dark']`.
-- `frontend/src/styles.css` — legacy global rules still carrying the older `.panel` / `.data-table` patterns. New code should prefer the files above.
+### Auth / Setup / Profile
 
-### Batch-expandable table pattern
+Files:
 
-Four pages use the same expandable-rows pattern: **Proofs**, **Execution**, **Settlement**, **Approvals**.
+- `frontend/src/App.tsx`
+- profile/setup components inside the current route shell
 
-- Each row represents a group: either a `PaymentRun` (batch) or a standalone `PaymentOrder`.
-- Run rows show aggregate info (item count, total, status pill) and a chevron.
-- Clicking the run row toggles child rows indented with a `↳` marker — one per payment in the run.
-- Standalone rows are flat and don't expand.
-- Amount columns live under `rd-num`.
+Supports:
 
-If you add another list view that mixes batches and singles, use this same pattern — don't invent a new one.
-
-## Top-level routes
-
-From `App.tsx`:
-
-- `/` — entry redirect.
-- `/landing` — pre-auth landing.
-- `/login` — login form.
-- `/setup` — onboarding.
-- `/profile` — user profile + sessions.
-- `/workspaces/:workspaceId` → **CommandCenter** (Overview).
-- `/workspaces/:workspaceId/wallets` → **Wallets** (treasury wallets + live balances).
-- `/workspaces/:workspaceId/counterparties` → **Counterparties** (destinations + counterparties with Edit modal).
-- `/workspaces/:workspaceId/registry` → legacy Address Book (retained but not linked from primary nav).
-- `/workspaces/:workspaceId/requests` → Payment Requests (legacy list).
-- `/workspaces/:workspaceId/payments` and `/workspaces/:workspaceId/runs` → unified **Payments** page.
-- `/workspaces/:workspaceId/runs/:paymentRunId` → **PaymentRunDetail**.
-- `/workspaces/:workspaceId/payments/:paymentOrderId` → **PaymentDetail**.
-- `/workspaces/:workspaceId/approvals` → **Approvals** (supports `?runId=X` filter).
-- `/workspaces/:workspaceId/execution` → **Execution** (Ready to sign / In flight / Executed).
-- `/workspaces/:workspaceId/settlement` → **Settlement** (Matched / Pending / Exceptions).
-- `/workspaces/:workspaceId/proofs` → **Proofs**.
-- `/workspaces/:workspaceId/collections` → **Collections** (unified list of `CollectionRun`s + standalone `CollectionRequest`s).
-- `/workspaces/:workspaceId/collections/:collectionRequestId` → **CollectionDetail**.
-- `/workspaces/:workspaceId/collection-runs/:collectionRunId` → **CollectionRunDetail**.
-- `/workspaces/:workspaceId/collection-sources` → **CollectionSources** (registry of saved expected payer wallets).
-- `/workspaces/:workspaceId/policy` → Policy.
-- `/workspaces/:workspaceId/exceptions` → Exceptions.
-
-## Page-by-page notes
-
-### CommandCenter (Overview)
-
-File: `frontend/src/pages/CommandCenter.tsx`.
-
-What it answers: *"Is my workspace healthy right now, and what should I do next?"*
-
-- Treasury hero at the top — total USD value (span 2 columns), total USDC, total SOL. Uses `/treasury-wallets/balances` + `pricing.ts`.
-- Operations metric strip: Awaiting approval / Ready to sign / In flight / Settled.
-- Exceptions banner if there are open exceptions.
-- Recent activity table — same shape as the Payments table (Recipient/Run, Destination, Source, Amount, Origin, Status), capped at 8 rows, "View all" link.
-- Onboarding empty state when the workspace has no wallets/destinations/payments (three-step checklist).
+- login
+- Google OAuth redirect flow
+- organization creation
+- profile
+- personal wallet creation/management
 
 ### Wallets
 
-File: `frontend/src/pages/Wallets.tsx`.
+File: `frontend/src/pages/Wallets.tsx`
 
-Registers and monitors the workspace's `TreasuryWallet` rows. Polls `/treasury-wallets/balances` every 15 s. Shows per-wallet USDC + SOL + USD value and an `rpcError` column when balance fetches fail. Add-wallet dialog is the only mutation.
+Purpose:
 
-### Counterparties
+- list organization treasury wallets
+- add existing/manual treasury address
+- create Squads treasury
 
-File: `frontend/src/pages/Counterparties.tsx`.
+Squads treasury creation supports:
 
-Two concerns on one page: destinations (top, main table) and counterparties (bottom, card grid).
+- choosing creator personal wallet
+- choosing multiple org member personal wallets
+- toggling member permissions
+- selecting threshold
+- preparing a Squads create transaction
+- signing/submitting through Privy
+- confirming/persisting the treasury in Decimal
 
-- Destinations table: Label, Counterparty, Wallet, Trust pill, Type (internal/external), Actions column with **Edit** button.
-- Edit modal: label, trust state (`unreviewed | trusted | restricted | blocked`), counterparty tag, notes, active flag. Wallet address is read-only.
-- Filters: All / Trusted / Unreviewed / Blocked.
-- Counterparties section is just name + category cards.
+### Treasury Wallet Detail
+
+File: `frontend/src/pages/TreasuryWalletDetail.tsx`
+
+Purpose:
+
+- view manual treasury details
+- view Squads treasury configuration
+- view Squads members
+- sync Squads members from chain
+- create add-member config proposals
+- create change-threshold config proposals
+- navigate to proposal pages
+
+For Squads treasuries, this page shows:
+
+- vault PDA
+- multisig PDA
+- vault index
+- threshold
+- time lock
+- authority
+- transaction index
+- program id
+- member table
+- member link status
+- member permissions
+
+### Squads Proposals
+
+Files:
+
+- `frontend/src/pages/SquadsProposals.tsx`
+- `frontend/src/pages/SquadsProposalDetail.tsx`
+- `frontend/src/pages/OrganizationProposals.tsx`
+- `frontend/src/ui/SquadsProposalCard.tsx`
+
+Routes:
+
+```text
+/organizations/:organizationId/wallets/:treasuryWalletId/proposals
+/organizations/:organizationId/wallets/:treasuryWalletId/proposals/:transactionIndex
+/organizations/:organizationId/proposals
+```
+
+Purpose:
+
+- list pending/all/closed Squads config proposals
+- show proposal actions
+- show approval progress
+- show pending voters
+- approve proposal if current user owns a pending voter wallet
+- execute proposal if threshold is met and current user owns an execute-capable wallet
+- sync members after execution
 
 ### Payments
 
-File: `frontend/src/pages/Payments.tsx`.
+Files:
 
-Unified list of `PaymentRun`s and standalone `PaymentOrder`s. Columns: Recipient/Run, Destination, Source (treasury wallet), Amount, Origin pill (`Single` / `Batch · N rows`), Status. Click any row to navigate to the batch or the order detail.
+- `frontend/src/pages/Payments.tsx`
+- `frontend/src/pages/PaymentDetail.tsx`
+- `frontend/src/pages/PaymentRunDetail.tsx`
 
-Also hosts:
-- **Create payment** dialog (single order, destination + amount + reason).
-- **Import CSV** dialog with preview step, widened preview modal, and duplicate-fingerprint error surfacing: if the backend returns `importResult.imported === 0` with an existing `paymentRun`, the UI raises a "This CSV was already imported as '<name>'" error instead of reporting success.
+Purpose:
 
-### PaymentRunDetail
-
-File: `frontend/src/pages/PaymentRunDetail.tsx`.
-
-Per-run lifecycle view.
-
-- Lifecycle rail: Imported → Reviewed → Approved → Executed → Settled → Proven. Execute turns green once any child order has a submitted signature (not waiting for the aggregate `derivedState` to catch up).
-- Primary action card based on run state:
-  - `needs_approval`: "Approve all (N)" + "Review individually →" (routes drafts, navigates to `/approvals?runId=X`).
-  - `ready_to_sign`: source-wallet picker + signing-wallet picker + Sign-and-submit.
-  - `in_flight`: shows submitted signatures, auto-refreshes.
-  - `settled`: Download proof JSON.
-  - `exception`: message pointing at the rows table.
-- Payments-in-this-run table with per-order status + signature + Details link.
-
-### PaymentDetail
-
-File: `frontend/src/pages/PaymentDetail.tsx`.
-
-Single-order view: approval timeline, execution state, reconciliation detail, proof preview, audit export.
-
-### Approvals
-
-File: `frontend/src/pages/Approvals.tsx`.
-
-Batch-expandable pending table:
-
-- Batch rows show item count, batch total, reason line, age, and a `Approve batch (N)` / `Reject batch` pair (green / red).
-- Expand to reveal per-order rows with individual Approve / Reject.
-- Standalone (non-batch) pending orders are flat rows.
-
-Decision history table below also uses batch-expandable rows. A batch decision row aggregates its children into a single pill (`Approved (N)` / `Rejected (N)` / `Escalated (N)` / `Mixed · Xa · Yr`).
-
-If the page is opened with `?runId=<uuid>`, a banner appears at the top ("Reviewing batch: <runName>") with "Back to run" and "Clear filter" actions. The list is scoped to that run.
-
-### Proofs
-
-File: `frontend/src/pages/Proofs.tsx`.
-
-Single unified table — no tabs, no "needs review vs exported" segregation (proofs are always available). Batches expand to reveal child payments. Each row has inline **Preview** + **Export** buttons. Preview opens a wide modal with `ProofJsonView` rendering the packet structure.
-
-### Execution
-
-File: `frontend/src/pages/Execution.tsx`.
-
-Tabs: **All / Ready to sign / In flight / Executed**. Batch-expandable rows. Batch rows show the aggregate signature (first + `+N` chip when more than one); expanded children show per-order signature and an action button (`Open signer` / `Track settlement` / `Resolve`).
-
-### Settlement
-
-File: `frontend/src/pages/Settlement.tsx`.
-
-Tabs: **All / Matched / Pending / Exceptions**. Batch-expandable rows. Match pill uses the `--ax-accent` / `--ax-warning` / `--ax-danger` tones. Signature column prefers the matched settlement signature over the execution-submitted signature.
+- single payments
+- CSV payment imports
+- payment runs
+- payment lifecycle
+- signing prepared payment transactions
+- proof export
 
 ### Collections
 
-File: `frontend/src/pages/Collections.tsx`.
+Files:
 
-Unified list of `CollectionRun` batches + standalone `CollectionRequest` rows, mirroring the Payments page. Columns: Recipient/Run, Receiver (treasury wallet), Payer, Amount, Reference, State.
+- `frontend/src/pages/Collections.tsx`
+- `frontend/src/pages/CollectionDetail.tsx`
+- `frontend/src/pages/CollectionRunDetail.tsx`
+- `frontend/src/pages/CollectionSources.tsx`
 
-Hosts:
-- **New collection** dialog. Three payer modes: **Any payer** (no source constraint), **Known source** (pick from `CollectionSource` rows; supports inline-add via `AddCollectionSourceDialog` reused from `CollectionSources.tsx`), **New wallet** (one-off raw `payerWalletAddress`). After inline source-add, the new source auto-selects via React Query refetch + an ID-diff effect.
-- **Import CSV** dialog with preview step.
+Purpose:
 
-### CollectionDetail
+- expected inbound payments
+- collection source registry
+- collection run CSV imports
+- collection proof export
 
-File: `frontend/src/pages/CollectionDetail.tsx`.
+### Registry / Policy / Exceptions / Proofs / Execution / Settlement
 
-Per-`CollectionRequest` view. Shows readiness state (Source review / Reconciliation state / verifier digest), expected source vs observed source, matched transfer if any, JSON proof preview when ready.
+Files vary across extracted pages and legacy inline sections in `App.tsx`.
 
-### CollectionRunDetail
+Purpose:
 
-File: `frontend/src/pages/CollectionRunDetail.tsx`.
+- manage counterparties/destinations
+- view approval policy
+- approve/reject work
+- track execution
+- track settlement/reconciliation
+- resolve exceptions
+- export proof packets
 
-Per-batch view of a collection run, mirroring `PaymentRunDetail`. Lifecycle, child-request table with per-row state, run-level proof export.
+## Squads Frontend Pipeline
 
-### CollectionSources
+Most Squads action buttons follow this pattern:
 
-File: `frontend/src/pages/CollectionSources.tsx`.
+```text
+1. Call backend intent endpoint.
+2. Backend returns serialized versioned transaction.
+3. Frontend calls personal wallet signing endpoint.
+4. Frontend sends raw transaction.
+5. Frontend refreshes proposal/detail queries.
+6. If execution changed membership, call sync-members.
+```
 
-Registry of saved expected payer wallets. Add / Edit dialogs. Trust filter (All / Trusted / Unreviewed / Restricted / Blocked). `AddCollectionSourceDialog` is **exported** so the Collections create dialog can reuse it inline.
+Shared helper:
 
-### Policy
+```text
+frontend/src/lib/squads-pipeline.ts
+```
 
-Legacy page still in `App.tsx`. Shows the workspace's `ApprovalPolicy` and its derived metrics (Pending approvals, Threshold-triggered, Trusted destinations rendered as `N/M`, External approval load). Edit modal writes to `ruleJson`.
+Do not duplicate sign/submit logic in every page.
 
-### Exceptions
+## State Management
 
-Legacy page still in `App.tsx`. Lists `ExceptionState` rows joined with ClickHouse facts. Detail drawer shows the transfer, the observed transfer, and the operator notes.
+The frontend uses TanStack Query.
 
-## Solana wallet integration
+Rules:
 
-Discovery and signing helpers live in `frontend/src/domain.ts` (`discoverSolanaWallets`, `subscribeSolanaWallets`, `signAndSubmitPreparedPayment`). They implement the Wallet Standard and talk to whatever Solana wallet the user has installed.
+- GETs use `useQuery`.
+- Mutations use `useMutation`.
+- On success, invalidate exact query families.
+- Avoid optimistic updates for treasury/money flows.
+- Let the backend and chain be the source of truth.
 
-Signing flow:
+Important query families:
 
-1. The frontend hits `/prepare-execution` on the order or run.
-2. The API returns a prepared Solana transaction (`executionPacket.instructions` + signer/recent-blockhash metadata).
-3. The frontend uses the chosen wallet to sign + submit and receives a signature.
-4. The frontend hits `/attach-signature` with that signature; the API creates / updates the matching `ExecutionRecord`.
+- `['treasury-wallets', organizationId]`
+- `['treasury-wallet-detail', organizationId, treasuryWalletId]`
+- `['squads-config-proposals', organizationId, treasuryWalletId]`
+- `['organization-squads-proposals', organizationId]`
+- `['personal-wallets']`
+- `['organization-personal-wallets', organizationId]`
 
-Decimal never holds keys. If a signer isn't detected, the UI tells the user to install or unlock a Solana wallet.
+## Design System
 
-## Data fetching conventions
+The frontend uses an institutional dual-theme design system.
 
-- **TanStack Query** for all GETs. Keys are arrays like `['payment-orders', workspaceId]`.
-- **React Query mutations** for POST/PATCH. Invalidate the relevant query on success.
-- **Refetch intervals** are tuned per page: 5 s for execution / approval queues, 10 s for payments, 15 s for wallet balances, 30 s for static registries.
-- **Optimistic updates** are deliberately avoided for state-changing flows — the backend is the source of truth and races are too easy to hit.
+Important style files:
 
-## UI principles
+- `frontend/src/styles/design-tokens.css`
+- `frontend/src/styles/canonical.css`
+- `frontend/src/styles/run-detail.css`
+- `frontend/src/styles/sidebar.css`
+- `frontend/src/styles/app-dark.css`
+- `frontend/src/styles.css`
 
-When building or redesigning a screen, be explicit about these before writing JSX:
+Brand source of truth:
 
-1. **Page purpose.** What's the one question this page answers?
-2. **Primary action.** Every operational page has exactly one.
-3. **States.** Loading skeleton, empty with CTA, error with retry, success.
-4. **Density.** Institutional users scan data. Favor more rows on screen over airy padding.
-5. **Tokens only.** Colors, radii, spacing come from `--ax-*` / Tailwind-style scales in `canonical.css`. Never `#hex` or `px` magic numbers inline unless there's a documented reason.
+- `brand.md`
 
-If a proposed change fights the institutional aesthetic (pill buttons, gradients, soft drop-shadows everywhere), push back or raise it in `brand.md` before shipping.
+Rules:
+
+- Use `--ax-*` tokens.
+- Avoid hard-coded colors.
+- Prefer reusable patterns over one-off inline UI.
+- Keep tables dense and scannable.
+- Money/status/proposal pages should prioritize clarity over visual novelty.
+
+## Current UI Debt
+
+- Some legacy page code still lives inside `App.tsx`.
+- Some screens still use older `.panel` / `.data-table` classes.
+- Squads flows are functional but need UX polish after backend features stabilize.
+- Payments are not yet executed through Squads proposals.
+
+## Safe Frontend Change Rule
+
+Before changing a flow involving funds or treasury authority, identify:
+
+- backend endpoint called
+- signer wallet used
+- transaction intent returned
+- chain signature submitted
+- query invalidations after success
+- what happens on partial failure
+
+If the UI hides any of these, it is too magical.

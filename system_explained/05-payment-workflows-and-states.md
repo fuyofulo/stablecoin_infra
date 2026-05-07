@@ -77,7 +77,7 @@ The `counterparty` column is optional human-readable context used to tag or auto
 Import creates:
 
 - one `PaymentRun`
-- one `Destination` per unique wallet (or reuses the existing one by `(workspaceId, walletAddress)`)
+- one `Destination` per unique wallet (or reuses the existing one by `(organizationId, walletAddress)`)
 - one `PaymentRequest` per row
 - corresponding `PaymentOrder` rows
 - optional `Counterparty` tags when the counterparty column matches or when one is auto-created
@@ -203,7 +203,7 @@ This older lifecycle is still important because:
 
 ## Collection Request Flow
 
-Collections are the inbound counterpart to payouts. A `CollectionRequest` declares an expected inbound USDC payment to one of the workspace's `TreasuryWallet` rows. Matching uses the same engine as payouts but with one additional constraint.
+Collections are the inbound counterpart to payouts. A `CollectionRequest` declares an expected inbound USDC payment to one of the organization's `TreasuryWallet` rows. Matching uses the same engine as payouts but with one additional constraint.
 
 ### Inputs
 
@@ -216,7 +216,7 @@ A collection is created with:
   - Neither — "any payer" mode; first matching transfer wins.
 - `amountRaw`, `reason`, optional `externalReference` and `counterpartyId`.
 
-CSV import mirrors the payment side via `POST /workspaces/:workspaceId/collection-runs/import-csv` (preview also available).
+CSV import mirrors the payment side via `POST /organizations/:organizationId/collection-runs/import-csv` (preview also available).
 
 ### Match constraint specific to collections
 
@@ -236,7 +236,7 @@ A collection request flows through:
 draft → matching (worker watching) → matched | partially_matched | exception | cancelled
 ```
 
-Proof export at `GET /workspaces/:workspaceId/collections/:collectionRequestId/proof` (and the run-level variant) returns a deterministic JSON packet parallel to the payment-side proof.
+Proof export at `GET /organizations/:organizationId/collections/:collectionRequestId/proof` (and the run-level variant) returns a deterministic JSON packet parallel to the payment-side proof.
 
 ## Why There Are Multiple State Systems
 
@@ -266,7 +266,7 @@ The current direction is:
 
 When a payment order is submitted:
 
-1. The API loads or creates the workspace approval policy.
+1. The API loads or creates the organization approval policy.
 2. It evaluates destination trust/scope and thresholds.
 3. If no approval reasons are triggered, it auto-approves.
 4. If approval is required, it enters pending approval.
@@ -356,4 +356,3 @@ Not exactly. A destination can be linked to a wallet, but it is an operator-faci
 ### "Payment request" and "payment order" are the same
 
 No. Request is the input. Order is the controlled workflow object.
-

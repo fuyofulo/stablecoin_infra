@@ -1,49 +1,60 @@
 # Decimal System Explained
 
-This folder is the onboarding manual for Decimal. It explains the product, the runtime architecture, the codebase, the data model, the reconciliation pipeline, the API surface, the frontend, the worker, observability, and the current risks.
+This folder is the onboarding manual for Decimal. It explains the current product, runtime architecture, codebase, data model, reconciliation pipeline, API surface, frontend, Yellowstone worker, and Squads treasury integration.
 
-The goal is not to describe only the happy path. The goal is to make a new engineer productive enough to change the system without accidentally breaking execution tracking, reconciliation, or proof generation.
+The goal is to make a new engineer productive enough to change the system without accidentally breaking auth, org membership, treasury signing, Squads proposal flows, reconciliation, or proof generation.
 
-## What Decimal Is
+## Current Product Shape
 
-Decimal is the **deterministic financial workflow engine for crypto payments**.
+Decimal is an **organization-scoped stablecoin operations system** for Solana USDC.
 
-The product takes a CSV or API-created payout intent, walks it through policy approval, one-signature batch execution, and on-chain matching, then hands back a cryptographic proof packet that a finance or audit team can verify.
+It currently supports:
 
-Decimal is deliberately narrow. The current wedge is **Solana USDC payouts** — not general reconciliation, not a wallet watcher, not an analytics dashboard. Payouts come first because that's where crypto operations break down for finance teams; everything else (inbound matching, treasury analytics, agent runtime) is downstream of getting this one flow right.
+- Google OAuth and email/password user sessions.
+- Organization creation and invite-only organization membership.
+- User-owned personal wallets, currently focused on Privy embedded Solana wallets.
+- Organization treasury wallets, including manual treasury addresses and Squads v4 multisig vaults.
+- Squads v4 treasury creation with selected members and threshold.
+- Squads v4 config proposals for adding members and changing threshold.
+- Squads proposal listing, detail, approval, execution, and post-execution member sync.
+- Payment requests, payment runs, payment orders, execution packets, submitted signatures, reconciliation, exceptions, and JSON proof packets.
+- Collection requests and collection runs for expected inbound USDC.
+- Yellowstone-based USDC observation and matching.
 
-In product terms, Decimal answers:
-
-- What payment did we intend to make?
-- Who requested it? Was it allowed by policy?
-- Which treasury wallet sent it? Which destination received it?
-- Was an execution packet prepared? Was a signature submitted?
-- Did Solana show the expected USDC movement?
-- Does observed settlement match the business intent?
-- If not, what exception should an operator review?
-- Can we export a signed, deterministic proof packet?
-
-In system terms, Decimal has four layers:
+The old `Workspace` layer has been removed. The active product scope is:
 
 ```text
-Input layer
-Payment requests, payment runs, CSV imports, destinations, counterparties.
-
-Control plane
-Approval policy, payment orders, execution packets, state machines, audit events.
-
-Execution handoff
-Prepared Solana USDC transfer instructions, wallet signing, submitted signatures.
-
-Verification and proof
-Yellowstone observation, matching engine, reconciliation state, exceptions, proof packets.
+User -> Organization -> Treasury wallets / destinations / payments / collections / proofs
 ```
 
-The backend is the source of truth and is API-first. The frontend is one client; human operators, scripts, and agents can all drive the same flows.
+Any doc, branch, or commit that mentions `/workspaces/:workspaceId` as the active API shape is stale.
+
+## Core Mental Model
+
+Decimal has five layers:
+
+```text
+Identity
+Users, sessions, organizations, invites, personal wallets.
+
+Treasury control
+Organization treasury wallets, Squads vaults, member permissions, proposal approvals.
+
+Business intent
+Payment requests, payment runs, payment orders, collection requests, collection runs.
+
+Execution and observation
+Prepared Solana transactions, Privy signing, submitted signatures, Yellowstone USDC observation.
+
+Verification and proof
+Matching, reconciliation, exceptions, deterministic JSON proof packets.
+```
+
+The frontend is one client. The backend is the source of truth and is intended to stay API-first so other clients can eventually drive the same workflows.
 
 ## How To Read These Docs
 
-Read these files in order if you are new:
+Read in this order if you are new:
 
 1. [01 Product Mental Model](./01-product-mental-model.md)
 2. [02 Repository And Runtime Map](./02-repository-and-runtime-map.md)
@@ -59,43 +70,52 @@ Read these files in order if you are new:
 12. [12 Current Risks And Cleanup Map](./12-current-risks-and-cleanup-map.md)
 13. [13 API Route Catalog](./13-api-route-catalog.md)
 14. [14 Code Module Index](./14-code-module-index.md)
+15. [15 Squads Treasury Architecture](./15-squads-treasury-architecture.md)
 
 ## Source Of Truth
 
-The current source of truth is the code, not older README files or older screenshots. These docs and the code are authoritative; anything that disagrees is stale.
+The current source of truth is the code. These docs are maintained as an engineer-facing explanation layer.
 
-Important code and docs entrypoints:
+Important entrypoints:
 
-- `api/src/app.ts` — Express app composition and route mounting.
 - `api/prisma/schema.prisma` — Postgres schema.
+- `api/src/app.ts` — Express app composition and route mounting.
 - `api/src/api-contract.ts` — canonical API contract used for OpenAPI.
-- `api/src/treasury-wallets.ts` — workspace treasury-wallet service (our-owned Solana wallets).
-- `api/src/pricing.ts` — SOL/USD price via Binance with 60s TTL and stale fallback.
+- `api/src/auth.ts`, `api/src/routes/auth.ts` — sessions, password auth, Google OAuth.
+- `api/src/routes/organization-invites.ts` — invite-only organization membership.
+- `api/src/routes/user-wallets.ts`, `api/src/privy-wallets.ts` — personal wallets and Privy signing.
+- `api/src/treasury-wallets.ts`, `api/src/routes/treasury-wallets.ts` — organization treasury wallets and Squads endpoints.
+- `api/src/squads-treasury.ts` — Squads v4 transaction/proposal logic.
+- `api/src/reconciliation.ts` — matching, settlement state, exceptions, proof-facing reconciliation data.
 - `yellowstone/src/main.rs` — Yellowstone worker entrypoint.
 - `yellowstone/src/yellowstone/mod.rs` — worker loop and matching pipeline.
-- `frontend/src/App.tsx` — React router shell.
-- `frontend/src/pages/*.tsx` — one file per top-level page.
-- `frontend/src/styles/*.css` — institutional dual-theme design system (`canonical.css`, `run-detail.css`, `sidebar.css`).
-- `brand.md` — brand direction (colors, typography, voice). Source of truth for `--ax-*` tokens.
-- `landing-page-content.md` — landing page brief: positioning, section spec, handoff instructions.
-- `Makefile` — developer workflows.
-- `docker-compose.yml` — local infrastructure.
+- `frontend/src/App.tsx` — React routes.
+- `frontend/src/pages/*.tsx` — top-level app pages.
+- `frontend/src/lib/squads-pipeline.ts` — frontend sign/submit helper for Squads transactions.
+- `Makefile` — local workflows.
+- `docker-compose.yml` — local Postgres and ClickHouse.
 
 ## Vocabulary
 
-The project contains several similarly named objects. These are **not** interchangeable:
+- `Organization` — the top-level product tenant. Everything operational is organization-scoped.
+- `User` — human account authenticated through email/password or Google OAuth.
+- `OrganizationMembership` — user's role in an organization: `owner`, `admin`, `member`.
+- `OrganizationInvite` — email-bound invite. Direct org joining is blocked.
+- `PersonalWallet` — user-owned signing wallet. It is personal, not treasury-owned.
+- `TreasuryWallet` — organization-owned wallet or vault. This is where organization funds live.
+- `Squads treasury` — a `TreasuryWallet` with `source = squads_v4`, `sourceRef = multisig PDA`, and `address = vault PDA`.
+- `OrganizationWalletAuthorization` — local bridge saying a personal wallet is authorized for a treasury wallet. For Squads, this mirrors on-chain multisig membership after sync.
+- `Destination` — external wallet the organization pays.
+- `CollectionSource` — external wallet the organization expects to receive from.
+- `Counterparty` — optional business label attached to destinations or collection sources.
+- `PaymentRequest` — input-layer "we need to pay X" object.
+- `PaymentRun` — batch of payment requests/orders, usually from CSV.
+- `PaymentOrder` — control-plane object for one intended outgoing payment.
+- `CollectionRequest` — expected inbound USDC payment.
+- `CollectionRun` — batch of collection requests.
+- `TransferRequest` — matcher-level expected transfer row behind payments and collections.
+- `ExecutionRecord` — evidence that execution was prepared/submitted/observed.
+- `Exception` — reconciliation issue requiring operator review.
+- `Proof packet` — deterministic JSON export describing intent, control, execution, settlement, and digest.
 
-- `TreasuryWallet` — a Solana wallet **we own** in a workspace. Sources for payments. Only these are watched for "ours" on-chain. (Renamed from the older `WorkspaceAddress`.)
-- `Destination` — a counterparty wallet we pay. Stores `walletAddress` directly; we do not own it. First-class table with its own trust state, notes, and optional counterparty tag.
-- `Counterparty` — an optional business-entity tag (org-scoped) you can attach to destinations for grouping and reporting. Not required.
-- `PaymentRequest` — an input object, typically created manually or from CSV. Captures business intent (reason, amount, destination, reference).
-- `PaymentRun` — a batch of payment requests/orders, usually imported from CSV. Owns a `sourceTreasuryWalletId` (the batch signer).
-- `PaymentOrder` — the main control-plane object for one intended payment. Drives policy, execution packets, and matching.
-- `TransferRequest` — the lower-level expected-settlement object used by the matcher.
-- `ExecutionRecord` — evidence that someone prepared / submitted / observed an execution attempt.
-- `SettlementMatch` — the ClickHouse record proving observed settlement was matched to an expected request.
-- `Exception` — a reconciliation issue that needs operator review.
-
-If you remember only one thing: **humans think in `PaymentRequest` / `PaymentRun` / `PaymentOrder` and `Destination`; the matcher thinks in `TransferRequest` / observed transfers / matches / exceptions; the worker only cares about `TreasuryWallet` addresses as the "ours" set.**
-
-There is no `Payee` and no `WorkspaceAddress` anymore — both were removed in the 2026-04-19 schema split. Older docs, notes, or commit messages may mention them; treat any such reference as legacy.
+There is no active `Workspace` model and no `Payee` model. Treat those names as legacy.

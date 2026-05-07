@@ -9,168 +9,146 @@ This repository contains one product split across several runtime processes.
 ├── api/                 TypeScript Express control-plane API
 ├── frontend/            React/Vite SPA
 ├── yellowstone/         Rust Solana Yellowstone ingestion + matching worker
-├── postgres/            Postgres init scripts (used by docker volume init)
+├── postgres/            Postgres init scripts
 ├── clickhouse/          ClickHouse init scripts
-├── config/              Public/runtime config (worker.config.json, frontend.public.json)
-├── scripts/             Operational shell scripts
-├── system_explained/    These onboarding docs
-├── outputs/             Research / proof artifacts
+├── config/              Non-secret public/runtime config
+├── scripts/             Operational scripts
+├── system_explained/    Engineer onboarding docs
+├── outputs/             Research, handoffs, generated artifacts
 ├── problems/            Incident writeups
-├── backups/             Postgres pg_dump snapshots (gitignored)
-├── Makefile             Developer + production-backed workflows
-├── docker-compose.yml   Local Postgres and ClickHouse
-├── vercel.json          Vercel deploy config (frontend-only static SPA)
-└── list.md              Implementation checklist
+├── backups/             Local database backups, gitignored
+├── Makefile             Developer workflows
+└── docker-compose.yml   Local Postgres and ClickHouse
 ```
 
 ## Runtime Processes
 
-The production-backed runtime that serves https://decimal.finance consists of:
+Local development normally runs:
 
 ```text
-Frontend (Vercel CDN)
-  Static React/Vite SPA at https://decimal.finance. No Vercel functions, no proxy.
-  Served from CDN edge. Build output = frontend/dist.
+Frontend
+  Vite app on http://localhost:5174.
 
-Cloudflare Tunnel (cloudflared)
-  Outbound tunnel from the laptop to Cloudflare. Exposes the laptop API as
-  https://api.decimal.finance. The browser hits this URL directly — Vercel is NOT
-  in the API call path.
+API
+  Express app on http://127.0.0.1:3100.
 
-API (laptop)
-  Express server at http://127.0.0.1:3100 run via `tsx watch`.
-  Reachable from the world via the Cloudflare tunnel above.
+Postgres
+  Control-plane database in Docker.
 
-Postgres (laptop, docker)
-  Control-plane database. Container `usdc-ops-postgres`, port 54329.
+ClickHouse
+  Observed chain/matching database in Docker.
 
-ClickHouse (laptop, docker)
-  Event/reconciliation/observability database. Container `usdc-ops-clickhouse`,
-  port 8123.
-
-Yellowstone worker (laptop)
-  Rust process. Subscribes to Solana mainnet via Yellowstone gRPC (currently
-  https://solana-rpc.parafi.tech:10443). Writes ClickHouse, fetches matching
-  context from API via /internal/matching-index + SSE.
+Yellowstone worker
+  Rust worker that consumes Solana Yellowstone gRPC and writes ClickHouse.
 ```
 
-For local dev (no tunnel, no Vercel), `make dev` brings up Postgres + ClickHouse + API + Vite frontend + worker on the laptop only.
+Production/demo deployment has been lightweight:
 
-## Why this topology
+```text
+Frontend
+  Static Vercel deployment at decimal.finance.
 
-The laptop hosts everything except the static frontend bundle. Tradeoffs:
+API + worker + databases
+  Often run locally on the laptop and exposed through Cloudflare Tunnel.
+```
 
-- **Free**, no managed services, no card needed.
-- Per-DB-query latency is ~2ms (loopback) instead of ~300ms (was Singapore Supabase). Page loads dropped 4–5×.
-- Cloudflare Tunnel solves the "residential ISP doesn't give you a public IP" problem and survives WiFi changes — `cloudflared` reconnects from wherever the laptop is.
-- Cost: laptop sleep / lid close / internet drop kills the demo. Use `caffeinate -i make prod-backend` and a hotspot backup.
+This is intentionally lean. It is not a hardened production topology.
 
-## Important Commands
+## Main Commands
 
 ```bash
-make prod-backend     # production-backed runtime (Postgres + ClickHouse + API + tunnel + worker)
-make dev              # full local dev stack (no tunnel)
-make infra-up         # Postgres + ClickHouse only
-make infra-down
-
-make dev-api          # individual processes
-make dev-frontend
-make dev-worker
-make tunnel
-
-make test             # api + worker + frontend
-make backup-db        # pg_dump local Postgres
-make restore-db FILE=backups/<name>.sql
-make reset-data       # truncate local docker tables
+make dev             # full local dev stack
+make dev devnet      # local dev targeting devnet mode when configured
+make dev mainnet     # local dev targeting mainnet mode when configured
+make infra-up        # Postgres + ClickHouse
+make test-api        # API tests
+make test-worker     # Rust worker tests
+make test            # broader test target
 ```
 
-See doc 11 for full operational details.
-
-## Docker Services
-
-`docker-compose.yml` defines:
-
-### Postgres
-
-```text
-container: usdc-ops-postgres
-ports:     54329:5432
-database:  usdc_ops
-user:      usdc_ops
-password:  usdc_ops
-volume:    stablecoin_intelligence_postgres_data (named, persistent)
-```
-
-### ClickHouse
-
-```text
-container: usdc-ops-clickhouse
-ports:     8123 HTTP, 9000 native
-database:  usdc_ops
-user:      default
-password:  empty
-```
+The exact Makefile targets are the source of truth.
 
 ## Data Ownership
 
-Postgres owns the control-plane truth:
+Postgres owns control-plane truth:
 
-- Users, organizations, workspaces.
-- Treasury wallets (Solana wallets we own; sources for payouts, receivers for collections).
-- Destinations (counterparty wallets we pay).
-- Counterparties (optional org-scoped tag).
-- Collection sources (saved expected payer wallets with trust state).
-- Payment requests, payment runs, payment orders.
-- Collection requests, collection runs.
-- Transfer requests (the matcher's intent row).
-- Approval policy + decisions.
-- Execution records.
-- Audit events, operator notes, exception metadata.
-- Idempotency records.
-- Auth sessions.
+- users
+- sessions
+- organizations
+- invites
+- memberships
+- personal wallets
+- treasury wallets
+- Squads treasury metadata
+- wallet authorizations
+- destinations
+- collection sources
+- payment requests/runs/orders
+- collection requests/runs
+- transfer requests
+- approvals
+- execution records
+- audit events
+- exception metadata
+- idempotency records
 
-ClickHouse owns high-volume observed and derived data:
+ClickHouse owns observed and derived chain facts:
 
-- Observed transactions, USDC transfers, reconstructed payments.
-- Matcher events, settlement matches.
-- Worker-generated exceptions.
+- observed transactions
+- USDC transfers
+- reconstructed payments
+- matcher events
+- settlement matches
+- worker-generated exceptions
 
-Do not move high-volume chain event data into Postgres casually.
+Do not move high-volume observed chain facts into Postgres without a specific reason.
 
-## Control Flow Between Services
+## Service Flow
 
 ```text
-Browser (decimal.finance, Vercel CDN)
-  -> Cloudflare Tunnel
-  -> API (laptop)
+Browser
+  -> API
   -> Postgres control-plane records
-  -> matching-index invalidation event
-  -> Yellowstone worker refreshes matching index (via SSE)
-  -> Yellowstone gRPC stream produces transaction updates
-  -> worker reconstructs and filters relevant USDC movement
-  -> worker writes ClickHouse matches/exceptions
+  -> matching-index invalidation
+  -> Yellowstone worker refreshes matching index through SSE
+  -> Yellowstone stream produces transaction updates
+  -> worker reconstructs relevant USDC movement
+  -> worker writes ClickHouse
   -> API reads Postgres + ClickHouse
-  -> frontend sees updated reconciliation/proof state
+  -> frontend shows reconciliation/proof state
 ```
 
-## Why There Is No Redis/Kafka Yet
+## Internal Matching Index
 
-The current architecture uses Postgres for durable control state, ClickHouse for events, in-process SSE for matching-index refresh, and Yellowstone as the external event stream. This is intentionally simpler than adding Redis or Kafka.
-
-A queue/stream would become useful when:
-
-- The API runs across multiple replicas and SSE refresh is no longer in-process.
-- Background jobs need retries, visibility timeouts, durable scheduling.
-- Proof generation becomes heavy enough to need a worker queue.
-- Worker fleet needs partitioned high-throughput ingestion.
-
-Adding Kafka before any of those exist would add operational weight before the product proves it needs it.
-
-## Code Quality Reality
-
-The backend has grown quickly. It has real tests and architecture, but route modules and service modules are still tightly coupled in places. The risk map (doc 12) tracks specifics.
+The worker uses:
 
 ```text
-Do not refactor state transitions, matching invalidation, or proof generation
-without tests around the current behavior.
+GET /internal/matching-index
+GET /internal/matching-index/events
+GET /internal/organizations/:organizationId/matching-context
 ```
+
+The index is organization-scoped. It contains active treasury wallets, transfer requests, destination/source constraints, and submitted signatures needed by the worker.
+
+## Why No Redis/Kafka Yet
+
+The system currently uses:
+
+- Postgres for durable control state.
+- ClickHouse for observed events and matching facts.
+- In-process SSE for matching-index invalidation.
+- Yellowstone gRPC as the external real-time stream.
+
+Redis/Kafka would be useful later for multi-replica API instances, durable background jobs, worker partitioning, or proof-generation queues. Right now it would add operational weight before the product needs it.
+
+## Deployment Reality
+
+Decimal is still an MVP. The code should be written with production discipline, but the deployment is not yet enterprise-grade.
+
+Main current production gaps:
+
+- API and worker are not on managed always-on infrastructure.
+- Database backup/restore needs stronger automation.
+- Secrets management is still environment-file based.
+- Worker scaling is not solved.
+- Squads payment execution is not implemented yet.

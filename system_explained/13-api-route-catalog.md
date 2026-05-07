@@ -1,169 +1,238 @@
 # 13 API Route Catalog
 
-This file lists the HTTP routes the Decimal API currently exposes, grouped by responsibility. Routes are defined in `api/src/routes/*.ts` and mounted in `api/src/app.ts`. The machine-readable contract lives in `api/src/api-contract.ts` and is served at `/openapi.json`.
+Routes are defined in `api/src/routes/*.ts` and mounted in `api/src/app.ts`.
 
-All workspace-scoped routes require a user session: `Authorization: Bearer <session-token>`.
+The machine-readable contract lives in `api/src/api-contract.ts` and is served at:
 
-## Public Routes (No Auth)
+```text
+GET /openapi.json
+```
 
-- `GET /health` — liveness ping. Runs `SELECT 1` against Postgres.
-- `GET /capabilities` — advertised feature set and versions.
-- `GET /openapi.json` — OpenAPI 3 spec generated from `api-contract.ts`.
-- `POST /auth/register` — create a new user (email + password).
-- `POST /auth/login` — email + password session creation.
-- `GET /auth/session` — returns the authenticated session (requires auth).
-- `POST /auth/logout` — invalidates the current session (requires auth).
+Authenticated routes use:
 
-## Organizations And Workspaces
+```text
+Authorization: Bearer <session-token>
+```
 
-- `GET  /organizations` — orgs the authenticated user belongs to.
-- `POST /organizations` — create an organization.
-- `POST /organizations/:organizationId/join` — join an existing org (by invite code or similar).
-- `GET  /organizations/:organizationId/workspaces` — list workspaces in an org.
-- `POST /organizations/:organizationId/workspaces` — create a workspace.
+The active route shape is organization-scoped:
+
+```text
+/organizations/:organizationId/...
+```
+
+The old `/workspaces/:workspaceId/...` shape is stale.
+
+## Public And Auth Routes
+
+- `GET /health`
+- `GET /capabilities`
+- `GET /openapi.json`
+- `POST /auth/register`
+- `POST /auth/login`
+- `POST /auth/logout`
+- `GET /auth/session`
+- `POST /auth/verify-email`
+- `POST /auth/resend-verification`
+- `GET /auth/google/start`
+- `GET /auth/google/callback`
+- `GET /invites/:inviteToken`
+- `POST /invites/:inviteToken/accept`
+
+## Organizations And Members
+
+- `GET /organizations`
+- `POST /organizations`
+- `GET /organizations/:organizationId/summary`
+- `POST /organizations/:organizationId/join` — intentionally blocked; org joining is invite-only.
+- `GET /organizations/:organizationId/members`
+- `GET /organizations/:organizationId/invites`
+- `POST /organizations/:organizationId/invites`
+- `POST /organizations/:organizationId/invites/:organizationInviteId/revoke`
+
+## Personal Wallets
+
+User-scoped:
+
+- `GET /personal-wallets`
+- `POST /personal-wallets/challenges`
+- `POST /personal-wallets/verify`
+- `POST /personal-wallets/embedded`
+- `DELETE /personal-wallets/:userWalletId`
+- `POST /personal-wallets/:userWalletId/sign-versioned-transaction`
+
+Organization-scoped personal wallet listing:
+
+- `GET /organizations/:organizationId/personal-wallets`
+
+The org-scoped listing is used for Squads treasury creation and add-member proposals.
 
 ## Treasury Wallets
 
-Replaces the old `/addresses` routes.
+- `GET /organizations/:organizationId/treasury-wallets`
+- `GET /organizations/:organizationId/treasury-wallets/balances`
+- `POST /organizations/:organizationId/treasury-wallets`
+- `PATCH /organizations/:organizationId/treasury-wallets/:treasuryWalletId`
 
-- `GET   /workspaces/:workspaceId/treasury-wallets` — list wallets the workspace owns.
-- `GET   /workspaces/:workspaceId/treasury-wallets/balances` — live Solana balances for every wallet: lamports, USDC raw, plus the workspace's current SOL/USD price from `pricing.ts` (Binance SOLUSDT, 60s cache, stale fallback). This is what the Overview and Wallets pages render.
-- `POST  /workspaces/:workspaceId/treasury-wallets` — register a wallet. Body: `{ address, chain?, source?, assetScope?, displayName?, notes?, usdcAtaAddress?, propertiesJson? }`. The USDC ATA is derived automatically if not supplied.
-- `PATCH /workspaces/:workspaceId/treasury-wallets/:treasuryWalletId` — update display name / notes / active flag.
+Manual treasury wallets are plain organization-controlled addresses. Squads treasury wallets use the Squads-specific routes below.
 
-Treasury wallets are the **only** addresses the Yellowstone worker watches as "ours." Do not store counterparty wallets here — use `Destination` for those.
+## Squads Treasury Routes
+
+Creation:
+
+- `POST /organizations/:organizationId/treasury-wallets/squads/create-intent`
+- `POST /organizations/:organizationId/treasury-wallets/squads/confirm`
+
+Read:
+
+- `GET /organizations/:organizationId/treasury-wallets/:treasuryWalletId/squads/detail`
+- `GET /organizations/:organizationId/treasury-wallets/:treasuryWalletId/squads/status`
+- `GET /organizations/:organizationId/squads/proposals`
+- `GET /organizations/:organizationId/treasury-wallets/:treasuryWalletId/squads/config-proposals`
+- `GET /organizations/:organizationId/treasury-wallets/:treasuryWalletId/squads/config-proposals/:transactionIndex`
+
+Config proposal creation:
+
+- `POST /organizations/:organizationId/treasury-wallets/:treasuryWalletId/squads/config-proposals/add-member-intent`
+- `POST /organizations/:organizationId/treasury-wallets/:treasuryWalletId/squads/config-proposals/change-threshold-intent`
+
+Config proposal participation:
+
+- `POST /organizations/:organizationId/treasury-wallets/:treasuryWalletId/squads/config-proposals/:transactionIndex/approve-intent`
+- `POST /organizations/:organizationId/treasury-wallets/:treasuryWalletId/squads/config-proposals/:transactionIndex/execute-intent`
+
+Sync:
+
+- `POST /organizations/:organizationId/treasury-wallets/:treasuryWalletId/squads/sync-members`
+
+Access rules:
+
+- Creating a Squads treasury: organization admin.
+- Creating add-member/change-threshold proposals: organization admin and on-chain initiator wallet.
+- Listing proposal pages: organization access plus current user must own a personal wallet on that Squads multisig.
+- Approving/executing: organization access plus actor must own the personal wallet and that wallet must have the needed on-chain Squads permission.
+
+## Wallet Authorizations
+
+- `GET /organizations/:organizationId/wallet-authorizations`
+- `POST /organizations/:organizationId/wallet-authorizations`
+- `POST /organizations/:organizationId/wallet-authorizations/:walletAuthorizationId/revoke`
+
+For Squads treasuries, local `squads_member` authorizations are usually created/updated through Squads confirmation or `sync-members`.
 
 ## Counterparties And Destinations
 
-Destinations are what you pay; counterparties are an optional org-scoped entity tag on top.
-
-- `GET   /workspaces/:workspaceId/counterparties` — list counterparties.
-- `POST  /workspaces/:workspaceId/counterparties` — create. Body: `{ displayName, category, externalReference?, status?, metadataJson? }` (category is required).
-- `PATCH /workspaces/:workspaceId/counterparties/:counterpartyId` — update.
-- `GET   /workspaces/:workspaceId/destinations` — list destinations.
-- `POST  /workspaces/:workspaceId/destinations` — create. Body: `{ counterpartyId?, chain?, asset?, walletAddress, tokenAccountAddress?, destinationType?, trustState?, label, notes?, isInternal?, isActive?, metadataJson? }`. `trustState` defaults to `unreviewed`; `isInternal` defaults to `false`.
-- `PATCH /workspaces/:workspaceId/destinations/:destinationId` — update any editable field (label, trust state, counterparty tag, notes, active flag). Unique `(workspaceId, walletAddress)` is enforced.
-
-There are **no `/payees` routes**. Payees were removed — use a destination + optional counterparty.
+- `GET /organizations/:organizationId/counterparties`
+- `POST /organizations/:organizationId/counterparties`
+- `PATCH /organizations/:organizationId/counterparties/:counterpartyId`
+- `GET /organizations/:organizationId/destinations`
+- `POST /organizations/:organizationId/destinations`
+- `PATCH /organizations/:organizationId/destinations/:destinationId`
 
 ## Collection Sources
 
-Saved expected payer wallets (the inbound side's equivalent of a destination). A collection that references a `collectionSourceId` becomes match-restricted to that wallet via the worker's `request_matches_observed_source` guard.
+- `GET /organizations/:organizationId/collection-sources`
+- `POST /organizations/:organizationId/collection-sources`
+- `PATCH /organizations/:organizationId/collection-sources/:collectionSourceId`
 
-- `GET   /workspaces/:workspaceId/collection-sources` — list active sources.
-- `POST  /workspaces/:workspaceId/collection-sources` — create. Body: `{ label, walletAddress, tokenAccountAddress?, sourceType?, trustState?, counterpartyId?, notes? }`. `trustState` defaults to `unreviewed`.
-- `PATCH /workspaces/:workspaceId/collection-sources/:collectionSourceId` — update label, trust state, counterparty tag, notes, active flag.
+## Collections
 
-The new-collection dialog supports inline source creation in its "Known source" tab — same backing endpoint.
+Single collection requests:
 
-## Collections (single requests)
+- `GET /organizations/:organizationId/collections`
+- `POST /organizations/:organizationId/collections`
+- `POST /organizations/:organizationId/collections/import-csv/preview`
+- `GET /organizations/:organizationId/collections/:collectionRequestId`
+- `GET /organizations/:organizationId/collections/:collectionRequestId/proof`
+- `POST /organizations/:organizationId/collections/:collectionRequestId/cancel`
 
-Inbound expected payments. One per `CollectionRequest` row.
+Collection runs:
 
-- `GET  /workspaces/:workspaceId/collections` — list standalone collection requests.
-- `POST /workspaces/:workspaceId/collections` — create. Body: `{ receivingTreasuryWalletId, counterpartyId?, collectionSourceId? | payerWalletAddress?, payerTokenAccountAddress?, amountRaw, reason, externalReference? }`. Either `collectionSourceId` (preferred) or raw `payerWalletAddress` constrains the matcher to a specific payer; omit both for "any payer."
-- `POST /workspaces/:workspaceId/collections/import-csv/preview` — parse and validate a CSV without writing.
-- `GET  /workspaces/:workspaceId/collections/:collectionRequestId` — detail.
-- `GET  /workspaces/:workspaceId/collections/:collectionRequestId/proof` — JSON proof packet.
-- `POST /workspaces/:workspaceId/collections/:collectionRequestId/cancel` — cancel.
-
-## Collection Runs
-
-Batches of collection requests, usually from CSV.
-
-- `GET    /workspaces/:workspaceId/collection-runs` — list.
-- `POST   /workspaces/:workspaceId/collection-runs/import-csv` — create a run from CSV.
-- `POST   /workspaces/:workspaceId/collection-runs/import-csv/preview` — preview without writing.
-- `GET    /workspaces/:workspaceId/collection-runs/:collectionRunId` — detail with child requests.
-- `GET    /workspaces/:workspaceId/collection-runs/:collectionRunId/proof` — JSON proof packet for the run.
+- `GET /organizations/:organizationId/collection-runs`
+- `POST /organizations/:organizationId/collection-runs/import-csv`
+- `POST /organizations/:organizationId/collection-runs/import-csv/preview`
+- `GET /organizations/:organizationId/collection-runs/:collectionRunId`
+- `GET /organizations/:organizationId/collection-runs/:collectionRunId/proof`
 
 ## Payment Requests
 
-Input-layer objects. These are what a human or agent creates before a payment order exists.
-
-- `GET  /workspaces/:workspaceId/payment-requests` — list.
-- `POST /workspaces/:workspaceId/payment-requests` — create a single request. Accepts flags `createOrderNow` and `submitOrderNow` to collapse the request → order → submit steps.
-- `POST /workspaces/:workspaceId/payment-requests/import-csv` — bulk import without wrapping into a `PaymentRun`.
-- `POST /workspaces/:workspaceId/payment-requests/import-csv/preview` — parse and validate a CSV without writing anything.
-- `GET  /workspaces/:workspaceId/payment-requests/:paymentRequestId` — detail.
-- `POST /workspaces/:workspaceId/payment-requests/:paymentRequestId/cancel` — mark a request cancelled.
-- `POST /workspaces/:workspaceId/payment-requests/:paymentRequestId/promote` — materialize the request into a `PaymentOrder`.
+- `GET /organizations/:organizationId/payment-requests`
+- `POST /organizations/:organizationId/payment-requests`
+- `POST /organizations/:organizationId/payment-requests/import-csv`
+- `POST /organizations/:organizationId/payment-requests/import-csv/preview`
+- `GET /organizations/:organizationId/payment-requests/:paymentRequestId`
+- `POST /organizations/:organizationId/payment-requests/:paymentRequestId/promote`
+- `POST /organizations/:organizationId/payment-requests/:paymentRequestId/cancel`
 
 ## Payment Runs
 
-Batches, usually from CSV.
-
-- `GET  /workspaces/:workspaceId/payment-runs` — list.
-- `POST /workspaces/:workspaceId/payment-runs/import-csv` — create a run from CSV. Idempotent by CSV fingerprint: re-importing the same file returns the existing run with `importResult.imported: 0` and `idempotentReplay: true`.
-- `POST /workspaces/:workspaceId/payment-runs/import-csv/preview` — preview without writing.
-- `GET  /workspaces/:workspaceId/payment-runs/:paymentRunId` — detail, including child orders and aggregate totals.
-- `DELETE /workspaces/:workspaceId/payment-runs/:paymentRunId` — delete the run (orders keep their history, lose the grouping).
-- `POST /workspaces/:workspaceId/payment-runs/:paymentRunId/cancel` — cancel the run and its pending orders.
-- `POST /workspaces/:workspaceId/payment-runs/:paymentRunId/close` — close a settled run.
-- `POST /workspaces/:workspaceId/payment-runs/:paymentRunId/prepare-execution` — prepare a single Solana transaction for the whole batch.
-- `POST /workspaces/:workspaceId/payment-runs/:paymentRunId/attach-signature` — attach the submitted signature after the wallet signs.
-- `GET  /workspaces/:workspaceId/payment-runs/:paymentRunId/proof` — deterministic proof packet for the entire run.
+- `GET /organizations/:organizationId/payment-runs`
+- `POST /organizations/:organizationId/payment-runs/import-csv`
+- `POST /organizations/:organizationId/payment-runs/import-csv/preview`
+- `GET /organizations/:organizationId/payment-runs/:paymentRunId`
+- `DELETE /organizations/:organizationId/payment-runs/:paymentRunId`
+- `POST /organizations/:organizationId/payment-runs/:paymentRunId/cancel`
+- `POST /organizations/:organizationId/payment-runs/:paymentRunId/close`
+- `POST /organizations/:organizationId/payment-runs/:paymentRunId/prepare-execution`
+- `POST /organizations/:organizationId/payment-runs/:paymentRunId/attach-signature`
+- `GET /organizations/:organizationId/payment-runs/:paymentRunId/proof`
 
 ## Payment Orders
 
-The control-plane object for a single intended payment.
-
-- `GET   /workspaces/:workspaceId/payment-orders` — list (supports `state` filter).
-- `POST  /workspaces/:workspaceId/payment-orders` — create (usually from a request, but can be created directly).
-- `GET   /workspaces/:workspaceId/payment-orders/:paymentOrderId` — detail, with events, approvals, and matching state.
-- `PATCH /workspaces/:workspaceId/payment-orders/:paymentOrderId` — limited updates (e.g. `sourceTreasuryWalletId`, `metadata`).
-- `POST  /workspaces/:workspaceId/payment-orders/:paymentOrderId/submit` — submit a draft for approval.
-- `POST  /workspaces/:workspaceId/payment-orders/:paymentOrderId/cancel` — cancel.
-- `POST  /workspaces/:workspaceId/payment-orders/:paymentOrderId/prepare-execution` — prepare a single-order execution packet.
-- `POST  /workspaces/:workspaceId/payment-orders/:paymentOrderId/attach-signature` — attach the submitted signature after signing.
-- `POST  /workspaces/:workspaceId/payment-orders/:paymentOrderId/create-execution` — create an `ExecutionRecord` ahead of signing.
-- `GET   /workspaces/:workspaceId/payment-orders/:paymentOrderId/proof` — deterministic proof packet for one payment.
+- `GET /organizations/:organizationId/payment-orders`
+- `POST /organizations/:organizationId/payment-orders`
+- `GET /organizations/:organizationId/payment-orders/:paymentOrderId`
+- `PATCH /organizations/:organizationId/payment-orders/:paymentOrderId`
+- `POST /organizations/:organizationId/payment-orders/:paymentOrderId/submit`
+- `POST /organizations/:organizationId/payment-orders/:paymentOrderId/cancel`
+- `POST /organizations/:organizationId/payment-orders/:paymentOrderId/prepare-execution`
+- `POST /organizations/:organizationId/payment-orders/:paymentOrderId/create-execution`
+- `POST /organizations/:organizationId/payment-orders/:paymentOrderId/attach-signature`
+- `GET /organizations/:organizationId/payment-orders/:paymentOrderId/proof`
 
 ## Approvals
 
-- `GET   /workspaces/:workspaceId/approval-policy` — fetch the workspace's policy row (always one per workspace).
-- `PATCH /workspaces/:workspaceId/approval-policy` — update `policyName`, `isActive`, or keys under `ruleJson` (trust requirement, internal/external thresholds, etc.).
-- `GET   /workspaces/:workspaceId/approval-inbox` — pending approvals (used by the Approvals page).
-- `POST  /workspaces/:workspaceId/transfer-requests/:transferRequestId/approval-decisions` — record an `approve` / `reject` / `escalate` decision.
+- `GET /organizations/:organizationId/approval-policy`
+- `PATCH /organizations/:organizationId/approval-policy`
+- `GET /organizations/:organizationId/approval-inbox`
+- `POST /organizations/:organizationId/transfer-requests/:transferRequestId/approval-decisions`
 
-Transfer requests are still the internal reconciliation row behind a payment order, but there is no public transfer-request CRUD route. The only public transfer-request route left is the approval-decision route because approval decisions target the underlying request id.
+## Observed Data, Reconciliation, Exceptions
 
-## Observed Data And Reconciliation
+- `GET /organizations/:organizationId/transfers`
+- `GET /organizations/:organizationId/reconciliation`
+- `GET /organizations/:organizationId/reconciliation-queue`
+- `GET /organizations/:organizationId/reconciliation-queue/:transferRequestId`
+- `GET /organizations/:organizationId/reconciliation-queue/:transferRequestId/explain`
+- `POST /organizations/:organizationId/reconciliation-queue/:transferRequestId/refresh`
+- `GET /organizations/:organizationId/exceptions`
+- `GET /organizations/:organizationId/exceptions/:exceptionId`
+- `PATCH /organizations/:organizationId/exceptions/:exceptionId`
+- `POST /organizations/:organizationId/exceptions/:exceptionId/actions`
+- `POST /organizations/:organizationId/exceptions/:exceptionId/notes`
 
-- `GET  /workspaces/:workspaceId/transfers` — observed USDC transfers touching the workspace.
-- `GET  /workspaces/:workspaceId/reconciliation` — reconciliation rows joining transfer requests ↔ observed transfers.
-- `GET  /workspaces/:workspaceId/reconciliation-queue` — items needing operator attention.
-- `GET  /workspaces/:workspaceId/reconciliation/:transferRequestId` — detail timeline for one request.
-- `GET  /workspaces/:workspaceId/reconciliation/:transferRequestId/timeline` — the same, with event-log semantics.
-- `POST /workspaces/:workspaceId/reconciliation/:transferRequestId/notes` — add a note.
-- `GET  /workspaces/:workspaceId/exceptions` — list open + historical exceptions.
-- `GET  /workspaces/:workspaceId/exceptions/:exceptionId` — detail.
-- `PATCH /workspaces/:workspaceId/exceptions/:exceptionId` — update status / assignee.
-- `POST /workspaces/:workspaceId/exceptions/:exceptionId/actions` — applies an action (`reviewed` | `expected` | `dismissed` | `reopen`).
-- `POST /workspaces/:workspaceId/exceptions/:exceptionId/notes` — add an operator note.
+## Ops And Audit
 
-## Ops, Members, Proofs
+- `GET /organizations/:organizationId/audit-log`
+- `GET /organizations/:organizationId/ops-health`
 
-- `GET /workspaces/:workspaceId/members` — workspace members.
-- `GET /workspaces/:workspaceId/audit-log` — workspace-wide audit view across event tables.
-- `GET /workspaces/:workspaceId/ops-health` — combined Postgres + ClickHouse health signal used by ops surfaces.
+## Internal Worker Routes
 
-## Internal (Worker ↔ API)
+Used by the Yellowstone worker with `x-service-token`.
 
-Used by the Yellowstone worker via the `x-service-token` header (`CONTROL_PLANE_SERVICE_TOKEN`), not exposed to end users.
+- `GET /internal/matching-index`
+- `GET /internal/matching-index/events`
+- `GET /internal/organizations/:organizationId/matching-context`
 
-- `GET /internal/workspaces` — list workspaces the worker should watch.
-- `GET /internal/workspaces/:workspaceId/matching-context` — matcher context for one workspace.
-- `GET /internal/matching-index` — global matching index. Returns `{version, workspaces: [{workspace, treasury_wallets, matches, addresses, transferRequests}]}` where `matches` is the list of open transfer requests (both `payment_order` and `collection_request`) with their expected source, destination, and any submitted signature.
-- `GET /internal/matching-index/events` — SSE stream of matching-index invalidations so the worker can refresh without polling.
+The worker no longer uses a workspace registry. It consumes an organization-scoped matching index.
 
 ## Route Change Checklist
 
-When you add, remove, or reshape a route:
+When adding or changing a route:
 
-1. Update the handler under `api/src/routes/`.
-2. Update `api/src/api-contract.ts` so `/openapi.json` reflects the change.
-3. If it affects the matching index (treasury wallets, destinations, transfer requests, approvals, signatures) make sure the mutation triggers `matching-index-events` invalidation.
-4. Update the frontend `api.ts` client.
-5. Update this file.
-6. Add or adjust a test in `api/tests/`.
+1. Update the route handler under `api/src/routes/`.
+2. Update `api/src/api-contract.ts`.
+3. Update `/capabilities` if the feature should be advertised.
+4. Update frontend `api.ts` types/client if needed.
+5. Add or adjust API tests.
+6. Update this file.
+7. If the mutation affects matching, ensure matching-index invalidation fires.

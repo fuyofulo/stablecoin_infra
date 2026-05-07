@@ -31,7 +31,7 @@ Materialized transaction-level rows.
 
 Typical data:
 
-- workspace id
+- organization id
 - signature
 - slot
 - block time
@@ -54,7 +54,7 @@ Typical data:
 - destination owner/account
 - route/index
 - classification
-- workspace id
+- organization id
 
 Use this for "real USDC movement".
 
@@ -133,7 +133,7 @@ This avoids writing high-volume worker findings into Postgres while still allowi
 
 ## Ops Health API
 
-The API exposes workspace ops health endpoints that combine:
+The API exposes organization ops health endpoints that combine:
 
 - Postgres control-plane counts
 - ClickHouse latest observed activity

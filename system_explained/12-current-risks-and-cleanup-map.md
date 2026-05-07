@@ -4,7 +4,7 @@ This file is intentionally direct. It lists the main risks and cleanup areas tha
 
 ## Recently resolved (context — do not reopen)
 
-- **Schema split** (landed 2026-04-19): `WorkspaceAddress` → `TreasuryWallet`; `Destination` made first-class (stores `walletAddress` directly); `Payee` removed entirely; `Counterparty` is an optional org-scoped tag. All compat shims removed. Old code that still mentions the legacy names is actively legacy.
+- **Organization-scoped schema**: the old workspace layer was removed. `TreasuryWallet` is organization-scoped, `Destination` stores external wallet addresses directly, `Payee` was removed, and `Counterparty` is an optional organization-scoped tag. Old code that still mentions workspace routes or `workspaceId` is actively legacy.
 - **Frontend v2**: fully rebuilt around an institutional dual-theme design system (`--ax-*` tokens, `brand.md`). All primary pages use the `rd-*` batch-expandable pattern. Toast system, institutional sidebar, and the Decimal positioning landed.
 - **Pricing**: SOL/USD via Binance SOLUSDT with a 60s TTL and stale fallback, wired into `/treasury-wallets/balances`.
 
@@ -146,7 +146,7 @@ Needed:
 
 - negative cache
 - TTL
-- workspace labels first
+- organization labels first
 - log suppression
 
 ## Worker Risks
@@ -307,7 +307,7 @@ The collections wedge landed recently (CollectionRequest / CollectionRun / Colle
 - **Source trust workflow is shallow.** `CollectionSource.trustState` exists but there's no review queue or approval-policy hook for unreviewed sources analogous to destination trust on the payout side.
 - **No source verification beyond label.** A user can save a CollectionSource for any wallet address; nothing currently proves the wallet actually belongs to the named counterparty. Future: signed-message verification, KYB hook, or oracle attestation.
 - **Inbound timing UX is sparse.** No "expected by" SLA, no late-payment escalation. Collections with a `dueAt` in the past don't surface anywhere prominent.
-- **No duplicate-source detection across workspaces.** A wallet labeled "Acme — ops" in one workspace might be flagged differently in another. Outside MVP scope.
+- **No duplicate-source detection across organizations.** A wallet labeled "Acme — ops" in one organization might be flagged differently in another. Outside MVP scope.
 
 ## Operational Risks (laptop-hosted production)
 

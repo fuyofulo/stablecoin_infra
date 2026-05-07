@@ -97,7 +97,7 @@ To see what a recipe would do without running it: `make -n <target>`. To trace e
 ## Health Checks
 
 - `GET /health` — public liveness; runs `SELECT 1` against Postgres.
-- `GET /workspaces/:workspaceId/ops-health` — workspace-scoped health: worker freshness, route health, matching latency, exception counts, ClickHouse reachability.
+- `GET /organizations/:organizationId/ops-health` — organization-scoped health: worker freshness, route health, matching latency, exception counts, ClickHouse reachability.
 
 ## Backups (local Postgres)
 
@@ -162,8 +162,8 @@ The worker reads from `/internal/matching-index` and subscribes to `/internal/ma
 curl -s -H "x-service-token: $CONTROL_PLANE_SERVICE_TOKEN" \
   http://127.0.0.1:3100/internal/matching-index | jq '{
     version,
-    workspaces: [.workspaces[] | {
-      ws: .workspace.workspaceId,
+    organizations: [.organizations[] | {
+      org: .organization.organizationId,
       wallets: (.treasury_wallets | length),
       requests: (.matches | length)
     }]
@@ -198,7 +198,7 @@ SELECT * FROM exceptions             WHERE signature = '<signature>';
 
 Collections add one extra match constraint relative to payments: the `request_matches_observed_source` guard at `yellowstone/src/yellowstone/mod.rs:1105`. For `request_type == 'collection_request'`, the matcher requires:
 
-- An observed inbound transfer to one of the workspace's TreasuryWallet addresses, AND
+- An observed inbound transfer to one of the organization's TreasuryWallet addresses, AND
 - If the collection has an `expected_source_wallet_address` (set when a known `CollectionSource` is referenced or `payerWalletAddress` is supplied), the observed source wallet must equal it. If both are null, any payer matches.
 
 So if a collection isn't matching:
@@ -254,7 +254,7 @@ counterparty,destination,amount,reference,due_date
 
 ### Collections
 
-Same flow but creates a `CollectionRun` with rows targeting registered TreasuryWallets as receivers. CSV preview is at `POST /workspaces/:workspaceId/collection-runs/import-csv/preview`.
+Same flow but creates a `CollectionRun` with rows targeting registered TreasuryWallets as receivers. CSV preview is at `POST /organizations/:organizationId/collection-runs/import-csv/preview`.
 
 If import does nothing:
 

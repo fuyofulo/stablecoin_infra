@@ -1,294 +1,490 @@
 # 04 Postgres Data Model
 
-Postgres is Decimal's control plane: the canonical source of truth for business intent, policy state, approvals, execution evidence, and the audit timeline. ClickHouse holds chain facts; Postgres holds everything operators decide or configure.
+Postgres is Decimal's control plane. It stores identity, organization membership, personal wallets, treasury wallets, business intent, approvals, execution records, exception state, and proof-facing audit history.
 
-The schema lives in `api/prisma/schema.prisma` and the seed SQL is under `postgres/init/`.
+The schema lives in `api/prisma/schema.prisma`.
 
-Two schema rules that shape almost every table:
+## Current Scoping Rule
 
-1. **We split "ours" from "theirs."** `TreasuryWallet` records the Solana wallets *we* own (sources for payments, the only thing the Yellowstone worker watches as "ours"). `Destination` records *counterparty* wallets we pay, storing the external `walletAddress` directly. They are deliberately separate tables with no foreign key between them.
-2. **Business intent lives on top of the transfer-level matcher.** `PaymentRequest` / `PaymentRun` / `PaymentOrder` are the business objects operators think in. `TransferRequest` / `ExecutionRecord` / `ApprovalDecision` are the lower-level matcher objects the worker and reconciliation engine think in.
+Decimal is organization-scoped.
 
-Older docs and old code references may mention `Payee` or `WorkspaceAddress` — those no longer exist. `Payee` was removed entirely; `WorkspaceAddress` was renamed to `TreasuryWallet`.
+```text
+Organization
+  -> members
+  -> personal wallet authorizations
+  -> treasury wallets
+  -> destinations
+  -> collection sources
+  -> payments
+  -> collections
+  -> approvals
+  -> reconciliation state
+```
 
-## Identity And Access Tables
+There is no active `Workspace` table. Older docs that describe `workspaceId` as the primary scope are stale.
+
+## Identity And Organization Tables
 
 ### `Organization`
 
-Fields: `organizationId`, `organizationName`, `status`, timestamps.
+The top-level tenant.
 
-An organization owns workspaces, counterparties, memberships, and auth sessions.
+Important fields:
+
+- `organizationId`
+- `organizationName`
+- `status`
+- timestamps
+
+Owns:
+
+- memberships
+- invites
+- treasury wallets
+- counterparties
+- destinations
+- collection sources
+- payment and collection objects
+- transfer requests
+- approvals
+- execution records
+- exception state
 
 ### `User`
 
-Fields: `userId`, `email` (unique), `displayName`, `status`, timestamps.
+Human account.
 
-Users join organizations via `OrganizationMembership` (role + status). They own approval decisions, notes, exception state updates, and payment records.
+Important fields:
 
-### `OrganizationMembership`
+- `userId`
+- `email`
+- `displayName`
+- `passwordHash?`
+- `googleSubject?`
+- `avatarUrl?`
+- email verification fields
+- `status`
 
-Joins `User ↔ Organization` with a `role` and `status`. Unique per `(organizationId, userId)`.
+Users own personal wallets and participate in organizations through `OrganizationMembership`.
 
 ### `AuthSession`
 
-Session tokens for user logins. Fields: `authSessionId`, `sessionToken` (unique), optional `organizationId`, `userId`, `expiresAt`, `lastSeenAt`. Cascade on org/user deletion.
+Bearer session token table.
 
-### `IdempotencyRecord`
+Important fields:
 
-Stores the outcome of an idempotent POST so replays return the same response. Fields: `idempotencyRecordId`, `key`, `requestMethod`, `requestPath`, `requestHash`, `actorType`, `actorId`, `status`, `statusCode?`, `responseBodyJson?`, timestamps, `expiresAt`. Unique `(actorType, actorId, requestMethod, requestPath, key)`.
+- `authSessionId`
+- `sessionToken`
+- `organizationId?`
+- `userId`
+- `expiresAt`
+- `lastSeenAt`
 
-### `Workspace`
+Every authenticated API request uses `Authorization: Bearer <session-token>`.
 
-A workspace is the scope everything else lives under. Fields: `workspaceId`, `organizationId`, `workspaceName`, `status`. Cascade on org deletion. All treasury wallets, destinations, payment objects, approvals, and events reference `workspaceId`.
+### `OrganizationMembership`
 
-## Address Book Tables
+Join table between users and organizations.
+
+Important fields:
+
+- `membershipId`
+- `organizationId`
+- `userId`
+- `role`
+- `status`
+
+Roles currently used by product logic:
+
+- `owner`
+- `admin`
+- `member`
+
+`owner` and `admin` can perform org-admin mutations. Some Squads proposal actions intentionally allow plain `member` because on-chain Squads permissions are the true authority.
+
+### `OrganizationInvite`
+
+Email-bound invitation into an organization.
+
+Important fields:
+
+- `organizationInviteId`
+- `organizationId`
+- `invitedEmail`
+- `role`
+- `inviteTokenHash`
+- `status`
+- `invitedByUserId`
+- `acceptedByUserId?`
+- `expiresAt`
+
+Direct joining is blocked. A user joins an existing org by accepting an invite whose email matches their account.
+
+## Wallet And Treasury Tables
+
+### `PersonalWallet`
+
+User-owned signing wallet.
+
+Important fields:
+
+- `userWalletId`
+- `userId`
+- `chain`
+- `walletAddress`
+- `walletType`
+- `provider`
+- `providerWalletId`
+- `label`
+- `status`
+- `verifiedAt`
+- `lastUsedAt`
+- `metadataJson`
+
+Important rule: a personal wallet is not organization treasury. It is a user's signer.
+
+Current provider support:
+
+- Privy embedded wallets.
+
+Browser wallets existed in earlier flows, but current product direction is personal embedded wallets for members.
 
 ### `TreasuryWallet`
 
-Wallets the workspace *owns*. Source side of every payment. The Yellowstone worker only watches these addresses as "ours."
+Organization-owned wallet or vault.
 
-Fields:
+Important fields:
 
-- `treasuryWalletId` (uuid, pk)
-- `workspaceId`
-- `chain` (e.g. `solana`)
+- `treasuryWalletId`
+- `organizationId`
+- `chain`
 - `address`
-- `assetScope` (default `usdc`)
-- `usdcAtaAddress` — the derived USDC ATA; populated at creation time
+- `assetScope`
+- `usdcAtaAddress?`
 - `isActive`
-- `source` (e.g. `manual`), `sourceRef`
-- `displayName`, `notes`, `propertiesJson`
-- timestamps
+- `source`
+- `sourceRef?`
+- `displayName?`
+- `notes?`
+- `propertiesJson`
 
-Unique on `(workspaceId, address)`. Relations: outbound `TransferRequest`s, source `PaymentOrder`s, source `PaymentRun`s.
+Manual treasury:
 
-This table was renamed from `WorkspaceAddress` in the 2026-04-19 schema split. Any code that still mentions `workspaceAddressId` is legacy.
+- `source = manual`
+- `address = wallet public key`
+
+Squads treasury:
+
+- `source = squads_v4`
+- `address = vault PDA`
+- `sourceRef = multisig PDA`
+- `propertiesJson.squads` stores program id, vault index, threshold, members, transaction index, and related metadata.
+
+The Yellowstone worker treats treasury wallets as the "ours" set.
+
+### `OrganizationWalletAuthorization`
+
+Local authorization bridge between a personal wallet and an organization treasury.
+
+Important fields:
+
+- `walletAuthorizationId`
+- `organizationId`
+- `treasuryWalletId?`
+- `userWalletId`
+- `membershipId`
+- `role`
+- `status`
+- `scope`
+- `revokedAt?`
+- `metadataJson`
+
+For Squads, rows with `role = squads_member` mirror live on-chain multisig membership after `syncSquadsTreasuryMembers`.
+
+This table does not grant on-chain power by itself. On-chain Squads membership is authoritative.
+
+## Address Book Tables
 
 ### `Counterparty`
 
-An optional business entity you can tag destinations with. Org-scoped (lives above workspaces).
+Optional business entity label.
 
-Fields: `counterpartyId`, `organizationId`, `displayName`, `category`, `externalReference?`, `status`, `metadataJson`, timestamps.
+Important fields:
 
-Indexed on `(organizationId, createdAt desc)`. Counterparties are never required — destinations work without them.
+- `counterpartyId`
+- `organizationId`
+- `displayName`
+- `category`
+- `externalReference?`
+- `status`
+- `metadataJson`
+
+Counterparties can be attached to destinations or collection sources.
 
 ### `Destination`
 
-Counterparty endpoint we pay. Stores the external wallet address directly. No FK to `TreasuryWallet`; these are their wallets, not ours.
+External wallet the organization pays.
 
-Fields:
+Important fields:
 
 - `destinationId`
-- `counterpartyId?` — optional link to a Counterparty
-- `workspaceId`
-- `chain` (e.g. `solana`)
-- `asset` (default `usdc`)
-- `walletAddress` — the counterparty's wallet
-- `tokenAccountAddress?` — optional pre-resolved ATA
-- `destinationType` (default `wallet`)
-- `trustState` — one of `unreviewed | trusted | restricted | blocked`
-- `label` — human name ("Acme payout wallet")
-- `notes?` — free-form context
-- `isInternal` — boolean for `internal` vs `external` classification used by policy
+- `organizationId`
+- `counterpartyId?`
+- `chain`
+- `asset`
+- `walletAddress`
+- `tokenAccountAddress?`
+- `destinationType`
+- `trustState`
+- `label`
+- `notes?`
+- `isInternal`
 - `isActive`
 - `metadataJson`
-- timestamps
 
-Unique on `(workspaceId, walletAddress)`. Indexed on `(workspaceId, createdAt desc)` and `(counterpartyId, createdAt desc)`. Relations: `TransferRequest`s, `PaymentOrder`s, `PaymentRequest`s.
-
-### `AddressLabel`
-
-A generic label registry that is *not* scoped to a workspace. Used to enrich arbitrary on-chain addresses seen during observation. Fields: `addressLabelId`, `chain`, `address`, `entityName`, `entityType`, `labelKind`, `roleTags` (JSON), `source`, `sourceRef?`, `confidence`, `isActive`, `notes?`, timestamps. Unique on `(chain, address)`.
+Destinations are not treasury wallets. They are "theirs."
 
 ### `CollectionSource`
 
-Saved expected payer wallet — the inbound counterpart to `Destination`. Used by collections to constrain which payer satisfies a given collection request.
+Expected payer wallet for inbound collections.
 
-Fields:
+Important fields:
 
 - `collectionSourceId`
-- `workspaceId`, `counterpartyId?` (optional Counterparty link)
-- `chain` (default `solana`), `asset` (default `usdc`)
-- `walletAddress` — the expected payer's wallet
-- `tokenAccountAddress?` — optional pre-resolved ATA
-- `sourceType` (default `payer_wallet`)
-- `trustState` — `unreviewed | trusted | restricted | blocked`
-- `label` — human name ("Acme — ops wallet")
+- `organizationId`
+- `counterpartyId?`
+- `chain`
+- `asset`
+- `walletAddress`
+- `tokenAccountAddress?`
+- `sourceType`
+- `trustState`
+- `label`
 - `notes?`
 - `isActive`
-- `metadataJson`, timestamps
+- `metadataJson`
 
-Unique on `(workspaceId, walletAddress)`. Created via the standalone `CollectionSources` page or inline from the new-collection dialog (the `AddCollectionSourceDialog` component is shared).
+If a `CollectionRequest` references a `collectionSourceId`, matching is constrained to that payer.
 
 ## Business Intent Tables
 
 ### `PaymentRequest`
 
-An input-layer object: "someone asked to pay this."
+Input-layer object: "someone requested a payment."
 
-Fields:
+Important fields:
 
 - `paymentRequestId`
-- `workspaceId`, `paymentRunId?`
-- `destinationId`, `counterpartyId?`
+- `organizationId`
+- `paymentRunId?`
+- `destinationId`
+- `counterpartyId?`
 - `requestedByUserId?`
-- `amountRaw` (BigInt raw base units), `asset` (default `usdc`)
-- `reason` (required, free text — e.g. "April vendor payout")
-- `externalReference?`, `dueAt?`
-- `state` (default `submitted`)
+- `amountRaw`
+- `asset`
+- `reason`
+- `externalReference?`
+- `dueAt?`
+- `state`
 - `metadataJson`
-- timestamps
 
-Unique combo `(workspaceId, destinationId, amountRaw, externalReference)` prevents casual duplicates. Indexed heavily for the list UI.
-
-Has an optional one-to-one `PaymentOrder` via `paymentRequestId` back-reference.
-
-There is **no `memo`**, **no `source`**, and **no `payeeId`** on this table. All three live elsewhere or were removed.
+Can be created manually, imported from CSV, or promoted into a `PaymentOrder`.
 
 ### `PaymentRun`
 
-A batch of payment requests/orders, usually imported from CSV.
+Batch container for payment requests and orders.
 
-Fields: `paymentRunId`, `workspaceId`, `sourceTreasuryWalletId?` (the intended batch signer), `runName`, `inputSource` (e.g. `csv_import`, `manual`), `state` (default `draft`), `metadataJson`, `createdByUserId?`, timestamps.
+Important fields:
 
-The run doesn't store prepared packets or signatures; those live on the orders / execution records.
+- `paymentRunId`
+- `organizationId`
+- `sourceTreasuryWalletId?`
+- `runName`
+- `inputSource`
+- `state`
+- `metadataJson`
+- `createdByUserId?`
+
+Used for payroll-like or vendor batch imports.
 
 ### `PaymentOrder`
 
-The main control-plane object for one intended payment. Drives policy, execution packets, and matching.
+Main outgoing payment control-plane object.
 
-Fields:
+Important fields:
 
 - `paymentOrderId`
-- `workspaceId`, `paymentRequestId?` (unique, optional one-to-one), `paymentRunId?`
-- `destinationId`, `counterpartyId?`, `sourceTreasuryWalletId?`
-- `amountRaw`, `asset`
-- `memo?`, `externalReference?`, `invoiceNumber?`, `attachmentUrl?`, `dueAt?`
-- `state` (default `draft`)
-- `sourceBalanceSnapshotJson` — snapshot of the source treasury wallet's balance when the order was prepared
-- `metadataJson`, `createdByUserId?`
-- timestamps
+- `organizationId`
+- `paymentRequestId?`
+- `paymentRunId?`
+- `destinationId`
+- `counterpartyId?`
+- `sourceTreasuryWalletId?`
+- `amountRaw`
+- `asset`
+- `memo?`
+- `externalReference?`
+- `invoiceNumber?`
+- `attachmentUrl?`
+- `dueAt?`
+- `state`
+- `sourceBalanceSnapshotJson`
+- `metadataJson`
+- `createdByUserId?`
 
-No `preparedExecutionPacketJson` and no `submittedSignature` here — those live on `ExecutionRecord` via the order's `TransferRequest`.
+Each submitted order projects into a `TransferRequest` for matching.
 
 ### `CollectionRequest`
 
-The inbound counterpart to `PaymentOrder` — declares an expected USDC payment INTO one of the workspace's `TreasuryWallet` rows.
+Expected inbound payment.
 
-Fields:
+Important fields:
 
 - `collectionRequestId`
-- `workspaceId`, `collectionRunId?` (optional batch link)
-- `transferRequestId` — every collection request projects into one `TransferRequest` with `requestType = 'collection_request'`
-- `receivingTreasuryWalletId` — which of our wallets the funds should land in
-- `collectionSourceId?` — optional saved expected payer source (preferred over raw payer fields)
-- `payerWalletAddress?`, `payerTokenAccountAddress?` — denormalized payer fields, set when `collectionSourceId` is null OR for snapshot purposes
+- `organizationId`
+- `collectionRunId?`
+- `transferRequestId`
+- `receivingTreasuryWalletId`
+- `collectionSourceId?`
+- `payerWalletAddress?`
+- `payerTokenAccountAddress?`
 - `counterpartyId?`
-- `amountRaw`, `asset`, `reason`, `externalReference?`, `dueAt?`
+- `amountRaw`
+- `asset`
+- `reason`
+- `externalReference?`
+- `dueAt?`
 - `state`
-- `createdByUserId?`, `metadataJson`, timestamps
+- `createdByUserId?`
+- `metadataJson`
+
+Every collection creates a `TransferRequest` with `requestType = collection_request`.
 
 ### `CollectionRun`
 
-Batch container for collection requests. Same shape as `PaymentRun` but for the inbound side.
+Batch container for collection requests.
 
-Fields: `collectionRunId`, `workspaceId`, `runName`, `inputSource`, `state`, `metadataJson`, `createdByUserId?`, timestamps.
+Important fields:
 
-### `CollectionRequestEvent`
+- `collectionRunId`
+- `organizationId`
+- `receivingTreasuryWalletId?`
+- `runName`
+- `inputSource`
+- `state`
+- `metadataJson`
+- `createdByUserId?`
 
-Append-only audit log per collection request. Same shape as `TransferRequestEvent` (eventType, actorType, before/after state, linked signature, payloadJson, etc.).
-
-## Transfer-Level Tables (The Matcher's View)
+## Transfer, Approval, Execution, And Event Tables
 
 ### `TransferRequest`
 
-The lower-level expected-settlement record. A `PaymentOrder` usually spawns one `TransferRequest`. This is what the matcher reconciles observed USDC movement against.
+Matcher-level expected transfer.
 
-Fields: `transferRequestId`, `workspaceId`, `paymentOrderId?`, `sourceTreasuryWalletId?`, `destinationId`, `requestType` — `'payment_order'` or `'collection_request'`, `asset`, `amountRaw`, `requestedByUserId?`, `reason?`, `externalReference?`, `status` (default `submitted`), `requestedAt`, `dueAt?`, `propertiesJson`, timestamps.
+Important fields:
 
-Relations: approvals, execution records, events, notes, optional one-to-one `CollectionRequest`. Several compound indexes for matcher and UI queries.
+- `transferRequestId`
+- `organizationId`
+- `paymentOrderId?`
+- `sourceTreasuryWalletId?`
+- `destinationId?`
+- `requestType`
+- `asset`
+- `amountRaw`
+- `requestedByUserId?`
+- `reason?`
+- `externalReference?`
+- `status`
+- `requestedAt`
+- `dueAt?`
+- `propertiesJson`
 
-The matcher branches on `requestType`: collection requests get the source-wallet equality guard at `yellowstone/src/yellowstone/mod.rs:1105`; payment orders do not.
+For payments, destination side is expected.
+
+For collections, receiving treasury wallet and optional payer fields are stored through `propertiesJson` and the related `CollectionRequest`.
 
 ### `ApprovalPolicy`
 
-One per workspace (unique on `workspaceId`). Fields: `approvalPolicyId`, `workspaceId`, `policyName`, `isActive`, `ruleJson`, timestamps.
+One policy per organization.
 
-All policy knobs live in `ruleJson`:
+Important fields:
 
-```jsonc
-{
-  "requireTrustedDestination": true,
-  "requireApprovalForExternal": true,
-  "requireApprovalForInternal": false,
-  "externalApprovalThresholdRaw": "1000000",
-  "internalApprovalThresholdRaw": "10000000"
-}
-```
+- `approvalPolicyId`
+- `organizationId`
+- `policyName`
+- `isActive`
+- `ruleJson`
 
-No separate columns per knob — we deliberately keep `ruleJson` flexible so new policy rules can ship without migrations.
+Policy knobs live in `ruleJson`, including trusted-destination requirement and thresholds.
 
 ### `ApprovalDecision`
 
-Decisions against `TransferRequest`s.
+Append-only approval decision for a `TransferRequest`.
 
-Fields: `approvalDecisionId`, `approvalPolicyId?`, `transferRequestId`, `workspaceId`, `actorUserId?`, `actorType` (default `user` — could also be `policy` for auto-clear), `action` (one of `routed_for_approval | auto_approved | approve | reject | escalate`), `comment?`, `payloadJson`, `createdAt`.
+Important fields:
 
-Decisions are append-only; the current state of a request is derived from the latest decision.
+- `approvalDecisionId`
+- `approvalPolicyId?`
+- `transferRequestId`
+- `organizationId`
+- `actorUserId?`
+- `actorType`
+- `action`
+- `comment?`
+- `payloadJson`
+- `createdAt`
 
 ### `ExecutionRecord`
 
-Evidence that someone prepared / submitted / observed an execution attempt for a `TransferRequest`.
+Evidence that execution was prepared, submitted, observed, or failed.
 
-Fields: `executionRecordId`, `transferRequestId`, `workspaceId`, `submittedSignature?`, `executionSource` (default `manual`), `executorUserId?`, `state` (one of `ready_for_execution | submitted_onchain | broadcast_failed | observed | settled | execution_exception`), `submittedAt?`, `metadataJson`, timestamps.
+Important fields:
 
-When a signature is attached back via `/attach-signature`, a new `ExecutionRecord` is created (or the existing one is updated) with the signature and `submittedAt`.
+- `executionRecordId`
+- `transferRequestId`
+- `organizationId`
+- `submittedSignature?`
+- `executionSource`
+- `executorUserId?`
+- `state`
+- `submittedAt?`
+- `metadataJson`
 
-### `TransferRequestEvent`
+### Event And Note Tables
 
-An append-only audit log per transfer request. Fields: `transferRequestEventId`, `transferRequestId`, `workspaceId`, `eventType`, `actorType`, `actorId?`, `eventSource`, `beforeState?`, `afterState?`, `linkedSignature?`, `linkedPaymentId?`, `linkedTransferIds` (JSON array), `payloadJson`, `createdAt`.
+Append-only operational history:
 
-### `TransferRequestNote`
+- `TransferRequestEvent`
+- `TransferRequestNote`
+- `PaymentOrderEvent`
+- `CollectionRequestEvent`
+- `ExceptionState`
+- `ExceptionNote`
 
-Human notes on a transfer request. Fields: `transferRequestNoteId`, `transferRequestId`, `workspaceId`, `authorUserId?`, `body`, `createdAt`.
+Use these for timelines and audit views. Avoid rewriting history when a new event is more honest.
 
-### `PaymentOrderEvent`
+## Proof / Export Tables
 
-Parallel audit log at the `PaymentOrder` level. Fields: `paymentOrderEventId`, `paymentOrderId`, `workspaceId`, `eventType`, `actorType`, `actorId?`, `beforeState?`, `afterState?`, `linkedTransferRequestId?`, `linkedExecutionRecordId?`, `linkedSignature?`, `payloadJson`, `createdAt`.
+`ExportJob` records proof/export activity where used.
 
-Useful for rendering the lifecycle rail on the Payment detail and Payment run detail pages.
+Important fields:
 
-## Exception And Audit Tables
+- `exportJobId`
+- `organizationId`
+- `requestedByUserId?`
+- `exportKind`
+- `format`
+- `status`
+- `rowCount`
+- `filterJson`
 
-### `ExceptionState`
+Proof packet contents are generated by services, not fully stored as one giant DB blob.
 
-The current state of a reconciliation exception, unique per `(workspaceId, exceptionId)`. Fields: `exceptionStateId`, `workspaceId`, `exceptionId`, `status`, `updatedByUserId?`, `assignedToUserId?`, `resolutionCode?`, `severity?`, timestamps.
+## Legacy Names To Avoid
 
-The exception's facts (transfers, amounts, cause) live in ClickHouse; this table is the operator-decided state on top.
+- `Workspace`
+- `workspaceId`
+- `WorkspaceAddress`
+- `Payee`
 
-### `ExceptionNote`
-
-Human notes on an exception. Fields: `exceptionNoteId`, `workspaceId`, `exceptionId`, `authorUserId?`, `body`, `createdAt`.
-
-### `ExportJob`
-
-Records a proof / audit export. Fields: `exportJobId`, `workspaceId`, `requestedByUserId?`, `exportKind` (e.g. `payment_order_proof`, `payment_run_proof`, `audit_csv`), `format` (`json` | `csv`), `status` (default `completed`), `rowCount`, `filterJson`, `createdAt`, `completedAt?`.
-
-## Design Rules
-
-Rules that shape Postgres usage across the codebase:
-
-1. **Ours vs theirs is a table boundary, not a column.** `TreasuryWallet` and `Destination` never share a row. Do not add a FK from `Destination` back to `TreasuryWallet` — they are different concepts.
-2. **Business intent and transfer mechanics are different layers.** `PaymentOrder` is what humans care about; `TransferRequest` is what the matcher reconciles. Keep them as siblings via `paymentOrderId` on `TransferRequest` — do not collapse them.
-3. **Events are append-only.** Both `PaymentOrderEvent` and `TransferRequestEvent` are audit logs. Never update, only append.
-4. **`ruleJson` on `ApprovalPolicy` is deliberately loose.** Add new policy knobs there before adding columns. If a knob becomes load-bearing for queries, promote it.
-5. **Idempotency is stored, not stateless.** Any mutation that can retry (CSV import, order creation, sign attach) goes through `IdempotencyRecord`.
-6. **ClickHouse for chain facts, Postgres for decisions.** Do not mirror observed transfers into Postgres "for convenience"; reference them by signature.
-
-## Things Intentionally Missing
-
-- No `Payee` table. Payees were folded into `Destination` + optional `Counterparty`.
-- No `WorkspaceAddress` table. It's `TreasuryWallet` now.
-- No `audit_log` generic table. Use the per-entity `*Event` tables instead.
-- No `Transaction`-the-row table for on-chain txs. ClickHouse owns observed transactions; Postgres references them by signature.
-- No separate password store — auth is token-based against `AuthSession`.
+If these names appear in new code, stop and rename before continuing.

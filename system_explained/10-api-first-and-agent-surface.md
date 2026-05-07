@@ -1,150 +1,166 @@
 # 10 API First Surface
 
-Decimal should be usable without the frontend, but the current lean build does **not** include workspace API keys or an autonomous agent runtime.
+Decimal should be usable without the frontend.
 
-The present goal is simpler:
+The current lean build does **not** include API keys, machine auth, or an autonomous agent runtime. That was intentional. The immediate goal is:
 
 ```text
-Every important human workflow should have a clean HTTP path, documented in OpenAPI, with idempotent mutations where retries are likely.
+Every important human workflow should have a clean HTTP path,
+documented in OpenAPI, with idempotent mutations where retries are likely.
 ```
 
 ## Current API-First Building Blocks
 
 ### OpenAPI
 
-The API exposes:
-
 ```text
 GET /openapi.json
 ```
 
-The spec is generated from `api/src/api-contract.ts`, so route additions and removals should be reflected there first.
+Generated from `api/src/api-contract.ts`.
 
 ### Capabilities
-
-The API exposes:
 
 ```text
 GET /capabilities
 ```
 
-This is a compact product map for clients. It describes the main workflows:
-
-- single payment
-- CSV/payment-run import
-- collection request (single or batched via collection-runs)
-- collection sources (saved expected payer wallets)
-- exception operations
+Compact workflow map for clients and future agent tooling.
 
 ### User Sessions
 
-Auth is currently session-token based:
-
 ```text
 POST /auth/login
+GET  /auth/google/start
 Authorization: Bearer <session-token>
 ```
 
-Machine authentication was intentionally removed during cleanup until a real agent/customer workflow justifies it.
+All protected product routes use user sessions.
 
-### Idempotency Keys
+### Idempotency
 
-Mutation clients can safely retry with:
+Mutation clients can retry safely with:
 
 ```text
 Idempotency-Key: stable-client-generated-key
 ```
 
-Use this on:
-
-- payment request creation
-- CSV import
-- payment order creation
-- execution preparation
-- signature attachment
-- exception actions
+Use this on creation/import/signature/action endpoints.
 
 ## Current API Workflow Examples
+
+### Organization Setup
+
+```text
+POST /auth/register
+POST /auth/verify-email
+POST /organizations
+POST /personal-wallets/embedded
+POST /organizations/:organizationId/invites
+POST /invites/:inviteToken/accept
+```
+
+### Squads Treasury Setup
+
+```text
+GET  /organizations/:organizationId/personal-wallets
+POST /organizations/:organizationId/treasury-wallets/squads/create-intent
+POST /personal-wallets/:userWalletId/sign-versioned-transaction
+POST /organizations/:organizationId/treasury-wallets/squads/confirm
+```
+
+### Squads Config Proposal
+
+```text
+POST /organizations/:organizationId/treasury-wallets/:treasuryWalletId/squads/config-proposals/add-member-intent
+POST /personal-wallets/:userWalletId/sign-versioned-transaction
+GET  /organizations/:organizationId/treasury-wallets/:treasuryWalletId/squads/config-proposals
+POST /organizations/:organizationId/treasury-wallets/:treasuryWalletId/squads/config-proposals/:transactionIndex/approve-intent
+POST /organizations/:organizationId/treasury-wallets/:treasuryWalletId/squads/config-proposals/:transactionIndex/execute-intent
+POST /organizations/:organizationId/treasury-wallets/:treasuryWalletId/squads/sync-members
+```
 
 ### Single Payment
 
 ```text
-POST /workspaces/:workspaceId/payment-requests
-POST /workspaces/:workspaceId/payment-requests/:paymentRequestId/promote
-POST /workspaces/:workspaceId/payment-orders/:paymentOrderId/submit
-POST /workspaces/:workspaceId/payment-orders/:paymentOrderId/prepare-execution
-POST /workspaces/:workspaceId/payment-orders/:paymentOrderId/attach-signature
-GET  /workspaces/:workspaceId/payment-orders/:paymentOrderId/proof?format=markdown
+POST /organizations/:organizationId/payment-requests
+POST /organizations/:organizationId/payment-requests/:paymentRequestId/promote
+POST /organizations/:organizationId/payment-orders/:paymentOrderId/submit
+POST /organizations/:organizationId/payment-orders/:paymentOrderId/prepare-execution
+POST /organizations/:organizationId/payment-orders/:paymentOrderId/attach-signature
+GET  /organizations/:organizationId/payment-orders/:paymentOrderId/proof
 ```
 
 ### Batch Payment Run
 
 ```text
-POST /workspaces/:workspaceId/payment-runs/import-csv/preview
-POST /workspaces/:workspaceId/payment-runs/import-csv
-POST /workspaces/:workspaceId/payment-runs/:paymentRunId/prepare-execution
-POST /workspaces/:workspaceId/payment-runs/:paymentRunId/attach-signature
-POST /workspaces/:workspaceId/payment-runs/:paymentRunId/close
-GET  /workspaces/:workspaceId/payment-runs/:paymentRunId/proof?format=markdown
+POST /organizations/:organizationId/payment-runs/import-csv/preview
+POST /organizations/:organizationId/payment-runs/import-csv
+POST /organizations/:organizationId/payment-runs/:paymentRunId/prepare-execution
+POST /organizations/:organizationId/payment-runs/:paymentRunId/attach-signature
+POST /organizations/:organizationId/payment-runs/:paymentRunId/close
+GET  /organizations/:organizationId/payment-runs/:paymentRunId/proof
 ```
 
-### Single Collection (Inbound)
+### Single Collection
 
 ```text
-POST /workspaces/:workspaceId/collection-sources                          (optional, save the payer)
-POST /workspaces/:workspaceId/collections                                 (create with collectionSourceId or payerWalletAddress)
-GET  /workspaces/:workspaceId/collections/:collectionRequestId            (poll status)
-GET  /workspaces/:workspaceId/collections/:collectionRequestId/proof      (deterministic JSON proof when matched)
+POST /organizations/:organizationId/collection-sources
+POST /organizations/:organizationId/collections
+GET  /organizations/:organizationId/collections/:collectionRequestId
+GET  /organizations/:organizationId/collections/:collectionRequestId/proof
 ```
 
 ### Batch Collection Run
 
 ```text
-POST /workspaces/:workspaceId/collection-runs/import-csv/preview
-POST /workspaces/:workspaceId/collection-runs/import-csv
-GET  /workspaces/:workspaceId/collection-runs/:collectionRunId
-GET  /workspaces/:workspaceId/collection-runs/:collectionRunId/proof
+POST /organizations/:organizationId/collection-runs/import-csv/preview
+POST /organizations/:organizationId/collection-runs/import-csv
+GET  /organizations/:organizationId/collection-runs/:collectionRunId
+GET  /organizations/:organizationId/collection-runs/:collectionRunId/proof
 ```
 
 ### Reconciliation Review
 
 ```text
-GET  /workspaces/:workspaceId/reconciliation
-GET  /workspaces/:workspaceId/reconciliation-queue/:transferRequestId
-GET  /workspaces/:workspaceId/reconciliation-queue/:transferRequestId/explain
-POST /workspaces/:workspaceId/reconciliation-queue/:transferRequestId/refresh
+GET  /organizations/:organizationId/reconciliation
+GET  /organizations/:organizationId/reconciliation-queue/:transferRequestId
+GET  /organizations/:organizationId/reconciliation-queue/:transferRequestId/explain
+POST /organizations/:organizationId/reconciliation-queue/:transferRequestId/refresh
 ```
 
 ### Exception Handling
 
 ```text
-GET   /workspaces/:workspaceId/exceptions
-GET   /workspaces/:workspaceId/exceptions/:exceptionId
-PATCH /workspaces/:workspaceId/exceptions/:exceptionId
-POST  /workspaces/:workspaceId/exceptions/:exceptionId/notes
-POST  /workspaces/:workspaceId/exceptions/:exceptionId/actions
+GET   /organizations/:organizationId/exceptions
+GET   /organizations/:organizationId/exceptions/:exceptionId
+PATCH /organizations/:organizationId/exceptions/:exceptionId
+POST  /organizations/:organizationId/exceptions/:exceptionId/notes
+POST  /organizations/:organizationId/exceptions/:exceptionId/actions
 ```
 
 ## What Was Removed
 
-The following surfaces were removed because they were adding complexity before real usage:
+Removed during lean cleanup:
 
 - workspace API keys
 - agent task queue
 - agent task SSE stream
 - API-key scope enforcement
 
-This does not mean Decimal can never support agents. It means agent support should return only after we validate a concrete workflow and threat model.
+This does not mean Decimal cannot support agents. It means agent support should return only after a real workflow and threat model are clear.
 
 ## What Agents Would Need Later
 
-If agent support becomes real, add it deliberately:
+If agent support becomes real, add:
 
 - machine auth with scoped credentials
-- durable task queue or explicit worklist endpoints
-- route-level permission model
+- explicit organization permission model
+- durable worklist endpoints
+- action preview / dry-run endpoints
+- idempotency requirements on every mutation
+- signed audit logs
 - integration tests with an actual agent client
 - event subscription that works across multiple API replicas
-- audit events for every machine action
 
 Until then, keep the backend API-first for humans and scripts, not agent-shaped in theory.

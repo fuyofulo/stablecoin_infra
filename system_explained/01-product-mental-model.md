@@ -1,191 +1,190 @@
 # 01 Product Mental Model
 
-Decimal is the **deterministic financial workflow engine for crypto payments**.
+Decimal exists because crypto treasury operations have a gap between intent and on-chain reality.
 
-The product exists because stablecoin operations have a gap between business intent and on-chain reality.
-
-A team may say:
+A team says:
 
 ```text
-Pay Fuyo LLC 100 USDC for INV-102 from the operations wallet.
+Pay Fuyo LLC 100 USDC from the operations treasury.
 ```
 
-On-chain, the observable reality is only:
+Solana shows:
 
 ```text
-Some USDC token account sent tokens to another USDC token account in transaction X.
+A token account transferred raw USDC units in transaction X.
 ```
 
-Decimal sits between those two worlds — but it is not a reconciler pitched at the end of the pipeline. It is a workflow engine that owns the path from intent to proof, end to end. The reconciliation and proof pieces are where Decimal is strongest, but the point is that the same system also routes policy, prepares execution, and matches settlement to intent. **Same inputs → same proof digest, every time.**
+Decimal connects those worlds. It records the business intent, applies policy, prepares execution, observes settlement, reconciles what happened, and exports proof.
 
-The current wedges are **Solana USDC payouts** and **Solana USDC collections** (inbound expected payments matched against intent). Both are fully built end-to-end and demoable. DAO treasury views, agent runtime, and other downstream surfaces follow.
+## The Current Product
 
-## The Four Product Layers
+Decimal is currently an organization-scoped Solana USDC operations product.
 
-### 1. Inputs
+It can:
 
-Inputs are how payment intent enters Decimal.
+- Create users through email/password and Google OAuth.
+- Create organizations.
+- Invite members into organizations.
+- Create user-owned personal wallets through Privy.
+- Create organization treasury wallets.
+- Create Squads v4 multisig treasury wallets.
+- Add Squads members through on-chain config proposals.
+- Change Squads threshold through on-chain config proposals.
+- List, approve, and execute Squads config proposals.
+- Sync Decimal's local member authorization state from the live Squads multisig.
+- Create outgoing payments manually or through CSV.
+- Create payment runs for batches.
+- Prepare signer-ready Solana transactions.
+- Record submitted signatures.
+- Create inbound expected collections.
+- Observe Solana USDC transfers through Yellowstone.
+- Match observed transfers to expected payments or collections.
+- Generate exceptions for mismatches.
+- Export JSON proof packets.
 
-Current input types:
+The old workspace layer has been removed. The product now scopes operational state directly under `Organization`.
 
-- Manual payment request.
-- CSV-imported payment requests (idempotent by CSV fingerprint).
-- Payment runs created from CSV batches.
-- Direct payment order creation.
+## Product Layers
 
-Planned or natural future inputs:
+### 1. Identity
 
-- API-created requests from external systems.
-- Payroll / invoice exports.
-- DAO payout lists.
-- Webhook imports.
-- Agent-created requests.
+Identity answers: **who is operating Decimal?**
 
-The input layer is intentionally business-facing. It should use words like **counterparty**, **destination**, **treasury wallet**, **reason / reference**, **amount**, and **due date**. It should not force users to think about token accounts, inner instructions, or matcher allocations.
+Objects:
 
-### 2. Control Plane
+- `User`
+- `AuthSession`
+- `Organization`
+- `OrganizationMembership`
+- `OrganizationInvite`
+- `PersonalWallet`
 
-The control plane decides whether a payment is allowed to proceed and records every important state transition.
+Important rule: a personal wallet belongs to an individual user, not to the organization.
 
-Control-plane responsibilities:
+### 2. Treasury Control
 
-- Organization and workspace ownership.
-- Treasury wallets (the Solana wallets we own and sign with).
-- Destinations and trust state (the counterparty wallets we pay).
-- Counterparties as optional grouping tags.
-- Payment order creation.
-- Approval policy evaluation.
-- Approval inbox and decisions.
-- Execution packet preparation.
-- Execution evidence attachment.
-- Audit timeline.
-- OpenAPI/capabilities discovery for API clients.
+Treasury control answers: **who can control organization funds?**
 
-The control plane is implemented in the TypeScript API and stored mostly in Postgres.
+Objects:
 
-### 3. Execution Handoff
+- `TreasuryWallet`
+- `OrganizationWalletAuthorization`
+- Squads v4 multisig account
+- Squads v4 vault PDA
+- Squads config proposals
+
+Manual treasury wallets are organization-owned addresses registered in Decimal.
+
+Squads treasury wallets are on-chain multisigs. Decimal stores the vault as a `TreasuryWallet`, but authority lives on-chain in the Squads program.
+
+### 3. Business Intent
+
+Business intent answers: **what did the organization intend to do?**
+
+Objects:
+
+- `Destination`
+- `CollectionSource`
+- `Counterparty`
+- `PaymentRequest`
+- `PaymentRun`
+- `PaymentOrder`
+- `CollectionRequest`
+- `CollectionRun`
+
+This layer should stay business-facing. Users should see names, reasons, references, destinations, sources, amounts, and due dates. They should not have to think about token accounts unless they explicitly inspect technical details.
+
+### 4. Execution
+
+Execution answers: **how does money move?**
+
+Current execution model:
+
+- Decimal prepares transactions.
+- A personal wallet signs.
+- The signed transaction is submitted.
+- Decimal records submitted signatures.
+- Yellowstone later observes chain reality.
 
 Decimal does not custody private keys.
 
-The current execution model is:
+For normal payments, execution currently uses direct prepared USDC transfer transactions.
 
-- Decimal builds a prepared transaction (execution packet).
-- The frontend (or another client) asks the source wallet to sign and submit.
-- The submitted Solana signature is attached back to Decimal.
-- Decimal treats that signature as strong evidence for matching.
+For Squads treasury management, execution uses Squads v4 instructions:
 
-This is why the product says "execution handoff" rather than "custodial execution."
+- create multisig
+- create config transaction
+- create proposal
+- approve proposal
+- execute config transaction
 
-The important security boundary is:
+The next major product step is Squads-backed payment proposals: approved Decimal payment order -> Squads vault transaction -> voter approvals -> execute -> reconcile -> proof.
 
-- Decimal may prepare instructions.
-- Decimal may record signatures.
-- **Decimal must not silently move funds.**
-- A wallet, multisig, or external signer must authorize the transaction.
+### 5. Verification And Proof
 
-### 4. Verification And Proof
+Verification answers: **did reality match intent?**
 
-Verification is Decimal's strongest layer.
+The worker observes USDC transfers and the reconciliation engine matches them to `TransferRequest`s.
 
-The Yellowstone worker observes Solana in real time, reconstructs USDC movements, filters for the workspace's `TreasuryWallet` addresses and tracked signatures, and runs matching logic. Destination wallets are *not* watched as "ours"; they are the expected counterparty side of a match.
+Proof answers: **can we show what happened without trusting the UI?**
 
-Verification answers:
+The proof packet is deterministic JSON. It includes the business intent, approval and execution evidence, settlement result, exceptions, and a SHA-256 digest over a canonical representation.
 
-- Did a submitted signature appear on-chain?
-- Did USDC move to the intended destination?
-- Was the amount exact, partial, split, or overfilled?
-- Was the movement unrelated?
-- Was there an exception that needs review?
+## What Decimal Is Not
 
-Proof generation turns that internal verification into something a finance or operator team can export — a deterministic JSON packet whose digest is a SHA-256 of the canonical representation.
+Decimal is not currently:
 
-## The Product Promise
+- A bank.
+- A fiat on/off-ramp.
+- A payroll compliance system.
+- A custody provider.
+- A full ERP/AP suite.
+- A generic wallet explorer.
+- A protocol.
 
-The one-line promise:
-
-```text
-Decimal starts from a payout intent, controls the workflow, observes Solana,
-reconciles settlement, and produces proof — deterministically.
-```
-
-It is not just a wallet watcher.
-
-A wallet watcher says:
+Decimal is currently closest to:
 
 ```text
-This wallet had activity.
+Stablecoin operations control plane + reconciliation + proof layer,
+with Squads-backed treasury control.
 ```
 
-Decimal says:
+## What Feels Real Now
+
+The strongest current product story is:
 
 ```text
-This payment was intended, approved under policy, signed once as a batch,
-observed on-chain, matched to intent, and packaged as a verifiable receipt.
+Create org -> create personal wallet -> create Squads treasury ->
+invite members -> add members / set threshold through Squads ->
+create payment/collection intent -> reconcile settlement -> export proof.
 ```
 
-For full customer-facing positioning, copy, and the narrative the landing page is built from, see `landing-page-content.md` at the repo root. For brand direction (color, typography, voice, dual-theme tokens), see `brand.md`.
+The weakest current product story is payment execution through Squads. Membership and config governance exist, but outgoing payments are not yet routed through Squads vault proposals.
 
-## What The System Currently Does Well
+## Product Direction
 
-- Registers treasury wallets with live Solana balances (USDC + SOL + USD via Binance SOLUSDT).
-- Creates destinations with trust states (`unreviewed`, `trusted`, `restricted`, `blocked`) and optional counterparty tags.
-- Creates payment requests manually and from CSV (idempotent by fingerprint).
-- Groups payment requests into payment runs (batches).
-- Creates payment orders as control-plane objects.
-- Applies approval policy before a payment becomes executable.
-- Prepares Solana USDC execution packets.
-- Supports browser-wallet signing through the frontend (Phantom, Solflare, etc.).
-- Records submitted transaction signatures.
-- Observes Solana through Yellowstone.
-- Reconstructs USDC transfers and payments.
-- Matches observed settlement against expected payments (exact / split / partial / overfill).
-- Creates and updates exceptions.
-- Exports deterministic proof packets.
-- Exposes a session-authenticated API surface with OpenAPI and idempotent mutations.
-- Provides focused operational health and reconciliation endpoints.
-- Ships an institutional-grade frontend with dual light/dark themes, batch-expandable tables, and a unified `--ax-*` token system.
-
-## What The System Does Not Fully Do Yet
-
-- It is not a complete AP system.
-- It is not a complete payroll system.
-- It is not a custody system. It does not manage private keys.
-- It does not yet deeply integrate with Squads or another multisig proposal system.
-- It does not yet have mature production auth, roles, org administration, billing, or deployment posture.
-- It does not yet have machine auth or a validated agent runtime.
-- It does not yet have public landing / marketing assets shipped (the brief lives in `landing-page-content.md`).
-
-## Why The Current Product Can Feel Abstract
-
-The backend has strong control and verification, but the entry point is still mostly manual: a human has to decide to enter a payment request or import a CSV.
-
-In a mature product, users should arrive from their real workflow:
-
-- "I have a payroll CSV."
-- "I have a vendor payout list."
-- "I have a DAO contributor batch."
-- "I have a payment order from another system."
-- "An agent detected an obligation and created a request."
-
-Decimal now has the primitives to support those workflows; more product work is needed to make the entry layer feel natural.
-
-## Mental Model For Future Work
-
-Every feature should strengthen one of these paths:
+The most important near-term direction is:
 
 ```text
-Input → Control → Execution → Verification → Proof
+Approved Decimal payment order
+  -> Squads vault transaction proposal
+  -> Squads approvals
+  -> Squads execution
+  -> Yellowstone observation
+  -> signature-aware reconciliation
+  -> proof packet with governance evidence
 ```
 
-Avoid features that only add another table without making that path clearer or more deterministic.
+This path makes Decimal feel like it actually runs treasury operations rather than only observing them.
 
-Useful questions before adding a feature:
+## Feature Test
 
-- Does this make it easier to create real payment intent?
-- Does this make payment approval / control safer?
+Before adding any feature, ask:
+
+- Does this make treasury control safer?
 - Does this make execution more trustworthy?
 - Does this make reconciliation more deterministic?
-- Does this make proof more useful to a human or agent?
-- Does this reduce operational ambiguity?
+- Does this make proof more valuable?
+- Does this reduce ambiguity for a human or future agent?
 
-If the answer to all six is "no," build something else.
+If not, it is probably not priority work.

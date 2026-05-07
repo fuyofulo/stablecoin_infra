@@ -32,7 +32,7 @@ Expected payments come from Postgres:
 - Source wallet/token account.
 - Expected amount.
 - Submitted signatures.
-- Workspace ownership.
+- Organization ownership.
 
 The worker fetches this through the API matching index. For collections, the index also carries `expected_source_wallet_address` populated from the linked `CollectionSource` (or from the denormalized `payerWalletAddress` on the `CollectionRequest`).
 
@@ -55,7 +55,7 @@ The matching index is the bridge from API to worker.
 
 It contains the currently relevant matching context:
 
-- workspace IDs
+- organization IDs
 - watched wallet addresses
 - watched token accounts
 - destinations
@@ -99,7 +99,7 @@ Stream broad enough USDC activity
 The important principle:
 
 ```text
-Do not store the whole world. Store relevant observed data for watched workspaces/signatures.
+Do not store the whole world. Store relevant observed data for watched organizations/signatures.
 ```
 
 ## Signature-First Matching
@@ -129,7 +129,7 @@ Collections add one extra constraint that payouts do not have. The function `req
 
 ```rust
 fn request_matches_observed_source(
-    request: &WorkspaceTransferRequestMatch,
+    request: &OrganizationTransferRequestMatch,
     observed_source_wallet: Option<&str>,
 ) -> bool {
     if request.request_type != "collection_request" {
@@ -324,4 +324,3 @@ Negative label results should be cached or suppressed.
 ### Reorgs / Finality
 
 The current docs do not prove a mature finality/reorg strategy. Production hardening should define commitment levels, replay behavior, and idempotent ClickHouse writes.
-

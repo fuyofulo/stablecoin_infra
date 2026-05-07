@@ -98,7 +98,7 @@ Subscribed to updates! Waiting for data...
 Matching index refreshed to version 2.
 ```
 
-`Matching index refreshed` means the worker reloaded current workspace matching context from the API.
+`Matching index refreshed` means the worker reloaded current organization matching context from the API.
 
 This is expected when:
 
@@ -220,7 +220,7 @@ It writes:
 - `settlement_matches`
 - `exceptions`
 
-## Workspace Registry Cache
+## Organization Registry Cache
 
 Control-plane matching context is cached in the worker.
 
@@ -302,7 +302,7 @@ Check:
 
 ### Why are there repeated unknown-address logs?
 
-Unknown-address handling should stay local to the workspace registry and reconciliation classifier. The removed Orb label resolver should not be reintroduced in the hot path unless there is a concrete product need and a negative cache.
+Unknown-address handling should stay local to the organization registry and reconciliation classifier. The removed Orb label resolver should not be reintroduced in the hot path unless there is a concrete product need and a negative cache.
 
 ### Why is `from_slot` erroring?
 
