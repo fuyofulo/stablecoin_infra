@@ -10,19 +10,19 @@ PSQL_QUIET := PGOPTIONS='-c client_min_messages=warning' psql -v ON_ERROR_STOP=1
 NETWORK_SELECTOR := $(strip $(filter devnet mainnet,$(MAKECMDGOALS)))
 
 infra-up:
-	set -euo pipefail && docker compose up -d postgres && $(MAKE) sync-postgres-schema
+	set -euo pipefail && docker compose up -d --remove-orphans postgres && $(MAKE) sync-postgres-schema
 
 sync-postgres-schema:
 	set -euo pipefail && \
-	docker compose up -d postgres && \
+	docker compose up -d --remove-orphans postgres && \
 	docker compose exec -T postgres sh -lc "$(PSQL_QUIET) -U usdc_ops -d usdc_ops -f /docker-entrypoint-initdb.d/001-control-plane.sql" >/dev/null
 
 infra-down:
-	set -euo pipefail && docker compose down
+	set -euo pipefail && docker compose down --remove-orphans
 
 reset-data:
 	set -euo pipefail && \
-	docker compose up -d postgres && \
+	docker compose up -d --remove-orphans postgres && \
 	docker compose exec -T postgres sh -lc "$(PSQL_QUIET) -U usdc_ops -d usdc_ops -c \"TRUNCATE TABLE auth_sessions, wallet_challenges, user_wallets, organization_memberships, collection_request_events, collection_requests, collection_runs, collection_sources, transfer_requests, treasury_wallets, organizations, users RESTART IDENTITY CASCADE;\"" >/dev/null && \
 	echo "Application data cleared from Postgres."
 
@@ -57,7 +57,7 @@ test: test-api test-frontend
 test-api:
 	set -euo pipefail && \
 	export DATABASE_URL="$${DATABASE_URL:-$(POSTGRES_URL)}" && \
-	docker compose up -d postgres && \
+	docker compose up -d --remove-orphans postgres && \
 	docker compose exec -T postgres sh -lc "$(PSQL_QUIET) -U usdc_ops -d usdc_ops -f /docker-entrypoint-initdb.d/001-control-plane.sql" >/dev/null && \
 	cd api && \
 	npm run prisma:generate >/dev/null && \
@@ -137,7 +137,7 @@ reset-prod-data:
 backup-db:
 	set -euo pipefail && \
 	mkdir -p backups && \
-	docker compose up -d postgres >/dev/null && \
+	docker compose up -d --remove-orphans postgres >/dev/null && \
 	OUT="backups/usdc_ops-$$(date +%Y%m%d-%H%M%S).sql" && \
 	docker compose exec -T postgres pg_dump -U usdc_ops -d usdc_ops --clean --if-exists --no-owner > "$$OUT" && \
 	echo "Backup written to $$OUT ($$(du -h "$$OUT" | cut -f1))"
@@ -146,7 +146,7 @@ restore-db:
 	set -euo pipefail && \
 	if [[ -z "$${FILE:-}" ]]; then echo "Usage: make restore-db FILE=backups/<name>.sql"; exit 1; fi && \
 	if [[ ! -f "$${FILE}" ]]; then echo "File not found: $${FILE}"; exit 1; fi && \
-	docker compose up -d postgres >/dev/null && \
+	docker compose up -d --remove-orphans postgres >/dev/null && \
 	docker compose exec -T postgres psql -U usdc_ops -d usdc_ops < "$${FILE}" >/dev/null && \
 	echo "Restored from $${FILE}"
 
