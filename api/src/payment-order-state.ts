@@ -1,6 +1,5 @@
 export const PAYMENT_ORDER_STATES = [
   'draft',
-  'pending_approval',
   'approved',
   'ready',
   'proposed',

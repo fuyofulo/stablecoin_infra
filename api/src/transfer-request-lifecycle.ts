@@ -1,8 +1,6 @@
 export const REQUEST_STATUSES = [
   'draft',
   'submitted',
-  'pending_approval',
-  'escalated',
   'approved',
   'ready_for_execution',
   'submitted_onchain',
@@ -34,7 +32,7 @@ export const ACTIVE_MATCHING_REQUEST_STATUSES = [
 
 export const REQUEST_DISPLAY_STATES = ['pending', 'matched', 'partial', 'exception'] as const;
 export type RequestDisplayState = (typeof REQUEST_DISPLAY_STATES)[number];
-export const APPROVAL_STATES = ['draft', 'submitted', 'pending_approval', 'escalated', 'approved', 'closed', 'rejected'] as const;
+export const APPROVAL_STATES = ['draft', 'submitted', 'approved', 'closed', 'rejected'] as const;
 export type ApprovalState = (typeof APPROVAL_STATES)[number];
 export const EXECUTION_STATES = [
   'not_started',
@@ -53,9 +51,7 @@ export type ExceptionAction = (typeof EXCEPTION_ACTIONS)[number];
 
 const REQUEST_STATUS_TRANSITIONS: Readonly<Record<RequestStatus, readonly RequestStatus[]>> = {
   draft: ['submitted'],
-  submitted: ['pending_approval', 'approved'],
-  pending_approval: ['approved', 'rejected', 'escalated'],
-  escalated: ['approved', 'rejected'],
+  submitted: ['approved'],
   approved: ['ready_for_execution'],
   ready_for_execution: ['submitted_onchain'],
   submitted_onchain: ['observed'],
@@ -70,8 +66,6 @@ const REQUEST_STATUS_TRANSITIONS: Readonly<Record<RequestStatus, readonly Reques
 const USER_ALLOWED_REQUEST_TRANSITIONS: Readonly<Record<RequestStatus, readonly RequestStatus[]>> = {
   draft: ['submitted'],
   submitted: [],
-  pending_approval: [],
-  escalated: [],
   approved: [],
   ready_for_execution: [],
   submitted_onchain: [],
@@ -114,10 +108,6 @@ export function deriveApprovalState(requestStatus: string): ApprovalState {
       return 'draft';
     case 'submitted':
       return 'submitted';
-    case 'pending_approval':
-      return 'pending_approval';
-    case 'escalated':
-      return 'escalated';
     case 'rejected':
       return 'rejected';
     case 'closed':
@@ -242,10 +232,6 @@ export function getAvailableOperatorTransitions(args: {
   const { requestStatus, requestDisplayState } = args;
 
   if (requestStatus === 'closed' || requestStatus === 'rejected') {
-    return [] as RequestStatus[];
-  }
-
-  if (requestStatus === 'pending_approval' || requestStatus === 'escalated') {
     return [] as RequestStatus[];
   }
 

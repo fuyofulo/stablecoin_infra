@@ -12,7 +12,6 @@ test('payment run state derivation is deterministic and terminal-aware', () => {
   assert.equal(isPaymentRunState('settled'), true);
   assert.equal(isPaymentRunState('unknown'), false);
   assert.equal(derivePaymentRunStateFromRows('closed', [{ derivedState: 'exception' }]), 'closed');
-  assert.equal(derivePaymentRunStateFromRows('draft', [{ derivedState: 'pending_approval' }]), 'pending_approval');
   assert.equal(derivePaymentRunStateFromRows('draft', [{ derivedState: 'approved' }, { derivedState: 'ready_for_execution' }]), 'ready_for_execution');
   assert.equal(derivePaymentRunStateFromRows('draft', [{ derivedState: 'settled' }, { derivedState: 'closed' }]), 'settled');
   assert.equal(derivePaymentRunStateFromRows('submitted_onchain', [{ derivedState: 'ready_for_execution' }]), 'submitted_onchain');

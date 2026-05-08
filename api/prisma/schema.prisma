@@ -23,8 +23,6 @@ model Organization {
   destinations Destination[]
   collectionSources CollectionSource[]
   transferRequests TransferRequest[]
-  approvalPolicy ApprovalPolicy?
-  approvalDecisions ApprovalDecision[]
   executionRecords ExecutionRecord[]
   transferRequestEvents TransferRequestEvent[]
   transferRequestNotes TransferRequestNote[]
@@ -58,7 +56,6 @@ model User {
   walletChallenges           WalletChallenge[]
   transferRequestsRequested  TransferRequest[]        @relation("TransferRequestRequestedByUser")
   transferRequestNotes       TransferRequestNote[]
-  approvalDecisions          ApprovalDecision[]
   executionRecords           ExecutionRecord[]        @relation("ExecutionRecordExecutorUser")
   paymentOrdersCreated       PaymentOrder[]           @relation("PaymentOrderCreatedByUser")
   decimalProposalsCreated    DecimalProposal[]        @relation("DecimalProposalCreatedByUser")
@@ -355,7 +352,6 @@ model TransferRequest {
   sourceTreasuryWallet   TreasuryWallet?        @relation("TransferRequestSourceWallet", fields: [sourceTreasuryWalletId], references: [treasuryWalletId], onDelete: SetNull)
   destination            Destination            @relation(fields: [destinationId], references: [destinationId], onDelete: Restrict)
   requestedByUser        User?                  @relation("TransferRequestRequestedByUser", fields: [requestedByUserId], references: [userId], onDelete: SetNull)
-  approvalDecisions      ApprovalDecision[]
   executionRecords       ExecutionRecord[]
   events                 TransferRequestEvent[]
   notes                  TransferRequestNote[]
@@ -628,41 +624,6 @@ model ExecutionRecord {
   @@index([organizationId, createdAt(sort: Desc)])
   @@index([transferRequestId, createdAt(sort: Desc)])
   @@map("execution_records")
-}
-
-model ApprovalPolicy {
-  approvalPolicyId  String             @id @default(dbgenerated("gen_random_uuid()")) @map("approval_policy_id") @db.Uuid
-  organizationId       String             @unique @map("organization_id") @db.Uuid
-  policyName        String             @map("policy_name")
-  isActive          Boolean            @default(true) @map("is_active")
-  ruleJson          Json               @default("{}") @map("rule_json")
-  createdAt         DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt         DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
-  organization           Organization          @relation(fields: [organizationId], references: [organizationId], onDelete: Cascade)
-  approvalDecisions ApprovalDecision[]
-
-  @@map("approval_policies")
-}
-
-model ApprovalDecision {
-  approvalDecisionId String          @id @default(dbgenerated("gen_random_uuid()")) @map("approval_decision_id") @db.Uuid
-  approvalPolicyId   String?         @map("approval_policy_id") @db.Uuid
-  transferRequestId  String          @map("transfer_request_id") @db.Uuid
-  organizationId        String          @map("organization_id") @db.Uuid
-  actorUserId        String?         @map("actor_user_id") @db.Uuid
-  actorType          String          @default("user") @map("actor_type")
-  action             String
-  comment            String?
-  payloadJson        Json            @default("{}") @map("payload_json")
-  createdAt          DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
-  approvalPolicy     ApprovalPolicy? @relation(fields: [approvalPolicyId], references: [approvalPolicyId], onDelete: SetNull)
-  transferRequest    TransferRequest @relation(fields: [transferRequestId], references: [transferRequestId], onDelete: Cascade)
-  organization           Organization       @relation(fields: [organizationId], references: [organizationId], onDelete: Cascade)
-  actorUser          User?           @relation(fields: [actorUserId], references: [userId], onDelete: SetNull)
-
-  @@index([organizationId, createdAt(sort: Desc)])
-  @@index([transferRequestId, createdAt(sort: Asc)])
-  @@map("approval_decisions")
 }
 
 model TransferRequestEvent {

@@ -12,7 +12,7 @@ const organizationParamsSchema = z.object({
 
 const auditLogQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(250).default(100),
-  entityType: z.enum(['payment_order', 'transfer_request', 'approval', 'execution']).optional(),
+  entityType: z.enum(['payment_order', 'transfer_request', 'execution']).optional(),
 });
 
 opsRouter.get('/organizations/:organizationId/members', async (req, res, next) => {

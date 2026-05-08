@@ -3,7 +3,6 @@ import { prisma } from './prisma.js';
 export type OrganizationAuditEntityType =
   | 'payment_order'
   | 'transfer_request'
-  | 'approval'
   | 'execution';
 
 type AuditItem = {
@@ -31,7 +30,6 @@ export async function listOrganizationAuditLog(args: {
   const [
     paymentOrderEvents,
     transferRequestEvents,
-    approvalDecisions,
     executionRecords,
   ] = await Promise.all([
     !args.entityType || args.entityType === 'payment_order'
@@ -44,22 +42,6 @@ export async function listOrganizationAuditLog(args: {
     !args.entityType || args.entityType === 'transfer_request'
       ? prisma.transferRequestEvent.findMany({
           where: { organizationId: args.organizationId },
-          orderBy: { createdAt: 'desc' },
-          take: limit,
-        })
-      : [],
-    !args.entityType || args.entityType === 'approval'
-      ? prisma.approvalDecision.findMany({
-          where: { organizationId: args.organizationId },
-          include: {
-            actorUser: {
-              select: {
-                userId: true,
-                email: true,
-                displayName: true,
-              },
-            },
-          },
           orderBy: { createdAt: 'desc' },
           take: limit,
         })
@@ -121,25 +103,6 @@ export async function listOrganizationAuditLog(args: {
         linkedTransferIds: event.linkedTransferIds,
       },
       createdAt: event.createdAt,
-    })),
-    ...approvalDecisions.map((decision) => ({
-      auditId: `approval_decision:${decision.approvalDecisionId}`,
-      organizationId: decision.organizationId,
-      entityType: 'approval' as const,
-      entityId: decision.transferRequestId,
-      eventType: `approval_${decision.action}`,
-      actorType: decision.actorType,
-      actorId: decision.actorUserId,
-      actorUser: decision.actorUser,
-      beforeState: null,
-      afterState: decision.action,
-      linkedSignature: null,
-      payloadJson: {
-        comment: decision.comment,
-        approvalPolicyId: decision.approvalPolicyId,
-        payloadJson: decision.payloadJson,
-      },
-      createdAt: decision.createdAt,
     })),
     ...executionRecords.map((record) => ({
       auditId: `execution_record:${record.executionRecordId}`,

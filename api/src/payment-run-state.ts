@@ -1,6 +1,5 @@
 export const PAYMENT_RUN_STATES = [
   'draft',
-  'pending_approval',
   'approved',
   'ready',
   'proposed',
@@ -58,9 +57,6 @@ export function derivePaymentRunStateFromRows(
   }
   if (actionableOrders.some((order) => order.derivedState === 'execution_recorded')) {
     return 'execution_recorded';
-  }
-  if (actionableOrders.some((order) => order.derivedState === 'pending_approval')) {
-    return 'pending_approval';
   }
   if (actionableOrders.every((order) => ['approved', 'ready_for_execution'].includes(order.derivedState))) {
     return 'ready_for_execution';

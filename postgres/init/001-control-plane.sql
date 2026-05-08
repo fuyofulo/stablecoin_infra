@@ -204,8 +204,6 @@ BEGIN
     'transfer_request_notes',
     'destinations',
     'collection_sources',
-    'approval_policies',
-    'approval_decisions',
     'execution_records',
     'payment_runs',
     'payment_orders',
@@ -366,31 +364,6 @@ CREATE TABLE IF NOT EXISTS collection_sources
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE (organization_id, wallet_address),
   UNIQUE (organization_id, label)
-);
-
-CREATE TABLE IF NOT EXISTS approval_policies
-(
-  approval_policy_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  organization_id UUID NOT NULL UNIQUE REFERENCES organizations(organization_id) ON DELETE CASCADE,
-  policy_name TEXT NOT NULL,
-  is_active BOOLEAN NOT NULL DEFAULT TRUE,
-  rule_json JSONB NOT NULL DEFAULT '{}'::jsonb,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS approval_decisions
-(
-  approval_decision_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  approval_policy_id UUID REFERENCES approval_policies(approval_policy_id) ON DELETE SET NULL,
-  transfer_request_id UUID NOT NULL REFERENCES transfer_requests(transfer_request_id) ON DELETE CASCADE,
-  organization_id UUID NOT NULL REFERENCES organizations(organization_id) ON DELETE CASCADE,
-  actor_user_id UUID REFERENCES users(user_id) ON DELETE SET NULL,
-  actor_type TEXT NOT NULL DEFAULT 'user',
-  action TEXT NOT NULL,
-  comment TEXT,
-  payload_json JSONB NOT NULL DEFAULT '{}'::jsonb,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS execution_records
@@ -648,8 +621,6 @@ ALTER TABLE transfer_requests
     status IN (
       'draft',
       'submitted',
-      'pending_approval',
-      'escalated',
       'approved',
       'ready_for_execution',
       'submitted_onchain',
@@ -678,22 +649,6 @@ ALTER TABLE transfer_request_events
     event_source IN ('user', 'system')
   );
 
-ALTER TABLE approval_decisions
-  DROP CONSTRAINT IF EXISTS chk_approval_decisions_actor_type;
-
-ALTER TABLE approval_decisions
-  ADD CONSTRAINT chk_approval_decisions_actor_type CHECK (
-    actor_type IN ('user', 'system')
-  );
-
-ALTER TABLE approval_decisions
-  DROP CONSTRAINT IF EXISTS chk_approval_decisions_action;
-
-ALTER TABLE approval_decisions
-  ADD CONSTRAINT chk_approval_decisions_action CHECK (
-    action IN ('routed_for_approval', 'auto_approved', 'approve', 'reject', 'escalate')
-  );
-
 ALTER TABLE execution_records
   DROP CONSTRAINT IF EXISTS chk_execution_records_state;
 
@@ -716,7 +671,6 @@ ALTER TABLE payment_runs
   ADD CONSTRAINT chk_payment_runs_state CHECK (
     state IN (
       'draft',
-      'pending_approval',
       'approved',
       'ready',
       'proposed',
@@ -743,7 +697,6 @@ ALTER TABLE payment_orders
   ADD CONSTRAINT chk_payment_orders_state CHECK (
     state IN (
       'draft',
-      'pending_approval',
       'approved',
       'ready',
       'proposed',
@@ -826,14 +779,6 @@ ALTER TABLE transfer_request_events
     event_source IN ('user', 'system', 'api_key')
   );
 
-ALTER TABLE approval_decisions
-  DROP CONSTRAINT IF EXISTS chk_approval_decisions_actor_type;
-
-ALTER TABLE approval_decisions
-  ADD CONSTRAINT chk_approval_decisions_actor_type CHECK (
-    actor_type IN ('user', 'system', 'api_key')
-  );
-
 DROP TABLE IF EXISTS workspace_objects CASCADE;
 DROP TABLE IF EXISTS workspace_labels CASCADE;
 DROP TABLE IF EXISTS exception_notes CASCADE;
@@ -841,6 +786,12 @@ DROP TABLE IF EXISTS exception_states CASCADE;
 DROP TABLE IF EXISTS global_entity_addresses CASCADE;
 DROP TABLE IF EXISTS global_entities CASCADE;
 DROP TABLE IF EXISTS address_labels CASCADE;
+-- Pre-Squads internal-approval tables. Squads multisig is the on-chain
+-- approval ceremony — Decimal no longer routes payments through an internal
+-- inbox. Drop them so dev databases that bootstrapped against the older
+-- schema get cleaned up automatically.
+DROP TABLE IF EXISTS approval_decisions CASCADE;
+DROP TABLE IF EXISTS approval_policies CASCADE;
 CREATE INDEX IF NOT EXISTS idx_memberships_organization_id ON organization_memberships(organization_id);
 CREATE INDEX IF NOT EXISTS idx_memberships_user_id ON organization_memberships(user_id);
 CREATE INDEX IF NOT EXISTS idx_organization_invites_org_status_created_at
@@ -890,12 +841,6 @@ CREATE INDEX IF NOT EXISTS idx_collection_sources_counterparty_created_at
   ON collection_sources(counterparty_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_collection_sources_wallet_address
   ON collection_sources(wallet_address);
-CREATE INDEX IF NOT EXISTS idx_approval_policies_organization_id
-  ON approval_policies(organization_id);
-CREATE INDEX IF NOT EXISTS idx_approval_decisions_org_created_at
-  ON approval_decisions(organization_id, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_approval_decisions_request_created_at
-  ON approval_decisions(transfer_request_id, created_at ASC);
 CREATE INDEX IF NOT EXISTS idx_execution_records_org_created_at
   ON execution_records(organization_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_execution_records_request_created_at
@@ -1027,11 +972,6 @@ FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 DROP TRIGGER IF EXISTS trg_collection_sources_updated_at ON collection_sources;
 CREATE TRIGGER trg_collection_sources_updated_at
 BEFORE UPDATE ON collection_sources
-FOR EACH ROW EXECUTE FUNCTION set_updated_at();
-
-DROP TRIGGER IF EXISTS trg_approval_policies_updated_at ON approval_policies;
-CREATE TRIGGER trg_approval_policies_updated_at
-BEFORE UPDATE ON approval_policies
 FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 DROP TRIGGER IF EXISTS trg_execution_records_updated_at ON execution_records;
