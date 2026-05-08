@@ -4,7 +4,6 @@ export const EXECUTION_RECORD_STATES = [
   'ready_for_execution',
   'submitted_onchain',
   'broadcast_failed',
-  'observed',
   'settled',
   'execution_exception',
 ] as const;

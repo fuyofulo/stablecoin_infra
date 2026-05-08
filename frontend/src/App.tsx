@@ -28,7 +28,6 @@ import type {
   AuthenticatedSession,
   Counterparty,
   Destination,
-  PaymentExecutionPacket,
   PaymentOrder,
   PaymentOrderState,
   PaymentRequest,
@@ -63,7 +62,6 @@ import {
   type ExecutionBucket,
   humanizeExceptionReason,
   isPaymentOrderState,
-  nextPaymentAction,
   paymentExecutionBucket,
   statusToneForPayment,
   toneForGenericState,
@@ -74,7 +72,6 @@ import {
   DataTableShell,
   Drawer,
   EmptyPanel,
-  MetricTile,
   Modal,
   PanelHeader,
   Tabs,
@@ -2161,191 +2158,6 @@ function AddressBookPage({ session }: { session: AuthenticatedSession }) {
   );
 }
 
-function PaymentTable({
-  organizationId,
-  paymentOrders,
-}: {
-  organizationId: string;
-  paymentOrders: PaymentOrder[];
-}) {
-  if (!paymentOrders.length) {
-    return <EmptyState title="No payments here" description="There are no payments for this view yet." />;
-  }
-
-  return (
-    <DataTableShell>
-      <div className="data-table-row data-table-head data-table-row-payments-ext data-table-sticky-head">
-        <span>Recipient</span>
-        <span>Amount</span>
-        <span>Source</span>
-        <span>Destination</span>
-        <span>Reference</span>
-        <span>Due</span>
-        <span>Next action</span>
-        <span>Status</span>
-      </div>
-      {paymentOrders.map((order) => (
-        <Link className="data-table-row data-table-link data-table-row-payments-ext" key={order.paymentOrderId} to={`/organizations/${organizationId}/payments/${order.paymentOrderId}`}>
-          <span>
-            <strong>{order.destination.label}</strong>
-            <small>{shortenAddress(order.paymentOrderId, 8, 6)}</small>
-          </span>
-          <span>{formatRawUsdcCompact(order.amountRaw)} {assetSymbol(order.asset)}</span>
-          <span>
-            {order.sourceTreasuryWallet?.displayName
-              ?? (order.sourceTreasuryWallet?.address ? <AddressLink value={order.sourceTreasuryWallet.address} /> : 'N/A')}
-          </span>
-          <span>{order.destination.label}</span>
-          <span>{order.externalReference ?? order.invoiceNumber ?? order.memo ?? 'N/A'}</span>
-          <span className="cell-due-compact">{order.dueAt ? formatDateCompact(order.dueAt) : 'N/A'}</span>
-          <span>{nextPaymentAction(order)}</span>
-          <span><StatusBadge tone={statusToneForPayment(order.derivedState)}>{displayPaymentStatus(order.derivedState)}</StatusBadge></span>
-        </Link>
-      ))}
-    </DataTableShell>
-  );
-}
-
-function UnifiedPaymentsTable({
-  rows,
-}: {
-  rows: Array<{
-    kind: 'payment' | 'run';
-    id: string;
-    name: string;
-    amountLabel: string;
-    sourceLabel: string;
-    refLabel: string;
-    stateLabel: string;
-    tone: 'success' | 'warning' | 'danger' | 'neutral';
-    createdAt: string;
-    to: string;
-  }>;
-}) {
-  return (
-    <DataTableShell>
-      <div className="data-table-row data-table-head data-table-row-unified-ext data-table-sticky-head">
-        <span>Type</span>
-        <span>Name</span>
-        <span>Amount</span>
-        <span>Source</span>
-        <span>Reference / rows</span>
-        <span>Status</span>
-        <span>Created</span>
-      </div>
-      {rows.map((row) => (
-        <Link className="data-table-row data-table-link data-table-row-unified-ext" key={`${row.kind}-${row.id}`} to={row.to}>
-          <span><StatusBadge tone="neutral">{row.kind === 'run' ? 'batch' : 'individual'}</StatusBadge></span>
-          <span><strong>{row.name}</strong></span>
-          <span>{row.amountLabel}</span>
-          <span>{row.sourceLabel}</span>
-          <span>{row.refLabel}</span>
-          <span><StatusBadge tone={row.tone}>{row.stateLabel}</StatusBadge></span>
-          <span className="cell-due-compact">{formatDateCompact(row.createdAt)}</span>
-        </Link>
-      ))}
-    </DataTableShell>
-  );
-}
-
-function RunPaymentsTable({
-  organizationId,
-  paymentOrders,
-  onExportProof,
-  exportPending,
-}: {
-  organizationId: string;
-  paymentOrders: PaymentOrder[];
-  onExportProof: (order: PaymentOrder) => void;
-  exportPending?: boolean;
-}) {
-  if (!paymentOrders.length) {
-    return <EmptyState title="No payments here" description="There are no payments for this run yet." />;
-  }
-  return (
-    <DataTableShell>
-      <div className="data-table-row data-table-head data-table-row-run-payments-ext data-table-sticky-head">
-        <span>Recipient</span>
-        <span>Amount</span>
-        <span>Source</span>
-        <span>Destination</span>
-        <span>Reference</span>
-        <span>Due</span>
-        <span>Status</span>
-        <span>Export proof</span>
-      </div>
-      {paymentOrders.map((order) => (
-        <div className="data-table-row data-table-row-run-payments-ext" key={order.paymentOrderId}>
-          <span>
-            <Link to={`/organizations/${organizationId}/payments/${order.paymentOrderId}`}>
-              <strong>{order.destination.label}</strong>
-            </Link>
-            <small>{shortenAddress(order.paymentOrderId, 8, 6)}</small>
-          </span>
-          <span>{formatRawUsdcCompact(order.amountRaw)} {assetSymbol(order.asset)}</span>
-          <span>
-            {order.sourceTreasuryWallet?.displayName
-              ?? (order.sourceTreasuryWallet?.address ? <AddressLink value={order.sourceTreasuryWallet.address} /> : 'N/A')}
-          </span>
-          <span>{order.destination.label}</span>
-          <span>{order.externalReference ?? order.invoiceNumber ?? order.memo ?? 'N/A'}</span>
-          <span className="cell-due-compact">{order.dueAt ? formatDateCompact(order.dueAt) : 'N/A'}</span>
-          <span><StatusBadge tone={statusToneForPayment(order.derivedState)}>{displayPaymentStatus(order.derivedState)}</StatusBadge></span>
-          <span>
-            <button className="button button-secondary button-small" disabled={exportPending} onClick={() => onExportProof(order)} type="button">
-              Export
-            </button>
-          </span>
-        </div>
-      ))}
-    </DataTableShell>
-  );
-}
-
-function ActionPaymentTable({
-  organizationId,
-  paymentOrders,
-  actionHeader,
-  emptyTitle,
-  emptyDescription,
-  reasonHeader,
-  renderReason,
-  renderAction,
-}: {
-  organizationId: string;
-  paymentOrders: PaymentOrder[];
-  actionHeader: string;
-  emptyTitle: string;
-  emptyDescription: string;
-  reasonHeader?: string;
-  renderReason?: (order: PaymentOrder) => ReactNode;
-  renderAction: (order: PaymentOrder) => ReactNode;
-}) {
-  if (!paymentOrders.length) {
-    return <EmptyState title={emptyTitle} description={emptyDescription} />;
-  }
-  return (
-    <DataTableShell>
-      <div className={`data-table-row data-table-head ${reasonHeader ? 'data-table-row-actions-reason' : 'data-table-row-actions'}`}>
-        <span>Recipient</span><span>Amount</span><span>Destination</span><span>Reference</span>{reasonHeader ? <span>{reasonHeader}</span> : null}<span>Status</span><span>{actionHeader}</span>
-      </div>
-      {paymentOrders.map((order) => (
-        <div className={`data-table-row ${reasonHeader ? 'data-table-row-actions-reason' : 'data-table-row-actions'}`} key={order.paymentOrderId}>
-          <Link to={`/organizations/${organizationId}/payments/${order.paymentOrderId}`}>
-            <strong>{order.destination.label}</strong>
-            <small>{shortenAddress(order.paymentOrderId, 8, 6)}</small>
-          </Link>
-          <span>{formatRawUsdcCompact(order.amountRaw)} {assetSymbol(order.asset)}</span>
-          <span>{order.destination.label}</span>
-          <span>{order.externalReference ?? order.invoiceNumber ?? order.memo ?? 'N/A'}</span>
-          {reasonHeader ? <span><small>{renderReason?.(order) ?? '—'}</small></span> : null}
-          <span><StatusBadge tone={statusToneForPayment(order.derivedState)}>{displayPaymentStatus(order.derivedState)}</StatusBadge></span>
-          <span>{renderAction(order)}</span>
-        </div>
-      ))}
-    </DataTableShell>
-  );
-}
 
 function PaymentRequestsTable({
   organizationId,
@@ -2398,81 +2210,6 @@ function PaymentRequestsTable({
   );
 }
 
-function PaymentRunsTable({ organizationId, runs }: { organizationId: string; runs: PaymentRun[] }) {
-  if (!runs.length) {
-    return <EmptyState title="No payment runs yet" description="Import a CSV batch to create a run." />;
-  }
-  return (
-    <DataTableShell>
-      <div className="data-table-row data-table-head data-table-row-runs-ext data-table-sticky-head">
-        <span>Run</span>
-        <span>Items</span>
-        <span>Total</span>
-        <span>Settled</span>
-        <span>Exc</span>
-        <span>In approval</span>
-        <span>Stage</span>
-        <span>Created</span>
-      </div>
-      {runs.map((run) => (
-        <Link className="data-table-row data-table-link data-table-row-runs-ext" key={run.paymentRunId} to={`/organizations/${organizationId}/runs/${run.paymentRunId}`}>
-          <span>
-            <strong className="run-table-name">{run.runName}</strong>
-          </span>
-          <span>{run.totals.orderCount}</span>
-          <span>{formatRawUsdcCompact(run.totals.totalAmountRaw)} USDC</span>
-          <span>
-            {run.totals.settledCount}/{run.totals.orderCount}
-          </span>
-          <span>{run.totals.exceptionCount}</span>
-          <span>{run.totals.pendingApprovalCount}</span>
-          <span><StatusBadge tone={statusToneForPayment(run.derivedState)}>{displayRunStatus(run.derivedState)}</StatusBadge></span>
-          <span className="cell-due-compact">{formatDateCompact(run.createdAt)}</span>
-        </Link>
-      ))}
-    </DataTableShell>
-  );
-}
-
-function PaymentRunProofTable({
-  organizationId,
-  runs,
-  onExport,
-  onPreview,
-  previewPending,
-}: {
-  organizationId: string;
-  runs: PaymentRun[];
-  onExport: (run: PaymentRun) => void;
-  onPreview?: (run: PaymentRun) => void;
-  previewPending?: boolean;
-}) {
-  if (!runs.length) return <EmptyState title="No payment runs yet" description="Import a CSV batch to create run-level proof." />;
-  return (
-    <DataTableShell>
-      <div className="data-table-row data-table-head data-table-row-runs">
-        <span>Run</span><span>Items</span><span>Total</span><span>Ready</span><span>State</span><span>Proof</span>
-      </div>
-      {runs.map((run) => (
-        <div className="data-table-row data-table-row-runs" key={run.paymentRunId}>
-          <Link to={`/organizations/${organizationId}/runs/${run.paymentRunId}`}><strong>{run.runName}</strong><small>{shortenAddress(run.paymentRunId, 8, 6)}</small></Link>
-          <span>{run.totals.orderCount}</span>
-          <span>{formatRawUsdcCompact(run.totals.totalAmountRaw)} USDC</span>
-          <span>{run.totals.readyCount}/{run.totals.orderCount}</span>
-          <span><StatusBadge tone={statusToneForPayment(run.derivedState)}>{displayRunStatus(run.derivedState)}</StatusBadge></span>
-          <span className="table-actions">
-            {onPreview ? (
-              <button className="button button-secondary button-small" disabled={previewPending} onClick={() => onPreview(run)} type="button">
-                Preview
-              </button>
-            ) : null}
-            <button className="button button-secondary button-small" onClick={() => onExport(run)} type="button">Export</button>
-          </span>
-        </div>
-      ))}
-    </DataTableShell>
-  );
-}
 
 function DestinationsTable({
   destinations,
@@ -2570,207 +2307,6 @@ function CounterpartiesTable({ counterparties, destinations }: { counterparties:
   );
 }
 
-function PaymentHero({ order }: { order: PaymentOrder }) {
-  const latestSignature = order.reconciliationDetail?.latestExecution?.submittedSignature
-    ?? order.reconciliationDetail?.match?.signature
-    ?? null;
-  const heroTime = order.reconciliationDetail?.latestExecution?.submittedAt ?? order.createdAt;
-  const heroTimeLabel = latestSignature ? 'Executed' : 'Requested';
-
-  return (
-    <section className="payment-hero">
-      <div className="payment-hero-amount">
-        <span>Amount</span>
-        <strong>{formatRawUsdcCompact(order.amountRaw)} {assetSymbol(order.asset)}</strong>
-      </div>
-      <div className="payment-hero-grid">
-        <HeroCell label="Signature">
-          {latestSignature ? <AddressLink value={latestSignature} kind="transaction" /> : <span>Not executed</span>}
-        </HeroCell>
-        <HeroCell label="From">
-          {order.sourceTreasuryWallet?.address ? <AddressLink value={order.sourceTreasuryWallet.address} /> : <span>Source not set</span>}
-        </HeroCell>
-        <HeroCell label="To">
-          {order.destination?.walletAddress ? <AddressLink value={order.destination.walletAddress} /> : <span>Destination unavailable</span>}
-        </HeroCell>
-        <HeroCell label="Time">
-          <span>{heroTimeLabel}</span>
-          <time title={formatTimestamp(heroTime)}>{formatRelativeTime(heroTime)}</time>
-        </HeroCell>
-      </div>
-    </section>
-  );
-}
-
-function ExecutionPanel({
-  latestSignature,
-  packet,
-  wallets,
-  selectedWalletId,
-  isPreparing,
-  isSigning,
-  manualSignature,
-  onManualSignatureChange,
-  onPrepare,
-  onSign,
-  onSelectWallet,
-  onAttachSignature,
-}: {
-  latestSignature: string | null;
-  packet: PaymentExecutionPacket | null;
-  wallets: BrowserWalletOption[];
-  selectedWalletId: string | undefined;
-  isPreparing: boolean;
-  isSigning: boolean;
-  manualSignature: string;
-  onManualSignatureChange: (value: string) => void;
-  onPrepare: () => void;
-  onSign: () => void;
-  onSelectWallet: (value: string | undefined) => void;
-  onAttachSignature: () => void;
-}) {
-  const needsPrepare = !packet;
-  return (
-    <div className="execution-stack">
-      {latestSignature ? (
-        <div className="notice notice-success">
-          Executed signature <AddressLink value={latestSignature} kind="transaction" />
-        </div>
-      ) : null}
-      {packet ? (
-        <div className="packet-box">
-          <InfoGrid
-            items={[
-              [
-                'From',
-                packet.source?.walletAddress ? (
-                  <>
-                    <AddressLink key="packet-from-wallet" value={packet.source.walletAddress} />{' '}
-                    // {safeShortAddress(packet.source?.tokenAccountAddress)}
-                  </>
-                ) : 'N/A',
-              ],
-              [
-                'To',
-                packet.destination?.walletAddress ? (
-                  <>
-                    {packet.destination.label} // <AddressLink key="packet-to-wallet" value={packet.destination.walletAddress} />
-                  </>
-                ) : `${packet.transfers?.length ?? 0} transfers`,
-              ],
-              ['Amount', `${formatRawUsdcCompact(packet.amountRaw)} ${packet.token?.symbol ?? 'USDC'}`],
-              ['Instructions', `${packet.instructions.length} Solana instruction(s)`],
-              ['Required signer', safeShortAddress(packet.signerWallet)],
-            ]}
-          />
-        </div>
-      ) : (
-        <p className="section-copy">Prepare the exact non-custodial transaction packet before signing.</p>
-      )}
-      <div className="action-cluster">
-        <button className={`button ${needsPrepare ? 'button-primary' : 'button-secondary'}`} disabled={isPreparing} onClick={onPrepare} type="button">
-          {isPreparing ? 'Preparing...' : 'Prepare payment packet'}
-        </button>
-      </div>
-      <label className="field">
-        Browser wallet
-        <WalletPicker wallets={wallets} selectedWalletId={selectedWalletId} onSelect={onSelectWallet} />
-      </label>
-      <button className="button button-primary" disabled={!packet || isSigning} onClick={onSign} type="button">
-        {isSigning ? 'Signing...' : 'Sign and submit with source wallet'}
-      </button>
-      <div className="manual-signature">
-        <label className="field">
-          Manual executed signature
-          <input value={manualSignature} onChange={(event) => onManualSignatureChange(event.target.value)} placeholder="Paste transaction signature" />
-        </label>
-        <button className="button button-secondary" onClick={onAttachSignature} type="button">
-          Attach evidence
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function RunExecutionPanel({
-  run,
-  packet,
-  wallets,
-  selectedWalletId,
-  isPreparing,
-  isSigning,
-  manualSignature,
-  onManualSignatureChange,
-  onPrepare,
-  onSign,
-  onSelectWallet,
-  onAttachSignature,
-}: {
-  run: PaymentRun;
-  packet: PaymentExecutionPacket | null;
-  wallets: BrowserWalletOption[];
-  selectedWalletId: string | undefined;
-  isPreparing: boolean;
-  isSigning: boolean;
-  manualSignature: string;
-  onManualSignatureChange: (value: string) => void;
-  onPrepare: () => void;
-  onSign: () => void;
-  onSelectWallet: (value: string | undefined) => void;
-  onAttachSignature: () => void;
-}) {
-  return (
-    <div className="execution-stack">
-      <InfoGrid items={[
-        ['Source', run.sourceTreasuryWallet ? walletLabel(run.sourceTreasuryWallet) : 'Not set'],
-        ['Ready', `${run.totals.readyCount}/${run.totals.orderCount}`],
-        ['Exceptions', String(run.totals.exceptionCount)],
-        ['Prepared instructions', packet ? String(packet.instructions.length) : 'Not prepared'],
-      ]} />
-      {packet ? (
-        <div className="packet-box">
-          <InfoGrid
-            items={[
-              ['Signer', safeShortAddress(packet.signerWallet)],
-              ['Transfers', String(packet.transfers?.length ?? 0)],
-              ['Amount', `${formatRawUsdcCompact(packet.amountRaw)} ${packet.token?.symbol ?? 'USDC'}`],
-              ['Instructions', String(packet.instructions.length)],
-            ]}
-          />
-        </div>
-      ) : null}
-      <div className="action-cluster">
-        <button className="button button-secondary" disabled={isPreparing} onClick={onPrepare} type="button">
-          {isPreparing ? 'Preparing...' : 'Prepare batch packet'}
-        </button>
-      </div>
-      <label className="field">
-        Browser wallet
-        <select value={selectedWalletId ?? ''} onChange={(event) => onSelectWallet(event.target.value || undefined)}>
-          <option value="">Auto-detect wallet</option>
-          {wallets.map((wallet) => (
-            <option key={wallet.id} value={wallet.id} disabled={!wallet.ready}>
-              {wallet.name}{wallet.address ? ` // ${shortenAddress(wallet.address)}` : ''}{wallet.ready ? '' : ' (unavailable)'}
-            </option>
-          ))}
-        </select>
-      </label>
-      <button className="button button-primary" disabled={!packet || isSigning} onClick={onSign} type="button">
-        {isSigning ? 'Signing...' : 'Sign and submit run'}
-      </button>
-      <div className="manual-signature">
-        <label className="field">
-          Manual executed signature
-          <input value={manualSignature} onChange={(event) => onManualSignatureChange(event.target.value)} placeholder="Paste transaction signature" />
-        </label>
-        <button className="button button-secondary" onClick={onAttachSignature} type="button">
-          Attach evidence
-        </button>
-      </div>
-    </div>
-  );
-}
-
 function WalletPicker({
   wallets,
   selectedWalletId,
@@ -2852,48 +2388,6 @@ function PageFrame({
   );
 }
 
-function WorkflowRail({
-  steps,
-}: {
-  steps: Array<{ label: string; subtext: string; state: 'pending' | 'current' | 'complete' | 'blocked' }>;
-}) {
-  return (
-    <section className="workflow-rail" aria-label="Payment workflow">
-      {steps.map((step) => (
-        <div className={`workflow-step workflow-step-${step.state}`} key={step.label}>
-          <span>{step.label}</span>
-          <strong>{step.subtext}</strong>
-        </div>
-      ))}
-    </section>
-  );
-}
-
-function RunProgressTracker({
-  steps,
-}: {
-  steps: Array<{ label: string; subtext: string; state: 'pending' | 'current' | 'complete' | 'blocked' }>;
-}) {
-  return (
-    <section className="run-progress" aria-label="Payment run progress">
-      {steps.map((step, index) => (
-        <div className="run-progress-step-wrap" key={step.label}>
-          <div className={`run-progress-step run-progress-step-${step.state}`}>
-            <div className="run-progress-row">
-              <span className={`run-progress-dot run-progress-dot-${step.state}`} aria-hidden />
-              {index < steps.length - 1 ? <span className={`run-progress-line run-progress-line-${step.state}`} aria-hidden /> : null}
-            </div>
-            <div className="run-progress-copy">
-              <strong>{step.label}</strong>
-              <small>{step.subtext}</small>
-            </div>
-          </div>
-        </div>
-      ))}
-    </section>
-  );
-}
-
 function InlineProgressTracker({ state }: { state: string }) {
   const stages = ['draft', 'pending_approval', 'ready_for_execution', 'execution_recorded', 'settled'];
   const currentIndex = Math.max(
@@ -2914,36 +2408,6 @@ function InlineProgressTracker({ state }: { state: string }) {
   );
 }
 
-function InfoSection({
-  title,
-  state,
-  toneKey,
-  sectionId,
-  children,
-}: {
-  title: string;
-  state?: string;
-  toneKey?: string;
-  sectionId?: string;
-  children: ReactNode;
-}) {
-  const badgeTone = (() => {
-    const key = toneKey ?? state ?? '';
-    if (key && isPaymentOrderState(key)) return statusToneForPayment(key);
-    return toneForGenericState(key);
-  })();
-
-  return (
-    <section className="info-section" id={sectionId}>
-      <header>
-        <h2>{title}</h2>
-        {state ? <StatusBadge tone={badgeTone}>{state}</StatusBadge> : null}
-      </header>
-      <div className="info-section-body">{children}</div>
-    </section>
-  );
-}
-
 function InfoGrid({ items }: { items: Array<[string, React.ReactNode]> }) {
   return (
     <dl className="info-grid">
@@ -2957,81 +2421,12 @@ function InfoGrid({ items }: { items: Array<[string, React.ReactNode]> }) {
   );
 }
 
-function TimelineList({ items }: { items: Array<{ title: string; body: React.ReactNode; time: string }> }) {
-  if (!items.length) {
-    return <p className="section-copy">No events recorded.</p>;
-  }
-
-  return (
-    <div className="timeline-list">
-      {items.map((item, index) => (
-        <article key={`${item.title}-${item.time}-${index}`}>
-          <div>
-            <strong>{item.title}</strong>
-            <p>{item.body}</p>
-          </div>
-          <time title={formatTimestamp(item.time)}>{formatRelativeTime(item.time)}</time>
-        </article>
-      ))}
-    </div>
-  );
-}
-
-function CompactStageEvents({ items }: { items: Array<{ title: string; body: React.ReactNode; time: string }> }) {
-  return (
-    <div className="compact-stage-events">
-      {items.map((item, index) => (
-        <div key={`${item.title}-${item.time}-${index}`} className="compact-stage-event">
-          <strong>{item.title}</strong>
-          <time title={formatTimestamp(item.time)}>{formatRelativeTime(item.time)}</time>
-          <p>{item.body}</p>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function SidePanel({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <section className="side-panel">
-      <h2>{title}</h2>
-      {children}
-    </section>
-  );
-}
-
 function SectionHeader({ title, description }: { title: string; description?: string }) {
   return <PanelHeader title={title} description={description} />;
 }
 
-function Metric({ label, value }: { label: string; value: string }) {
-  return <MetricTile label={label} value={value} />;
-}
-
 function EmptyState({ title, description }: { title: string; description: string }) {
   return <EmptyPanel title={title} description={description} />;
-}
-
-function SimpleList({
-  items,
-  empty,
-}: {
-  items: Array<{ id: string; title: string; meta: string }>;
-  empty: string;
-}) {
-  if (!items.length) {
-    return <EmptyState title={empty} description="Use the available actions on this page to create the first record." />;
-  }
-  return (
-    <div className="simple-list">
-      {items.map((item) => (
-        <article key={item.id}>
-          <strong>{item.title}</strong>
-          <span>{item.meta}</span>
-        </article>
-      ))}
-    </div>
-  );
 }
 
 function ScreenState({ title, description }: { title: string; description: string }) {
@@ -3134,24 +2529,6 @@ function formatDateCompact(value: string) {
 function walletLabel(address: Pick<TreasuryWallet, 'displayName' | 'address'> | null | undefined) {
   if (!address) return null;
   return address.displayName ?? shortenAddress(address.address);
-}
-
-function safeShortAddress(value: string | null | undefined) {
-  return value ? shortenAddress(value) : 'N/A';
-}
-
-function getPreparedPacket(order: PaymentOrder | undefined): PaymentExecutionPacket | null {
-  const records = order?.reconciliationDetail?.executionRecords ?? [];
-  for (const record of records) {
-    const meta = record.metadataJson as { executionPacket?: unknown; preparedExecution?: unknown } | undefined;
-    const packet = meta?.executionPacket ?? meta?.preparedExecution;
-    if (isPaymentExecutionPacket(packet)) return packet;
-  }
-  return null;
-}
-
-function isPaymentExecutionPacket(value: unknown): value is PaymentExecutionPacket {
-  return Boolean(value && typeof value === 'object' && 'kind' in value && 'instructions' in value);
 }
 
 function downloadJson(fileName: string, payload: unknown) {

@@ -12,14 +12,17 @@ test('request lifecycle exposes the allowed transition graph', () => {
   assert.equal(isRequestStatusTransitionAllowed('draft', 'submitted'), true);
   assert.equal(isRequestStatusTransitionAllowed('submitted', 'approved'), true);
   assert.equal(isRequestStatusTransitionAllowed('approved', 'ready_for_execution'), true);
-  assert.equal(isRequestStatusTransitionAllowed('observed', 'matched'), true);
+  assert.equal(isRequestStatusTransitionAllowed('ready_for_execution', 'submitted_onchain'), true);
+  assert.equal(isRequestStatusTransitionAllowed('submitted_onchain', 'matched'), true);
+  assert.equal(isRequestStatusTransitionAllowed('submitted_onchain', 'exception'), true);
   assert.equal(isRequestStatusTransitionAllowed('matched', 'closed'), true);
+  assert.equal(isRequestStatusTransitionAllowed('exception', 'matched'), true);
   assert.equal(isRequestStatusTransitionAllowed('closed', 'submitted'), false);
 });
 
 test('user transition graph is stricter than the full lifecycle graph', () => {
   assert.equal(isUserRequestStatusTransitionAllowed('draft', 'submitted'), true);
-  assert.equal(isUserRequestStatusTransitionAllowed('submitted_onchain', 'observed'), false);
+  assert.equal(isUserRequestStatusTransitionAllowed('submitted_onchain', 'matched'), false);
   assert.equal(isUserRequestStatusTransitionAllowed('exception', 'closed'), true);
   assert.deepEqual(getAvailableUserTransitions('approved'), []);
 });
@@ -34,10 +37,23 @@ test('request display state derives from request status, match status, and open 
     'pending',
   );
 
+  // RPC settlement verification produces matchStatus: 'rpc_verified' when
+  // expected USDC deltas match — surfaces as the 'matched' display state.
   assert.equal(
     deriveRequestDisplayState({
-      requestStatus: 'submitted',
-      matchStatus: 'matched_exact',
+      requestStatus: 'submitted_onchain',
+      matchStatus: 'rpc_verified',
+      exceptionStatuses: [],
+    }),
+    'matched',
+  );
+
+  // Once the marker has flipped the request to 'matched', display state
+  // stays 'matched' regardless of the (now-null) matchStatus passed in.
+  assert.equal(
+    deriveRequestDisplayState({
+      requestStatus: 'matched',
+      matchStatus: null,
       exceptionStatuses: [],
     }),
     'matched',
@@ -45,24 +61,15 @@ test('request display state derives from request status, match status, and open 
 
   assert.equal(
     deriveRequestDisplayState({
-      requestStatus: 'submitted',
-      matchStatus: 'matched_partial',
-      exceptionStatuses: [],
-    }),
-    'partial',
-  );
-
-  assert.equal(
-    deriveRequestDisplayState({
-      requestStatus: 'submitted',
-      matchStatus: 'matched_partial',
+      requestStatus: 'submitted_onchain',
+      matchStatus: 'rpc_verified',
       exceptionStatuses: ['open'],
     }),
     'exception',
   );
 });
 
-test('execution state derives separately from approval, observation, and match facts', () => {
+test('execution state derives separately from approval and match facts', () => {
   assert.equal(
     deriveExecutionState({
       requestStatus: 'approved',
@@ -87,25 +94,15 @@ test('execution state derives separately from approval, observation, and match f
     'submitted_onchain',
   );
 
+  // When the markers have advanced the request to 'matched' (RPC settlement
+  // verified) the derivation surfaces 'settled'.
   assert.equal(
     deriveExecutionState({
-      requestStatus: 'submitted_onchain',
-      executionState: 'submitted_onchain',
+      requestStatus: 'matched',
+      executionState: 'settled',
       submittedSignature: 'sig',
-      hasObservedTransaction: true,
-      matchStatus: null,
-      exceptionStatuses: [],
-    }),
-    'observed',
-  );
-
-  assert.equal(
-    deriveExecutionState({
-      requestStatus: 'submitted_onchain',
-      executionState: 'submitted_onchain',
-      submittedSignature: 'sig',
-      hasObservedTransaction: true,
-      matchStatus: 'matched_exact',
+      hasObservedTransaction: false,
+      matchStatus: 'rpc_verified',
       exceptionStatuses: [],
     }),
     'settled',

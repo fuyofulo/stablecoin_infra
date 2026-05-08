@@ -624,9 +624,7 @@ ALTER TABLE transfer_requests
       'approved',
       'ready_for_execution',
       'submitted_onchain',
-      'observed',
       'matched',
-      'partially_matched',
       'exception',
       'closed',
       'rejected'
@@ -658,7 +656,6 @@ ALTER TABLE execution_records
       'ready_for_execution',
       'submitted_onchain',
       'broadcast_failed',
-      'observed',
       'settled',
       'execution_exception'
     )

@@ -20,6 +20,7 @@ import {
   USDC_MINT,
 } from './solana.js';
 import { createTransferRequestEvent } from './transfer-request-events.js';
+import { getPrimaryTransferRequest } from './transfer-request-helpers.js';
 export { PAYMENT_ORDER_STATES, isPaymentOrderState, type PaymentOrderState } from './payment-order-state.js';
 import type { PaymentOrderState } from './payment-order-state.js';
 
@@ -1245,14 +1246,6 @@ function buildPaymentExecutionPacketBase(args: {
       note: 'Client must add a recent blockhash, sign with the source wallet, and submit to Solana. The API never receives private keys.',
     },
   };
-}
-
-function getPrimaryTransferRequest(order: {
-  transferRequests: Array<TransferRequest & { createdAt: Date }>;
-}) {
-  return [...order.transferRequests].sort(
-    (left, right) => right.createdAt.getTime() - left.createdAt.getTime(),
-  )[0] ?? null;
 }
 
 async function findReusablePreparedExecution(args: {

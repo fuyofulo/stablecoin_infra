@@ -4,9 +4,7 @@ export const REQUEST_STATUSES = [
   'approved',
   'ready_for_execution',
   'submitted_onchain',
-  'observed',
   'matched',
-  'partially_matched',
   'exception',
   'closed',
   'rejected',
@@ -39,7 +37,6 @@ export const EXECUTION_STATES = [
   'ready_for_execution',
   'submitted_onchain',
   'broadcast_failed',
-  'observed',
   'settled',
   'execution_exception',
   'closed',
@@ -54,10 +51,8 @@ const REQUEST_STATUS_TRANSITIONS: Readonly<Record<RequestStatus, readonly Reques
   submitted: ['approved'],
   approved: ['ready_for_execution'],
   ready_for_execution: ['submitted_onchain'],
-  submitted_onchain: ['observed'],
-  observed: ['matched', 'partially_matched', 'exception'],
+  submitted_onchain: ['matched', 'exception'],
   matched: ['closed'],
-  partially_matched: ['matched', 'exception'],
   exception: ['matched', 'closed'],
   closed: [],
   rejected: [],
@@ -69,9 +64,7 @@ const USER_ALLOWED_REQUEST_TRANSITIONS: Readonly<Record<RequestStatus, readonly 
   approved: [],
   ready_for_execution: [],
   submitted_onchain: [],
-  observed: [],
   matched: ['closed'],
-  partially_matched: [],
   exception: ['closed'],
   closed: [],
   rejected: [],
@@ -151,21 +144,12 @@ export function deriveExecutionState(args: {
     return 'execution_exception';
   }
 
-  if (matchStatus === 'matched_exact' || matchStatus === 'matched_split') {
+  if (executionState === 'settled' || requestStatus === 'matched') {
     return 'settled';
   }
 
   if (executionState === 'broadcast_failed') {
     return 'broadcast_failed';
-  }
-
-  if (
-    executionState === 'observed'
-    || executionState === 'settled'
-    || executionState === 'execution_exception'
-    || hasObservedSettlement
-  ) {
-    return 'observed';
   }
 
   if (executionState === 'submitted_onchain' || requestStatus === 'submitted_onchain' || Boolean(submittedSignature)) {
@@ -209,16 +193,7 @@ export function deriveRequestDisplayState(args: {
     return 'exception' satisfies RequestDisplayState;
   }
 
-  if (matchStatus === 'matched_partial' || requestStatus === 'partially_matched') {
-    return 'partial' satisfies RequestDisplayState;
-  }
-
-  if (
-    matchStatus === 'matched_exact' ||
-    matchStatus === 'matched_split' ||
-    requestStatus === 'matched' ||
-    requestStatus === 'closed'
-  ) {
+  if (matchStatus === 'rpc_verified' || requestStatus === 'matched' || requestStatus === 'closed') {
     return 'matched' satisfies RequestDisplayState;
   }
 

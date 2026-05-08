@@ -12,12 +12,6 @@ import type {
 import { serializeExecutionRecord } from './execution-records.js';
 import { prisma } from './prisma.js';
 import {
-  buildTimeline,
-  parseTransferRequestEvent,
-  serializeTransferRequestEvent,
-  serializeTransferRequestNote,
-} from './reconciliation-timeline.js';
-import {
   deriveApprovalState,
   deriveExecutionState,
   deriveRequestDisplayState,
@@ -122,7 +116,6 @@ export async function getReconciliationDetail(organizationId: string, transferRe
       events: timelineEvents,
       notes,
       executionRecords: queueItem.executionRecords,
-      observedExecutionTransaction: null,
       match: queueItem.match,
       exceptions: queueItem.exceptions,
     }),
@@ -349,7 +342,7 @@ function deriveSettlementOutcome(detail: Awaited<ReturnType<typeof getReconcilia
   if (detail.match?.matchStatus === 'rpc_verified' || detail.requestDisplayState === 'matched') {
     return 'matched_exact';
   }
-  if (detail.executionState === 'submitted_onchain' || detail.executionState === 'observed') {
+  if (detail.executionState === 'submitted_onchain') {
     return 'submitted_onchain';
   }
   if (detail.executionState === 'ready_for_execution') {
@@ -500,4 +493,147 @@ function formatRawUsdc(amountRaw: string) {
   const whole = padded.slice(0, -6) || '0';
   const fraction = padded.slice(-6);
   return `${negative ? '-' : ''}${whole}.${fraction}`;
+}
+
+// ---------------------------------------------------------------------------
+// Reconciliation timeline. Inlined from the former reconciliation-timeline.ts
+// module since settlement-read-model is the only consumer. The proof builders
+// read the rendered timeline through detail.timeline / reconciliation.timeline
+// and serialize it as auditTrail.
+
+function parseTransferRequestEvent(event: TransferRequestEvent) {
+  const linkedTransferIds = Array.isArray(event.linkedTransferIds)
+    ? event.linkedTransferIds.filter((value): value is string => typeof value === 'string')
+    : [];
+  return { ...event, linkedTransferIds };
+}
+
+function serializeTransferRequestEvent(event: ReturnType<typeof parseTransferRequestEvent>) {
+  return {
+    transferRequestEventId: event.transferRequestEventId,
+    transferRequestId: event.transferRequestId,
+    organizationId: event.organizationId,
+    eventType: event.eventType,
+    actorType: event.actorType,
+    actorId: event.actorId,
+    eventSource: event.eventSource,
+    beforeState: event.beforeState,
+    afterState: event.afterState,
+    linkedSignature: event.linkedSignature,
+    linkedPaymentId: event.linkedPaymentId,
+    linkedTransferIds: event.linkedTransferIds,
+    payloadJson: event.payloadJson,
+    createdAt: event.createdAt,
+  };
+}
+
+function serializeTransferRequestNote(
+  note: TransferRequestNote & {
+    authorUser: Pick<User, 'userId' | 'email' | 'displayName'> | null;
+  },
+) {
+  return {
+    transferRequestNoteId: note.transferRequestNoteId,
+    transferRequestId: note.transferRequestId,
+    organizationId: note.organizationId,
+    body: note.body,
+    createdAt: note.createdAt,
+    authorUser: serializeUserRef(note.authorUser),
+  };
+}
+
+type TimelineExecutionRecord = {
+  updatedAt: Date | string;
+  state: string;
+  executionSource: string;
+  submittedSignature: string | null;
+  executorUser: ReturnType<typeof serializeUserRef>;
+};
+
+type TimelineMatch = {
+  matchedAt: Date | string | null;
+  updatedAt: Date | string;
+  matchStatus: string;
+  explanation: string | null;
+  signature: string | null;
+  observedTransferId: string | null;
+};
+
+type TimelineException = {
+  updatedAt: Date | string;
+  exceptionId: string;
+  reasonCode: string;
+  severity: string;
+  status: string;
+  explanation: string;
+  signature: string | null;
+  observedTransferId: string | null;
+};
+
+function buildTimeline(args: {
+  events: ReturnType<typeof parseTransferRequestEvent>[];
+  notes: ReturnType<typeof serializeTransferRequestNote>[];
+  executionRecords: TimelineExecutionRecord[];
+  match: TimelineMatch | null;
+  exceptions: TimelineException[];
+}) {
+  const items = [
+    ...args.events.map((event) => ({
+      timelineType: 'request_event' as const,
+      createdAt: event.createdAt,
+      eventType: event.eventType,
+      actorType: event.actorType,
+      actorId: event.actorId,
+      eventSource: event.eventSource,
+      beforeState: event.beforeState,
+      afterState: event.afterState,
+      linkedSignature: event.linkedSignature,
+      linkedPaymentId: event.linkedPaymentId,
+      linkedTransferIds: event.linkedTransferIds,
+      payloadJson: event.payloadJson,
+    })),
+    ...args.notes.map((note) => ({
+      timelineType: 'request_note' as const,
+      createdAt: note.createdAt,
+      body: note.body,
+      authorUser: note.authorUser,
+    })),
+    ...args.executionRecords.map((record) => ({
+      timelineType: 'execution_record' as const,
+      createdAt: record.updatedAt,
+      state: record.state,
+      executionSource: record.executionSource,
+      submittedSignature: record.submittedSignature,
+      executorUser: record.executorUser,
+    })),
+    ...(args.match
+      ? [
+          {
+            timelineType: 'match_result' as const,
+            createdAt: args.match.matchedAt ?? args.match.updatedAt,
+            matchStatus: args.match.matchStatus,
+            explanation: args.match.explanation,
+            linkedSignature: args.match.signature,
+            linkedTransferIds: args.match.observedTransferId ? [args.match.observedTransferId] : [],
+          },
+        ]
+      : []),
+    ...args.exceptions.map((exception) => ({
+      timelineType: 'exception' as const,
+      createdAt: exception.updatedAt,
+      exceptionId: exception.exceptionId,
+      reasonCode: exception.reasonCode,
+      severity: exception.severity,
+      status: exception.status,
+      explanation: exception.explanation,
+      linkedSignature: exception.signature,
+      linkedTransferIds: exception.observedTransferId ? [exception.observedTransferId] : [],
+    })),
+  ];
+
+  return items.sort((left, right) => {
+    const leftTime = new Date(left.createdAt).getTime();
+    const rightTime = new Date(right.createdAt).getTime();
+    return leftTime - rightTime;
+  });
 }

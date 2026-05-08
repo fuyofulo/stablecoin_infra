@@ -22,6 +22,7 @@ import {
   USDC_DECIMALS,
   USDC_MINT,
 } from './solana.js';
+import { getPrimaryTransferRequest } from './transfer-request-helpers.js';
 
 const MAX_BATCH_TRANSFERS_PER_TRANSACTION = 8;
 
@@ -262,7 +263,7 @@ export async function cancelPaymentRun(args: {
         },
       });
       for (const request of order.transferRequests) {
-        if (['submitted_onchain', 'observed', 'matched', 'closed', 'rejected'].includes(request.status)) {
+        if (['submitted_onchain', 'matched', 'closed', 'rejected'].includes(request.status)) {
           continue;
         }
         await tx.transferRequest.update({
@@ -438,7 +439,7 @@ export async function preparePaymentRunExecution(args: {
   const executableOrders = orders.filter((order) => {
     if (hasSubmittedExecution(order)) return false;
     const request = getPrimaryTransferRequest(order);
-    return Boolean(request) && ['approved', 'ready_for_execution'].includes(request.status);
+    return request !== null && ['approved', 'ready_for_execution'].includes(request.status);
   });
 
   if (!executableOrders.length) {
@@ -579,7 +580,7 @@ export async function attachPaymentRunSignature(args: {
   const executableOrders = orders.filter((order) => {
     if (hasSubmittedExecution(order)) return false;
     const request = getPrimaryTransferRequest(order);
-    return Boolean(request) && ['approved', 'ready_for_execution', 'submitted_onchain'].includes(request.status);
+    return request !== null && ['approved', 'ready_for_execution', 'submitted_onchain'].includes(request.status);
   });
   if (!executableOrders.length) {
     throw new Error('No executable rows in this run. Rejected rows are excluded from batch execution.');
@@ -927,12 +928,6 @@ function buildPaymentRunExecutionPacket(args: {
   };
 }
 
-function getPrimaryTransferRequest(order: { transferRequests: RunOrderForExecution['transferRequests'] }) {
-  return [...order.transferRequests].sort(
-    (left, right) => right.createdAt.getTime() - left.createdAt.getTime(),
-  )[0] ?? null;
-}
-
 function getReusableRunPreparedExecution(
   request: RunOrderForExecution['transferRequests'][number],
   paymentRunId: string,
@@ -958,7 +953,7 @@ function hasSubmittedExecution(order: RunOrderForExecution) {
   const latest = request.executionRecords[0] ?? null;
   if (!latest) return false;
   return Boolean(latest.submittedSignature)
-    || ['submitted_onchain', 'observed', 'settled'].includes(latest.state)
+    || ['submitted_onchain', 'settled'].includes(latest.state)
     || request.status === 'submitted_onchain';
 }
 
