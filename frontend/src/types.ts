@@ -730,53 +730,6 @@ export type Destination = {
   counterparty: Counterparty | null;
 };
 
-export type ApprovalPolicyRule = {
-  requireTrustedDestination: boolean;
-  requireApprovalForExternal: boolean;
-  requireApprovalForInternal: boolean;
-  externalApprovalThresholdRaw: string;
-  internalApprovalThresholdRaw: string;
-};
-
-export type ApprovalPolicy = {
-  approvalPolicyId: string;
-  organizationId: string;
-  policyName: string;
-  isActive: boolean;
-  ruleJson: ApprovalPolicyRule;
-  createdAt: string;
-  updatedAt: string;
-};
-
-export type ApprovalReason = {
-  code: string;
-  message: string;
-};
-
-export type ApprovalEvaluation = {
-  approvalPolicyId: string | null;
-  policyName: string;
-  isActive: boolean;
-  requiresApproval: boolean;
-  rules: ApprovalPolicyRule;
-  reasons: ApprovalReason[];
-};
-
-export type ApprovalDecision = {
-  approvalDecisionId: string;
-  approvalPolicyId: string | null;
-  transferRequestId: string;
-  organizationId: string;
-  actorUserId: string | null;
-  actorType: string;
-  action: 'routed_for_approval' | 'auto_approved' | 'approve' | 'reject' | 'escalate';
-  comment: string | null;
-  payloadJson: Record<string, unknown>;
-  createdAt: string;
-  actorUser: User | null;
-  approvalPolicy: ApprovalPolicy | null;
-};
-
 export type TransferRequest = {
   transferRequestId: string;
   organizationId: string;
@@ -930,11 +883,10 @@ export type ReconciliationRow = {
   } | null;
   matchExplanation: string | null;
   exceptionExplanation: string | null;
-  exceptions: ExceptionItem[];
-};
-
-export type ApprovalInboxItem = ReconciliationRow & {
-  approvalEvaluation: ApprovalEvaluation;
+  // Synthetic exceptions emitted by the read model when RPC settlement
+  // verification reports a delta mismatch. Kept opaque on the frontend —
+  // the UI surfaces mismatch state through SettlementBanner instead.
+  exceptions: Array<Record<string, unknown>>;
 };
 
 export type PaymentOrderState =
@@ -1417,37 +1369,6 @@ export type CollectionRunImportResult = {
   };
 };
 
-export type ExceptionItem = {
-  exceptionId: string;
-  transferRequestId: string | null;
-  signature: string | null;
-  observedTransferId: string | null;
-  exceptionType: string;
-  reasonCode: string;
-  severity: string;
-  status: string;
-  resolutionCode: string | null;
-  assignedToUserId: string | null;
-  assignedToUser: User | null;
-  explanation: string;
-  propertiesJson: Record<string, unknown> | string | null;
-  observedEventTime: string | null;
-  processedAt: string | null;
-  createdAt: string;
-  updatedAt: string;
-  chainToProcessMs: number | null;
-  notes?: ExceptionNote[];
-  availableActions?: ('reviewed' | 'expected' | 'dismissed' | 'reopen')[];
-};
-
-export type ExceptionNote = {
-  exceptionNoteId: string;
-  exceptionId: string;
-  organizationId: string;
-  body: string;
-  createdAt: string;
-  authorUser: User | null;
-};
 
 export type ObservedPayment = {
   paymentId: string;
@@ -1535,7 +1456,6 @@ export type ReconciliationTimelineItem =
       explanation: string;
       linkedSignature: string | null;
       linkedTransferIds: string[];
-      notes: ExceptionNote[];
     };
 
 export type ReconciliationDetail = ReconciliationRow & {
@@ -1543,9 +1463,6 @@ export type ReconciliationDetail = ReconciliationRow & {
   linkedObservedTransfers: ObservedTransfer[];
   linkedObservedPayment: ObservedPayment | null;
   relatedObservedPayments: ObservedPayment[];
-  approvalPolicy: ApprovalPolicy;
-  approvalEvaluation: ApprovalEvaluation;
-  approvalDecisions: ApprovalDecision[];
   events: TransferRequestEvent[];
   notes: TransferRequestNote[];
   timeline: ReconciliationTimelineItem[];

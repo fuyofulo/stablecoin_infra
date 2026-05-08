@@ -180,14 +180,6 @@ export function trustDisplay(trust: Destination['trustState']): string {
   }
 }
 
-export function approvalReasonLine(order: PaymentOrder): string {
-  const reasons = order.reconciliationDetail?.approvalEvaluation?.reasons ?? [];
-  if (!reasons.length) return '—';
-  return reasons
-    .map((r) => r.message.replace(/\s+and cannot skip approval\.?$/i, '.'))
-    .join(' · ');
-}
-
 export function humanizeExceptionReason(code: string): string {
   return code.replaceAll('_', ' ');
 }

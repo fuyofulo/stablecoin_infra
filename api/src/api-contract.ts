@@ -154,14 +154,6 @@ export const API_ENDPOINTS = [
   }),
   endpoint('update_collection_source', 'PATCH', '/organizations/{organizationId}/collection-sources/{collectionSourceId}', ['address book'], 'Update inbound collection source', 'session', { scope: 'organization:write' }),
 
-  endpoint('get_approval_policy', 'GET', '/organizations/{organizationId}/approval-policy', ['approval'], 'Get organization approval policy', 'session', { scope: 'organization:read' }),
-  endpoint('update_approval_policy', 'PATCH', '/organizations/{organizationId}/approval-policy', ['approval'], 'Update organization approval policy', 'session', { scope: 'approvals:write' }),
-  endpoint('approval_inbox', 'GET', '/organizations/{organizationId}/approval-inbox', ['approval'], 'List pending approvals', 'session', { scope: 'organization:read' }),
-  endpoint('approval_decision', 'POST', '/organizations/{organizationId}/transfer-requests/{transferRequestId}/approval-decisions', ['approval'], 'Approve or reject transfer request', 'session', {
-    scope: 'approvals:write',
-    requestBody: { action: 'approve | reject', comment: 'string optional' },
-  }),
-
   endpoint('list_payment_requests', 'GET', '/organizations/{organizationId}/payment-requests', ['inputs'], 'List payment requests', 'session', { scope: 'organization:read' }),
   endpoint('create_payment_request', 'POST', '/organizations/{organizationId}/payment-requests', ['inputs'], 'Create payment request', 'session', { scope: 'payments:write' }),
   endpoint('import_payment_requests_csv', 'POST', '/organizations/{organizationId}/payment-requests/import-csv', ['inputs'], 'Import payment requests from CSV', 'session', { scope: 'payments:write' }),

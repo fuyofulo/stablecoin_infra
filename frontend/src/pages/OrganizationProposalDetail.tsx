@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useMemo, type ReactNode } from 'react';
 import { Link, useParams } from 'react-router';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { api, ApiError } from '../api';
 import type {
   AuthenticatedSession,
@@ -8,9 +8,11 @@ import type {
   SquadsProposalDecision,
   SquadsProposalPendingVoter,
 } from '../types';
-import { signAndSubmitIntent } from '../lib/squads-pipeline';
-import { readSettlementVerificationStatus } from '../lib/settlement';
+import { useAutoRetryProposalVerification } from '../lib/settlement';
+import { useSquadsProposalActions, type SquadsProposalActionTarget } from '../lib/squads-actions';
 import { orbAccountUrl, shortenAddress } from '../domain';
+import { ChainLink, InfoRow } from '../ui-primitives';
+import { SettlementBanner } from '../ui/SettlementBanner';
 import { useToast } from '../ui/Toast';
 import {
   DecisionPill,
@@ -26,18 +28,7 @@ export function OrganizationProposalDetailPage({ session }: { session: Authentic
     organizationId: string;
     decimalProposalId: string;
   }>();
-  const queryClient = useQueryClient();
-  const { success, error: toastError, info } = useToast();
-  const [busyAction, setBusyAction] = useState<'approve' | 'execute' | 'reject' | null>(null);
-
-  // Same retryable-confirmation surface as PaymentDetail/PaymentRunDetail.
-  // 400s from confirm-execution that match this regex mean the on-chain
-  // execution likely landed but RPC hasn't yet caught up; we treat them
-  // as a soft retryable state instead of a hard failure.
-  function isRetryableConfirmationError(err: unknown): boolean {
-    if (!(err instanceof ApiError) || err.status !== 400) return false;
-    return /(not confirmed yet|could not be verified from RPC yet)/i.test(err.message);
-  }
+  const toast = useToast();
 
   const ownPersonalWalletsQuery = useQuery({
     queryKey: ['personal-wallets'] as const,
@@ -59,138 +50,30 @@ export function OrganizationProposalDetailPage({ session }: { session: Authentic
     refetchInterval: 15_000,
   });
 
-  async function refreshAll() {
-    await queryClient.invalidateQueries({
-      queryKey: ['organization-proposal', organizationId, decimalProposalId],
-    });
-    await queryClient.invalidateQueries({
-      queryKey: ['organization-proposals', organizationId],
-    });
-    await queryClient.invalidateQueries({
-      queryKey: ['payment-orders', organizationId],
-    });
-  }
-
-  const rejectMutation = useMutation({
-    mutationFn: async (input: { proposal: DecimalProposal; signerWalletId: string }) => {
-      const intent = await api.createProposalRejectIntent(
-        organizationId!,
-        input.proposal.decimalProposalId,
-        { memberPersonalWalletId: input.signerWalletId },
-      );
-      return signAndSubmitIntent({ intent, signerPersonalWalletId: input.signerWalletId });
-    },
-    onSuccess: async () => {
-      success('Rejection submitted.');
-      await refreshAll();
-    },
-    onError: (err) => {
-      toastError(err instanceof ApiError || err instanceof Error ? err.message : 'Reject failed.');
-    },
-    onSettled: () => setBusyAction(null),
-  });
-
-  const approveMutation = useMutation({
-    mutationFn: async (input: { proposal: DecimalProposal; signerWalletId: string }) => {
-      const intent = await api.createProposalApprovalIntent(
-        organizationId!,
-        input.proposal.decimalProposalId,
-        { memberPersonalWalletId: input.signerWalletId },
-      );
-      return signAndSubmitIntent({ intent, signerPersonalWalletId: input.signerWalletId });
-    },
-    onSuccess: async () => {
-      success('Approval submitted.');
-      await refreshAll();
-    },
-    onError: (err) => {
-      toastError(err instanceof ApiError || err instanceof Error ? err.message : 'Approve failed.');
-    },
-    onSettled: () => setBusyAction(null),
-  });
-
-  const executeMutation = useMutation({
-    mutationFn: async (input: { proposal: DecimalProposal; signerWalletId: string }) => {
-      const intent = await api.createProposalExecuteIntent(
-        organizationId!,
-        input.proposal.decimalProposalId,
-        { memberPersonalWalletId: input.signerWalletId },
-      );
-      const sig = await signAndSubmitIntent({
-        intent,
-        signerPersonalWalletId: input.signerWalletId,
-      });
-      // Backend persists the signature whether or not settlement verification
-      // succeeds, so the auto-retry effect below can re-run verification on
-      // refresh without us needing to keep the signature in component state.
-      // We still call confirm-execution here to drive the immediate state
-      // transition; retryable errors get surfaced as an info toast instead of
-      // being swallowed.
-      await api.confirmProposalExecution(organizationId!, input.proposal.decimalProposalId, {
-        signature: sig,
-      });
-      if (input.proposal.proposalType === 'config_transaction' && input.proposal.treasuryWalletId) {
-        try {
-          await api.syncSquadsTreasuryMembers(organizationId!, input.proposal.treasuryWalletId);
-        } catch {
-          // sync is best-effort — surfacing this to the user adds noise
-        }
-      }
-      return sig;
-    },
-    onSuccess: async () => {
-      success('Proposal executed.');
-      await refreshAll();
-      await queryClient.invalidateQueries({
-        queryKey: ['treasury-wallet-detail', organizationId],
-      });
-    },
-    onError: async (err) => {
-      if (isRetryableConfirmationError(err)) {
-        info('Execution submitted. Verification pending — will retry automatically.');
-        await refreshAll();
-        return;
-      }
-      toastError(err instanceof ApiError || err instanceof Error ? err.message : 'Execute failed.');
-    },
-    onSettled: () => setBusyAction(null),
-  });
-
-  // Auto-retry settlement verification while the proposal has an executed
-  // signature stored but RPC settlement could not yet be verified. Idempotent
-  // on the backend.
-  const proposalForVerify = proposalQuery.data ?? null;
-  const verificationStatus = readSettlementVerificationStatus(proposalForVerify);
-  useEffect(() => {
-    if (!organizationId) return;
-    if (!proposalForVerify?.decimalProposalId) return;
-    if (!proposalForVerify.executedSignature) return;
-    if (verificationStatus !== 'pending') return;
-    let cancelled = false;
-    const handle = window.setTimeout(async () => {
-      if (cancelled) return;
-      try {
-        await api.confirmProposalExecution(organizationId, proposalForVerify.decimalProposalId, {
-          signature: proposalForVerify.executedSignature!,
-        });
-        await refreshAll();
-      } catch {
-        // Stay pending — next render schedules another retry.
-      }
-    }, 6_000);
-    return () => {
-      cancelled = true;
-      window.clearTimeout(handle);
-    };
-    // refreshAll closes over organizationId/decimalProposalId/queryClient,
-    // all of which are already in the dep set or stable, so it's safe to omit.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
+  const actions = useSquadsProposalActions({
     organizationId,
-    proposalForVerify?.decimalProposalId,
-    proposalForVerify?.executedSignature,
-    verificationStatus,
-  ]);
+    proposal: proposalQuery.data,
+    ownPersonalWallets,
+    currentUserId: session.user.userId,
+    invalidationKeys: [
+      ['organization-proposal', organizationId, decimalProposalId],
+      ['organization-proposals', organizationId],
+      ['payment-orders', organizationId],
+      ['treasury-wallet-detail', organizationId],
+    ],
+    toast: { success: toast.success, error: toast.error, info: toast.info },
+    syncTreasuryMembersOnConfigExecute: true,
+  });
+
+  useAutoRetryProposalVerification({
+    organizationId,
+    proposal: proposalQuery.data,
+    invalidationKeys: [
+      ['organization-proposal', organizationId, decimalProposalId],
+      ['organization-proposals', organizationId],
+      ['payment-orders', organizationId],
+    ],
+  });
 
   if (!organizationId || !decimalProposalId) {
     return (
@@ -208,24 +91,6 @@ export function OrganizationProposalDetailPage({ session }: { session: Authentic
   const isForbidden =
     proposalError instanceof ApiError && proposalError.code === 'not_squads_member';
   const isMissing = proposalError instanceof ApiError && proposalError.status === 404;
-
-  const pendingVoterWallet = useMemo(() => {
-    if (!proposal?.voting) return null;
-    const ownAddresses = new Set(ownPersonalWallets.map((w) => w.walletAddress));
-    const match = proposal.voting.pendingVoters.find(
-      (v) =>
-        v.personalWallet?.userId === session.user.userId
-        && ownAddresses.has(v.walletAddress),
-    );
-    if (!match) return null;
-    return ownPersonalWallets.find((w) => w.walletAddress === match.walletAddress) ?? null;
-  }, [proposal, ownPersonalWallets, session.user.userId]);
-
-  const executeWallet = useMemo(() => {
-    if (!proposal?.voting) return null;
-    const executable = new Set(proposal.voting.canExecuteWalletAddresses);
-    return ownPersonalWallets.find((w) => executable.has(w.walletAddress)) ?? null;
-  }, [proposal, ownPersonalWallets]);
 
   return (
     <main className="page-frame">
@@ -299,31 +164,7 @@ export function OrganizationProposalDetailPage({ session }: { session: Authentic
           </div>
         </section>
       ) : proposal ? (
-        <ProposalDetailBody
-          proposal={proposal}
-          pendingVoterWallet={pendingVoterWallet}
-          executeWallet={executeWallet}
-          busy={busyAction}
-          onApprove={(signerWalletId) => {
-            setBusyAction('approve');
-            approveMutation.mutate({ proposal, signerWalletId });
-          }}
-          onReject={(signerWalletId) => {
-            if (
-              !window.confirm(
-                'Reject this proposal? This casts an on-chain rejection vote and cannot be undone.',
-              )
-            ) {
-              return;
-            }
-            setBusyAction('reject');
-            rejectMutation.mutate({ proposal, signerWalletId });
-          }}
-          onExecute={(signerWalletId) => {
-            setBusyAction('execute');
-            executeMutation.mutate({ proposal, signerWalletId });
-          }}
-        />
+        <ProposalDetailBody proposal={proposal} actions={actions} />
       ) : null}
     </main>
   );
@@ -331,20 +172,10 @@ export function OrganizationProposalDetailPage({ session }: { session: Authentic
 
 function ProposalDetailBody({
   proposal,
-  pendingVoterWallet,
-  executeWallet,
-  busy,
-  onApprove,
-  onReject,
-  onExecute,
+  actions,
 }: {
   proposal: DecimalProposal;
-  pendingVoterWallet: { userWalletId: string; walletAddress: string } | null;
-  executeWallet: { userWalletId: string; walletAddress: string } | null;
-  busy: 'approve' | 'execute' | 'reject' | null;
-  onApprove: (signerWalletId: string) => void;
-  onReject: (signerWalletId: string) => void;
-  onExecute: (signerWalletId: string) => void;
+  actions: SquadsProposalActionTarget;
 }) {
   const isReadyToExecute = proposal.status === 'approved';
   const isClosed =
@@ -355,8 +186,16 @@ function ProposalDetailBody({
   // status === 'active'. Once threshold is met or the proposal moves on,
   // late voters cannot change the outcome — hide the action even if
   // pendingVoters still lists them.
+  const { pendingVoterWallet, executeWallet, busy, approving, rejecting, executing } = actions;
   const canCastVote = pendingVoterWallet !== null && proposal.status === 'active';
   const voting = proposal.voting;
+
+  function handleReject(signerWalletId: string) {
+    if (!window.confirm(
+      'Reject this proposal? This casts an on-chain rejection vote and cannot be undone.',
+    )) return;
+    actions.reject(signerWalletId);
+  }
 
   return (
     <>
@@ -394,24 +233,24 @@ function ProposalDetailBody({
                   <button
                     type="button"
                     className="button button-primary"
-                    onClick={() => onApprove(pendingVoterWallet.userWalletId)}
-                    disabled={busy !== null}
-                    aria-busy={busy === 'approve'}
+                    onClick={() => actions.approve(pendingVoterWallet.userWalletId)}
+                    disabled={busy}
+                    aria-busy={approving}
                   >
-                    {busy === 'approve' ? 'Approving…' : 'Approve'}
+                    {approving ? 'Approving…' : 'Approve'}
                   </button>
                   <button
                     type="button"
                     className="button button-secondary"
-                    onClick={() => onReject(pendingVoterWallet.userWalletId)}
-                    disabled={busy !== null}
-                    aria-busy={busy === 'reject'}
+                    onClick={() => handleReject(pendingVoterWallet.userWalletId)}
+                    disabled={busy}
+                    aria-busy={rejecting}
                     style={{
                       color: 'rgb(240, 130, 130)',
                       borderColor: 'rgba(220, 80, 80, 0.45)',
                     }}
                   >
-                    {busy === 'reject' ? 'Rejecting…' : 'Reject'}
+                    {rejecting ? 'Rejecting…' : 'Reject'}
                   </button>
                 </>
               ) : null}
@@ -419,11 +258,11 @@ function ProposalDetailBody({
                 <button
                   type="button"
                   className="button button-primary"
-                  onClick={() => onExecute(executeWallet.userWalletId)}
-                  disabled={busy !== null}
-                  aria-busy={busy === 'execute'}
+                  onClick={() => actions.execute(executeWallet.userWalletId)}
+                  disabled={busy}
+                  aria-busy={executing}
                 >
-                  {busy === 'execute' ? 'Executing…' : 'Execute proposal'}
+                  {executing ? 'Executing…' : 'Execute proposal'}
                 </button>
               ) : null}
             </div>
@@ -431,7 +270,7 @@ function ProposalDetailBody({
         </section>
       ) : null}
 
-      <SettlementVerificationBanner proposal={proposal} />
+      <SettlementBanner proposal={proposal} />
 
       {proposal.semanticType === 'send_payment' ? (
         <PaymentSummary proposal={proposal} />
@@ -529,71 +368,6 @@ function ProposalDetailBody({
       </section>
     </>
   );
-}
-
-function SettlementVerificationBanner({ proposal }: { proposal: DecimalProposal }) {
-  const isPayment = proposal.semanticType === 'send_payment' || proposal.semanticType === 'send_payment_run';
-  const status = readSettlementVerificationStatus(proposal);
-  // Don't render anything before execution lands or for non-payment proposals.
-  if (!isPayment) return null;
-  if (!proposal.executedSignature) return null;
-  if (status === 'settled' || status === null) return null;
-
-  if (status === 'pending') {
-    return (
-      <section
-        className="rd-section"
-        style={{
-          marginTop: 16,
-          padding: 14,
-          border: '1px solid rgba(220, 180, 80, 0.45)',
-          background: 'rgba(220, 180, 80, 0.08)',
-          borderRadius: 12,
-          display: 'flex',
-          alignItems: 'center',
-          gap: 12,
-          flexWrap: 'wrap',
-        }}
-      >
-        <span aria-hidden style={{ display: 'inline-block', width: 10, height: 10, borderRadius: 999, background: 'rgb(220, 180, 80)' }} />
-        <div>
-          <strong style={{ fontSize: 13 }}>Settlement verification pending</strong>
-          <div style={{ fontSize: 12, color: 'var(--ax-text-muted)', marginTop: 4 }}>
-            On-chain execution landed but RPC hasn't returned the parsed transaction yet. Verifying USDC deltas will retry automatically.
-          </div>
-        </div>
-      </section>
-    );
-  }
-
-  if (status === 'mismatch') {
-    return (
-      <section
-        className="rd-section"
-        style={{
-          marginTop: 16,
-          padding: 14,
-          border: '1px solid rgba(220, 80, 80, 0.45)',
-          background: 'rgba(220, 80, 80, 0.08)',
-          borderRadius: 12,
-          display: 'flex',
-          alignItems: 'center',
-          gap: 12,
-          flexWrap: 'wrap',
-        }}
-      >
-        <span aria-hidden style={{ display: 'inline-block', width: 10, height: 10, borderRadius: 999, background: 'rgb(240, 90, 90)' }} />
-        <div>
-          <strong style={{ fontSize: 13 }}>Settlement deltas did not match</strong>
-          <div style={{ fontSize: 12, color: 'var(--ax-text-muted)', marginTop: 4 }}>
-            The execution transaction landed but the observed USDC transfers don't match what this proposal expected. Investigate before treating these payments as settled.
-          </div>
-        </div>
-      </section>
-    );
-  }
-
-  return null;
 }
 
 function PaymentSummary({ proposal }: { proposal: DecimalProposal }) {
@@ -905,39 +679,6 @@ function PendingRow({ voter }: { voter: SquadsProposalPendingVoter }) {
         <PendingVoterPill voter={voter} />
       </td>
     </tr>
-  );
-}
-
-function InfoRow({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-      <span
-        style={{
-          fontSize: 11,
-          textTransform: 'uppercase',
-          letterSpacing: '0.05em',
-          opacity: 0.6,
-        }}
-      >
-        {label}
-      </span>
-      <span style={{ fontSize: 14 }}>{children}</span>
-    </div>
-  );
-}
-
-function ChainLink({ address }: { address: string }) {
-  return (
-    <a
-      href={orbAccountUrl(address)}
-      target="_blank"
-      rel="noreferrer"
-      className="rd-addr-link"
-      title={address}
-      style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}
-    >
-      {shortenAddress(address, 6, 6)}
-    </a>
   );
 }
 

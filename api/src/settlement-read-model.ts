@@ -1,6 +1,4 @@
 import type {
-  ApprovalDecision,
-  ApprovalPolicy,
   Counterparty,
   Destination,
   ExecutionRecord,
@@ -11,11 +9,6 @@ import type {
   User,
   TreasuryWallet,
 } from '@prisma/client';
-import {
-  buildApprovalEvaluationSummary,
-  getOrCreateOrganizationApprovalPolicy,
-  serializeApprovalPolicy,
-} from './approval-policy.js';
 import { serializeExecutionRecord } from './execution-records.js';
 import { prisma } from './prisma.js';
 import {
@@ -40,10 +33,6 @@ type TransferRequestWithRelations = TransferRequest & {
   events?: TransferRequestEvent[];
   notes?: (TransferRequestNote & {
     authorUser: Pick<User, 'userId' | 'email' | 'displayName'> | null;
-  })[];
-  approvalDecisions?: (ApprovalDecision & {
-    actorUser: Pick<User, 'userId' | 'email' | 'displayName'> | null;
-    approvalPolicy: ApprovalPolicy | null;
   })[];
   executionRecords?: (ExecutionRecord & {
     executorUser: Pick<User, 'userId' | 'email' | 'displayName'> | null;
@@ -95,57 +84,13 @@ type SyntheticSettlementException = {
   availableActions: [];
 };
 
-export async function listApprovalInbox(args: {
-  organizationId: string;
-  limit?: number;
-  statuses?: Array<'pending_approval' | 'escalated'>;
-}) {
-  const statuses = args.statuses?.length ? args.statuses : ['pending_approval', 'escalated'];
-  const [transferRequests, approvalPolicy] = await Promise.all([
-    prisma.transferRequest.findMany({
-      where: {
-        organizationId: args.organizationId,
-        asset: 'usdc',
-        status: { in: statuses },
-      },
-      include: baseTransferRequestInclude(),
-      orderBy: { requestedAt: 'desc' },
-      take: args.limit ?? 100,
-    }),
-    getOrCreateOrganizationApprovalPolicy(args.organizationId),
-  ]);
-
-  return {
-    approvalPolicy: serializeApprovalPolicy(approvalPolicy),
-    items: transferRequests.map((request) => {
-      const item = buildSettlementQueueItem(request as unknown as TransferRequestWithRelations);
-      return {
-        ...item,
-        approvalEvaluation: buildApprovalEvaluationSummary({
-          policy: approvalPolicy,
-          amountRaw: item.amountRaw,
-          destination: item.destination
-            ? {
-                label: item.destination.label,
-                trustState: item.destination.trustState,
-                isInternal: item.destination.isInternal,
-              }
-            : { label: 'unnamed destination', trustState: 'unreviewed', isInternal: false },
-        }),
-      };
-    }),
-  };
-}
-
 export async function getReconciliationDetail(organizationId: string, transferRequestId: string) {
   const requestWithTimeline = await prisma.transferRequest.findFirstOrThrow({
     where: { organizationId, transferRequestId },
-    include: baseTransferRequestInclude({ includeNotes: true, includeApprovalDecisions: true }),
+    include: baseTransferRequestInclude({ includeNotes: true }),
   });
   const request = requestWithTimeline as unknown as TransferRequestWithRelations;
   const queueItem = buildSettlementQueueItem(request);
-  const approvalPolicy = await getOrCreateOrganizationApprovalPolicy(organizationId);
-  const approvalDecisions = (request.approvalDecisions ?? []).map(serializeApprovalDecision);
   const events = (requestWithTimeline.events ?? []).map((event) =>
     serializeTransferRequestEvent(parseTransferRequestEvent(event)),
   );
@@ -171,25 +116,11 @@ export async function getReconciliationDetail(organizationId: string, transferRe
     matchExplanation: queueItem.matchExplanation,
     exceptions: queueItem.exceptions,
     exceptionExplanation: queueItem.exceptionExplanation,
-    approvalPolicy: serializeApprovalPolicy(approvalPolicy),
-    approvalEvaluation: buildApprovalEvaluationSummary({
-      policy: approvalPolicy,
-      amountRaw: request.amountRaw,
-      destination: request.destination
-        ? {
-            label: request.destination.label,
-            trustState: request.destination.trustState,
-            isInternal: request.destination.isInternal,
-          }
-        : { label: 'unnamed destination', trustState: 'unreviewed', isInternal: false },
-    }),
-    approvalDecisions,
     events,
     notes,
     timeline: buildTimeline({
       events: timelineEvents,
       notes,
-      approvalDecisions,
       executionRecords: queueItem.executionRecords,
       observedExecutionTransaction: null,
       match: queueItem.match,
@@ -265,7 +196,7 @@ export async function getReconciliationExplanation(organizationId: string, trans
   };
 }
 
-function baseTransferRequestInclude(options: { includeNotes?: boolean; includeApprovalDecisions?: boolean } = {}) {
+function baseTransferRequestInclude(options: { includeNotes?: boolean } = {}) {
   return {
     sourceTreasuryWallet: true,
     destination: { include: { counterparty: true } },
@@ -278,19 +209,6 @@ function baseTransferRequestInclude(options: { includeNotes?: boolean; includeAp
               authorUser: {
                 select: { userId: true, email: true, displayName: true },
               },
-            },
-            orderBy: { createdAt: 'asc' as const },
-          },
-        }
-      : {}),
-    ...(options.includeApprovalDecisions
-      ? {
-          approvalDecisions: {
-            include: {
-              actorUser: {
-                select: { userId: true, email: true, displayName: true },
-              },
-              approvalPolicy: true,
             },
             orderBy: { createdAt: 'asc' as const },
           },
@@ -511,28 +429,6 @@ export function serializeTransferRequest(request: TransferRequestWithRelations) 
       : null,
     destination: request.destination ? serializeDestination(request.destination) : null,
     requestedByUser: serializeUserRef(request.requestedByUser),
-  };
-}
-
-function serializeApprovalDecision(
-  decision: ApprovalDecision & {
-    actorUser: Pick<User, 'userId' | 'email' | 'displayName'> | null;
-    approvalPolicy: ApprovalPolicy | null;
-  },
-) {
-  return {
-    approvalDecisionId: decision.approvalDecisionId,
-    approvalPolicyId: decision.approvalPolicyId,
-    transferRequestId: decision.transferRequestId,
-    organizationId: decision.organizationId,
-    actorUserId: decision.actorUserId,
-    actorType: decision.actorType,
-    action: decision.action,
-    comment: decision.comment,
-    payloadJson: decision.payloadJson,
-    createdAt: decision.createdAt,
-    actorUser: serializeUserRef(decision.actorUser),
-    approvalPolicy: decision.approvalPolicy ? serializeApprovalPolicy(decision.approvalPolicy) : null,
   };
 }
 

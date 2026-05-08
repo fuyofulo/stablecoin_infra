@@ -10,7 +10,6 @@ import type {
   User,
   TreasuryWallet,
 } from '@prisma/client';
-import { buildApprovalEvaluationSummary, getOrCreateOrganizationApprovalPolicy } from './approval-policy.js';
 import { serializeExecutionRecord } from './execution-records.js';
 import { prisma } from './prisma.js';
 import { getReconciliationDetail } from './settlement-read-model.js';
@@ -223,7 +222,7 @@ export async function updatePaymentOrder(
     include: paymentOrderInclude,
   });
 
-  if (!['draft', 'pending_approval', 'approved'].includes(current.state)) {
+  if (!['draft', 'approved'].includes(current.state)) {
     throw new Error(`Payment order ${current.state} cannot be edited`);
   }
 
@@ -337,19 +336,10 @@ export async function submitPaymentOrder(
   });
 
   await prisma.$transaction(async (tx) => {
-    const approvalPolicy = await getOrCreateOrganizationApprovalPolicy(args.organizationId, tx);
-    const approvalEvaluation = buildApprovalEvaluationSummary({
-      policy: approvalPolicy,
-      amountRaw: current.amountRaw,
-      destination: {
-        label: current.destination.label,
-        trustState: current.destination.trustState,
-        isInternal: current.destination.isInternal,
-      },
-    });
-    const finalRequestStatus = approvalEvaluation.requiresApproval ? 'pending_approval' : 'approved';
-    const finalPaymentOrderState = approvalEvaluation.requiresApproval ? 'pending_approval' : 'approved';
-
+    // Squads multisig is the approval ceremony for payment execution. The
+    // pre-Squads "internal approval" inbox was removed — orders submitted
+    // here go straight to 'approved' provided the destination is trusted.
+    // (validateDestinationForPaymentOrder above already gates trust state.)
     const transferRequest = await tx.transferRequest.create({
       data: {
         organizationId: args.organizationId,
@@ -362,7 +352,7 @@ export async function submitPaymentOrder(
         requestedByUserId: args.actorUserId ?? undefined,
         reason: current.memo,
         externalReference: current.externalReference ?? current.invoiceNumber,
-        status: finalRequestStatus,
+        status: 'approved',
         dueAt: current.dueAt,
         propertiesJson: {
           paymentOrderId: current.paymentOrderId,
@@ -379,7 +369,7 @@ export async function submitPaymentOrder(
       eventType: 'request_created',
       ...buildTransferEventActor(args),
       beforeState: null,
-      afterState: finalRequestStatus,
+      afterState: 'approved',
       payloadJson: {
         source: 'payment_order',
         paymentOrderId: current.paymentOrderId,
@@ -389,44 +379,20 @@ export async function submitPaymentOrder(
       },
     });
 
-    await tx.approvalDecision.create({
-      data: {
-        approvalPolicyId: approvalPolicy.approvalPolicyId,
-        transferRequestId: transferRequest.transferRequestId,
-        organizationId: args.organizationId,
-        actorType: 'system',
-        action: approvalEvaluation.requiresApproval ? 'routed_for_approval' : 'auto_approved',
-        payloadJson: approvalEvaluation as Prisma.InputJsonValue,
-      },
-    });
-
-    await createTransferRequestEvent(tx, {
-      transferRequestId: transferRequest.transferRequestId,
-      organizationId: args.organizationId,
-      eventType: approvalEvaluation.requiresApproval ? 'approval_required' : 'approval_auto_approved',
-      actorType: 'system',
-      eventSource: 'system',
-      beforeState: 'submitted',
-      afterState: finalRequestStatus,
-      payloadJson: approvalEvaluation as Prisma.InputJsonValue,
-    });
-
     await tx.paymentOrder.update({
       where: { paymentOrderId: current.paymentOrderId },
-      data: {
-        state: finalPaymentOrderState,
-      },
+      data: { state: 'approved' },
     });
 
     await createPaymentOrderEvent(tx, {
       paymentOrderId: current.paymentOrderId,
       organizationId: args.organizationId,
-      eventType: approvalEvaluation.requiresApproval ? 'payment_order_approval_required' : 'payment_order_auto_approved',
+      eventType: 'payment_order_approved',
       actorType: 'system',
       beforeState: current.state,
-      afterState: finalPaymentOrderState,
+      afterState: 'approved',
       linkedTransferRequestId: transferRequest.transferRequestId,
-      payloadJson: approvalEvaluation as Prisma.InputJsonValue,
+      payloadJson: {},
     });
   });
 
@@ -647,10 +613,6 @@ export async function preparePaymentOrderExecution(args: PaymentActorInput & {
   const transferRequest = getPrimaryTransferRequest(current);
   if (!transferRequest) {
     throw new Error('Submit the payment order before preparing execution');
-  }
-
-  if (transferRequest.status === 'pending_approval' || transferRequest.status === 'escalated') {
-    throw new Error('Payment order requires approval before execution can be prepared');
   }
 
   if (!['approved', 'ready_for_execution'].includes(transferRequest.status)) {
@@ -1064,10 +1026,6 @@ function derivePaymentOrderState(
     return 'ready_for_execution';
   }
 
-  if (reconciliationDetail.status === 'pending_approval' || reconciliationDetail.status === 'escalated') {
-    return 'pending_approval';
-  }
-
   if (reconciliationDetail.status === 'rejected') {
     return 'cancelled';
   }
@@ -1147,13 +1105,6 @@ function mapInternalPaymentStateToSquadsProductState(state: string): PaymentOrde
   switch (state) {
     case 'draft':
       return 'draft';
-    // Decimal-side approval is a real pre-Squads gate — preserve it so
-    // the Approvals page (filtered on derivedState='pending_approval')
-    // and the PaymentDetail 'needs_approval' variant both fire. Without
-    // this case the default fall-through silently collapsed it to
-    // 'ready' and the approval step disappeared from the UI.
-    case 'pending_approval':
-      return 'pending_approval';
     case 'approved':
     case 'ready_for_execution':
       return 'ready';
@@ -1408,6 +1359,16 @@ function validateDestinationForPaymentOrder(destination: Pick<Destination, 'labe
 
   if (destination.trustState === 'blocked') {
     throw new Error(`Destination "${destination.label}" is blocked and cannot be used for payment orders`);
+  }
+
+  // Squads multisig is the approval ceremony — pre-Squads we require the
+  // destination to be reviewed and trusted before any payment can be routed
+  // to it. Operators promote destinations to "trusted" from the
+  // Destinations page.
+  if (destination.trustState !== 'trusted') {
+    throw new Error(
+      `Destination "${destination.label}" is ${destination.trustState ?? 'unreviewed'} — review and mark it as trusted before submitting a payment to it.`,
+    );
   }
 }
 

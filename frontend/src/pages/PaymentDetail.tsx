@@ -10,7 +10,9 @@ import type {
   TreasuryWallet,
 } from '../types';
 import {
+  assetSymbol,
   discoverSolanaWallets,
+  downloadJson,
   formatRawUsdcCompact,
   formatRelativeTime,
   formatTimestamp,
@@ -19,26 +21,26 @@ import {
   signAndSubmitPreparedPayment,
   orbAccountUrl,
   subscribeSolanaWallets,
+  walletLabel,
   type BrowserWalletOption,
 } from '../domain';
 import { displayPaymentStatus, statusToneForPayment } from '../status-labels';
 import { signAndSubmitIntent } from '../lib/squads-pipeline';
-import { readSettlementVerificationStatus } from '../lib/settlement';
+import {
+  isRetryableConfirmationError,
+  readSettlementVerificationStatus,
+  useAutoRetryProposalVerification,
+} from '../lib/settlement';
+import { useSquadsProposalActions } from '../lib/squads-actions';
+import { buildSquadsPaymentLifecycle } from '../lib/lifecycle';
+import { DetailEntry, DetailPageSkeleton, DetailPageState } from '../ui-primitives';
+import { LifecycleRail, type LifecycleStage, type StageState } from '../ui/LifecycleRail';
+import { SettlementBanner } from '../ui/SettlementBanner';
 import { useToast } from '../ui/Toast';
 import type { UserWallet } from '../types';
 
-type StageState = 'complete' | 'current' | 'pending' | 'blocked';
-
-type LifecycleStage = {
-  id: 'request' | 'proposal' | 'approval' | 'execution' | 'settlement' | 'proof';
-  label: string;
-  sub: string;
-  state: StageState;
-};
-
 type ActionVariant =
   | 'needs_submit'
-  | 'needs_approval'
   | 'ready_to_sign'
   | 'ready_to_propose'
   | 'proposal_in_progress'
@@ -47,17 +49,6 @@ type ActionVariant =
   | 'exception'
   | 'cancelled'
   | 'idle';
-
-function assetSymbol(asset: string | undefined): string {
-  return (asset ?? 'usdc').toUpperCase();
-}
-
-function walletLabel(address: TreasuryWallet): string {
-  if (address.displayName && address.displayName.trim().length) {
-    return `${address.displayName} · ${shortenAddress(address.address, 4, 4)}`;
-  }
-  return shortenAddress(address.address, 4, 4);
-}
 
 function toneToPill(tone: 'success' | 'warning' | 'danger' | 'neutral'): 'success' | 'warning' | 'danger' | 'info' {
   return tone === 'success' ? 'success' : tone === 'danger' ? 'danger' : tone === 'warning' ? 'warning' : 'info';
@@ -73,9 +64,6 @@ function buildLifecycle(
   const cancelled = s === 'cancelled';
   const squads = order.productLifecycle?.source === 'squads_v4';
 
-  const readyDone = s !== 'draft' && s !== 'cancelled';
-  const proposedDone = ['proposed', 'approved', 'executed', 'partially_settled', 'settled', 'closed', 'exception'].includes(s);
-  const approvalDone = ['approved', 'executed', 'partially_settled', 'settled', 'closed', 'exception'].includes(s);
   const executionDone = ['execution_recorded', 'executed', 'proposal_executed', 'partially_settled', 'settled', 'closed', 'exception'].includes(s);
   const proofDone = settled;
 
@@ -83,52 +71,12 @@ function buildLifecycle(
   const verifyMismatch = settlementVerification === 'mismatch';
 
   if (squads) {
-    return [
-      {
-        id: 'request',
-        label: 'Requested',
-        sub: formatRelativeTime(order.createdAt),
-        state: 'complete',
-      },
-      {
-        id: 'proposal',
-        label: proposedDone ? 'Proposed' : 'Propose',
-        sub: cancelled ? 'Cancelled' : proposedDone ? 'On-chain' : readyDone ? 'Ready' : 'Not ready',
-        state: cancelled ? 'blocked' : proposedDone ? 'complete' : readyDone ? 'current' : 'pending',
-      },
-      {
-        id: 'approval',
-        label: approvalDone ? 'Approved' : 'Approve',
-        sub: approvalDone ? 'Threshold met' : proposedDone ? 'Voting' : 'Pending proposal',
-        state: cancelled || blocked ? 'blocked' : approvalDone ? 'complete' : proposedDone ? 'current' : 'pending',
-      },
-      {
-        id: 'execution',
-        label: executionDone ? 'Executed' : 'Execute',
-        sub: executionDone ? 'On-chain' : approvalDone ? 'Ready' : 'Pending approval',
-        state: blocked && !verifyMismatch ? 'blocked' : executionDone ? 'complete' : approvalDone ? 'current' : 'pending',
-      },
-      {
-        id: 'settlement',
-        label: verifyMismatch ? 'Mismatch' : settled ? 'Settled' : 'Verify',
-        sub: verifyMismatch
-          ? 'Settlement deltas did not match'
-          : settled
-            ? 'Matched'
-            : verifyingNow
-              ? 'Verifying on RPC…'
-              : executionDone
-                ? 'Verification pending'
-                : 'Pending execution',
-        state: verifyMismatch
-          ? 'blocked'
-          : settled
-            ? 'complete'
-            : executionDone
-              ? 'current'
-              : 'pending',
-      },
-    ];
+    return buildSquadsPaymentLifecycle({
+      derivedState: s,
+      settlementVerification,
+      requestSub: formatRelativeTime(order.createdAt),
+      settledSub: 'Matched',
+    });
   }
 
   const approveDone = !['draft', 'pending_approval', 'cancelled'].includes(s);
@@ -200,7 +148,6 @@ function buildLifecycle(
 function determineVariant(order: PaymentOrder): ActionVariant {
   const s = order.productLifecycle?.productState ?? order.derivedState;
   if (s === 'draft') return 'needs_submit';
-  if (s === 'pending_approval') return 'needs_approval';
   if (s === 'ready' || s === 'ready_for_execution') {
     // Squads-sourced payments need a multisig proposal, not a direct sign.
     return order.sourceTreasuryWallet?.source === 'squads_v4' && order.canCreateSquadsPaymentProposal !== false
@@ -213,29 +160,6 @@ function determineVariant(order: PaymentOrder): ActionVariant {
   if (s === 'exception' || s === 'partially_settled') return 'exception';
   if (s === 'cancelled') return 'cancelled';
   return 'idle';
-}
-
-// Detects the backend's retryable confirmation errors:
-//   - "Transaction signature is not confirmed yet." (verifyRpcSignatureConfirmed)
-//   - "Execution transaction was confirmed, but USDC settlement could not be
-//      verified from RPC yet." (verifySquadsProposalSettlement, transient)
-// Both cases mean the on-chain side may already have happened — the user
-// should stay on a retry banner rather than recreate the proposal.
-function isUnconfirmedSignatureError(err: unknown): boolean {
-  if (!(err instanceof ApiError) || err.status !== 400) return false;
-  return /(not confirmed yet|could not be verified from RPC yet)/i.test(err.message);
-}
-
-function downloadJson(filename: string, data: unknown) {
-  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
 }
 
 export function PaymentDetailPage() {
@@ -285,21 +209,6 @@ export function PaymentDetailPage() {
       await queryClient.invalidateQueries({ queryKey: ['payment-order', organizationId, paymentOrderId] });
     },
     onError: (err) => toastError(err instanceof Error ? err.message : 'Could not submit.'),
-  });
-
-  const approveMutation = useMutation({
-    mutationFn: () => {
-      const transferRequestId = orderQuery.data?.transferRequestId;
-      if (!transferRequestId) throw new Error('Approval request not ready yet — try again in a moment.');
-      return api.createApprovalDecision(organizationId!, transferRequestId, { action: 'approve' });
-    },
-    onSuccess: async () => {
-      success('Approved. Ready to sign.');
-      await queryClient.invalidateQueries({ queryKey: ['payment-order', organizationId, paymentOrderId] });
-      await queryClient.invalidateQueries({ queryKey: ['payment-orders', organizationId] });
-      await queryClient.invalidateQueries({ queryKey: ['organization-summary', organizationId] });
-    },
-    onError: (err) => toastError(err instanceof Error ? err.message : 'Could not approve.'),
   });
 
   const signMutation = useMutation({
@@ -385,120 +294,34 @@ export function PaymentDetailPage() {
   const currentUserId = sessionQuery.data?.user.userId ?? null;
 
   // Find the user's personal wallet that's a pending voter on the linked
-  // Squads proposal (if any), and the wallet they can execute with.
+  // Squads proposal (if any), and the wallet they can execute with. The
+  // shared hook owns the wallet selection + approve/execute mutations so
+  // PaymentDetail and OrganizationProposalDetail stay in lockstep.
   const linkedProposal: DecimalProposal | null = orderQuery.data?.squadsPaymentProposal ?? null;
-  const proposalPendingVoterWalletId = useMemo(() => {
-    if (!linkedProposal?.voting || !currentUserId) return null;
-    const ownAddresses = new Set(ownPersonalWallets.map((w) => w.walletAddress));
-    const match = linkedProposal.voting.pendingVoters.find(
-      (v) => v.personalWallet?.userId === currentUserId && ownAddresses.has(v.walletAddress),
-    );
-    if (!match) return null;
-    return ownPersonalWallets.find((w) => w.walletAddress === match.walletAddress)?.userWalletId ?? null;
-  }, [linkedProposal, ownPersonalWallets, currentUserId]);
-
-  const proposalExecuteWalletId = useMemo(() => {
-    if (!linkedProposal?.voting) return null;
-    const executable = new Set(linkedProposal.voting.canExecuteWalletAddresses);
-    return ownPersonalWallets.find((w) => executable.has(w.walletAddress))?.userWalletId ?? null;
-  }, [linkedProposal, ownPersonalWallets]);
-
-  const proposalApproveMutation = useMutation({
-    mutationFn: async (signerWalletId: string) => {
-      if (!linkedProposal) throw new Error('No linked proposal.');
-      const intent = await api.createProposalApprovalIntent(
-        organizationId!,
-        linkedProposal.decimalProposalId,
-        { memberPersonalWalletId: signerWalletId },
-      );
-      return signAndSubmitIntent({ intent, signerPersonalWalletId: signerWalletId });
-    },
-    onSuccess: async () => {
-      success('Approval submitted.');
-      await queryClient.invalidateQueries({ queryKey: ['payment-order', organizationId, paymentOrderId] });
-      await queryClient.invalidateQueries({ queryKey: ['payment-orders', organizationId] });
-      await queryClient.invalidateQueries({ queryKey: ['organization-proposals', organizationId] });
-    },
-    onError: (err) => {
-      toastError(err instanceof ApiError || err instanceof Error ? err.message : 'Approve failed.');
-    },
-  });
-
-  const proposalExecuteMutation = useMutation({
-    mutationFn: async (signerWalletId: string) => {
-      if (!linkedProposal) throw new Error('No linked proposal.');
-      const intent = await api.createProposalExecuteIntent(
-        organizationId!,
-        linkedProposal.decimalProposalId,
-        { memberPersonalWalletId: signerWalletId },
-      );
-      const sig = await signAndSubmitIntent({
-        intent,
-        signerPersonalWalletId: signerWalletId,
-      });
-      // confirm-execution may throw a retryable 400 ("not confirmed yet" or
-      // "could not be verified from RPC yet") — surface that to the user as
-      // a "verification pending" notice rather than swallowing. The backend
-      // stores the signature on the proposal regardless, so the auto-retry
-      // effect below will re-run verification once RPC catches up.
-      await api.confirmProposalExecution(organizationId!, linkedProposal.decimalProposalId, { signature: sig });
-      return sig;
-    },
-    onSuccess: async () => {
-      success('Proposal executed.');
-      await queryClient.invalidateQueries({ queryKey: ['payment-order', organizationId, paymentOrderId] });
-      await queryClient.invalidateQueries({ queryKey: ['payment-orders', organizationId] });
-      await queryClient.invalidateQueries({ queryKey: ['organization-proposals', organizationId] });
-    },
-    onError: async (err) => {
-      if (isUnconfirmedSignatureError(err)) {
-        info('Execution submitted. Verification pending — will retry automatically.');
-        // Refetch so the proposal's executedSignature shows up and the
-        // pending-verification effect can take over.
-        await queryClient.invalidateQueries({ queryKey: ['payment-order', organizationId, paymentOrderId] });
-        await queryClient.invalidateQueries({ queryKey: ['organization-proposals', organizationId] });
-        return;
-      }
-      toastError(err instanceof ApiError || err instanceof Error ? err.message : 'Execute failed.');
-    },
-  });
-
-  // Auto-retry settlement verification while the proposal is executed but
-  // the backend hasn't yet been able to verify USDC settlement (RPC lag on
-  // getParsedTransaction). confirm-execution is idempotent for the same
-  // signature: it only re-runs verification and upgrades downstream state if
-  // verification now passes.
-  const verificationStatus = readSettlementVerificationStatus(linkedProposal);
-  useEffect(() => {
-    if (!organizationId) return;
-    if (!linkedProposal?.decimalProposalId) return;
-    if (!linkedProposal.executedSignature) return;
-    if (verificationStatus !== 'pending') return;
-    let cancelled = false;
-    const handle = window.setTimeout(async () => {
-      if (cancelled) return;
-      try {
-        await api.confirmProposalExecution(organizationId, linkedProposal.decimalProposalId, {
-          signature: linkedProposal.executedSignature!,
-        });
-        await queryClient.invalidateQueries({ queryKey: ['payment-order', organizationId, paymentOrderId] });
-        await queryClient.invalidateQueries({ queryKey: ['organization-proposals', organizationId] });
-      } catch {
-        // Stay on pending; the next render schedules another retry.
-      }
-    }, 6_000);
-    return () => {
-      cancelled = true;
-      window.clearTimeout(handle);
-    };
-  }, [
+  const proposalActions = useSquadsProposalActions({
     organizationId,
-    paymentOrderId,
-    linkedProposal?.decimalProposalId,
-    linkedProposal?.executedSignature,
-    verificationStatus,
-    queryClient,
-  ]);
+    proposal: linkedProposal,
+    ownPersonalWallets,
+    currentUserId,
+    invalidationKeys: [
+      ['payment-order', organizationId, paymentOrderId],
+      ['payment-orders', organizationId],
+      ['organization-proposals', organizationId],
+    ],
+    toast: { success, error: toastError, info },
+  });
+  const proposalPendingVoterWalletId = proposalActions.pendingVoterWallet?.userWalletId ?? null;
+  const proposalExecuteWalletId = proposalActions.executeWallet?.userWalletId ?? null;
+
+  useAutoRetryProposalVerification({
+    organizationId,
+    proposal: linkedProposal,
+    invalidationKeys: [
+      ['payment-order', organizationId, paymentOrderId],
+      ['organization-proposals', organizationId],
+    ],
+  });
+  const verificationStatus = readSettlementVerificationStatus(linkedProposal);
 
   // When the proposal-creation tx is signed and submitted but the backend
   // confirm-submission times out (RPC slow / not yet visible), we keep the
@@ -550,7 +373,7 @@ export function PaymentDetailPage() {
     onError: (err) => {
       // RPC confirm timed out but the tx may still be propagating — keep the
       // pending state and surface a retry banner instead of a hard error.
-      if (isUnconfirmedSignatureError(err)) {
+      if (isRetryableConfirmationError(err)) {
         info('Transaction submitted. Confirmation pending — retry in a moment.');
         return;
       }
@@ -577,7 +400,7 @@ export function PaymentDetailPage() {
       navigate(`/organizations/${organizationId}/proposals/${result.decimalProposalId}`);
     },
     onError: (err) => {
-      if (isUnconfirmedSignatureError(err)) {
+      if (isRetryableConfirmationError(err)) {
         info('Still pending. Try again in a few seconds.');
         return;
       }
@@ -587,49 +410,34 @@ export function PaymentDetailPage() {
 
   if (!organizationId || !paymentOrderId) {
     return (
-      <main className="page-frame" data-layout="rd">
-        <div className="rd-page-container">
-          <div className="rd-state">
-            <h2 className="rd-state-title">Payment unavailable</h2>
-            <p className="rd-state-body">Pick a payment from the list.</p>
-          </div>
-        </div>
-      </main>
+      <DetailPageState
+        title="Payment unavailable"
+        body="Pick a payment from the list."
+      />
     );
   }
 
   if (orderQuery.isLoading) {
-    return (
-      <main className="page-frame" data-layout="rd">
-        <div className="rd-page-container">
-          <div className="rd-skeleton rd-skeleton-line" style={{ width: 120 }} />
-          <div className="rd-skeleton rd-skeleton-line" style={{ width: 280, height: 28, marginBottom: 8 }} />
-          <div className="rd-skeleton rd-skeleton-block" style={{ height: 120, marginTop: 24 }} />
-          <div className="rd-skeleton rd-skeleton-block" style={{ height: 200, marginTop: 32 }} />
-        </div>
-      </main>
-    );
+    return <DetailPageSkeleton />;
   }
 
   if (orderQuery.isError || !orderQuery.data) {
     return (
-      <main className="page-frame" data-layout="rd">
-        <div className="rd-page-container">
+      <DetailPageState
+        title="Couldn't load this payment"
+        body={orderQuery.error instanceof Error ? orderQuery.error.message : 'Something went wrong.'}
+        back={
           <Link to={`/organizations/${organizationId}/payments`} className="rd-back">
             <span className="rd-back-arrow">←</span>
             <span>Payments</span>
           </Link>
-          <div className="rd-state">
-            <h2 className="rd-state-title">Couldn't load this payment</h2>
-            <p className="rd-state-body">
-              {orderQuery.error instanceof Error ? orderQuery.error.message : 'Something went wrong.'}
-            </p>
-            <button className="rd-btn rd-btn-secondary" type="button" onClick={() => void orderQuery.refetch()}>
-              Try again
-            </button>
-          </div>
-        </div>
-      </main>
+        }
+        action={
+          <button className="rd-btn rd-btn-secondary" type="button" onClick={() => void orderQuery.refetch()}>
+            Try again
+          </button>
+        }
+      />
     );
   }
 
@@ -641,7 +449,6 @@ export function PaymentDetailPage() {
   const statusTone = statusToneForPayment(order.derivedState);
   const latestExec = order.reconciliationDetail?.latestExecution ?? null;
   const match = order.reconciliationDetail?.match ?? null;
-  const approvalDecisions = order.reconciliationDetail?.approvalDecisions ?? [];
 
   return (
     <main className="page-frame" data-layout="rd">
@@ -686,7 +493,7 @@ export function PaymentDetailPage() {
           </div>
         </header>
 
-        <LifecycleRail stages={lifecycle} />
+        <LifecycleRail stages={lifecycle} ariaLabel="Payment lifecycle" />
 
         <PrimaryAction
           variant={variant}
@@ -701,12 +508,10 @@ export function PaymentDetailPage() {
           selectedWalletId={selectedWalletId}
           onSelectWallet={setSelectedWalletId}
           submitting={submitMutation.isPending}
-          approving={approveMutation.isPending}
           signing={signMutation.isPending}
           exporting={proofMutation.isPending}
           cancelling={cancelMutation.isPending}
           onSubmit={() => submitMutation.mutate()}
-          onApprove={() => approveMutation.mutate()}
           onSign={() => signMutation.mutate()}
           onExportProof={() => proofMutation.mutate()}
           onCancel={() => cancelMutation.mutate()}
@@ -721,10 +526,10 @@ export function PaymentDetailPage() {
           linkedProposal={linkedProposal}
           proposalPendingVoterWalletId={proposalPendingVoterWalletId}
           proposalExecuteWalletId={proposalExecuteWalletId}
-          proposalApproving={proposalApproveMutation.isPending}
-          proposalExecuting={proposalExecuteMutation.isPending}
-          onApproveProposal={(signerWalletId) => proposalApproveMutation.mutate(signerWalletId)}
-          onExecuteProposal={(signerWalletId) => proposalExecuteMutation.mutate(signerWalletId)}
+          proposalApproving={proposalActions.approving}
+          proposalExecuting={proposalActions.executing}
+          onApproveProposal={(signerWalletId) => proposalActions.approve(signerWalletId)}
+          onExecuteProposal={(signerWalletId) => proposalActions.execute(signerWalletId)}
         />
 
         <section className="rd-section">
@@ -831,20 +636,6 @@ export function PaymentDetailPage() {
                 body={`Created by ${order.createdByUser?.email ?? 'System'}.`}
                 state="complete"
               />
-              {approvalDecisions.length > 0
-                ? approvalDecisions
-                    .slice()
-                    .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
-                    .map((d) => (
-                      <TimelineRow
-                        key={d.approvalDecisionId}
-                        title={`Approval · ${d.action.replaceAll('_', ' ')}`}
-                        meta={formatTimestamp(d.createdAt)}
-                        body={d.actorUser?.email ?? d.actorType}
-                        state="complete"
-                      />
-                    ))
-                : null}
               {latestExec?.submittedSignature ? (
                 <TimelineRow
                   title="Executed on-chain"
@@ -886,39 +677,6 @@ export function PaymentDetailPage() {
   );
 }
 
-function LifecycleRail({ stages }: { stages: LifecycleStage[] }) {
-  return (
-    <div
-      className="rd-rail"
-      role="list"
-      aria-label="Payment lifecycle"
-      style={{ gridTemplateColumns: `repeat(${stages.length}, 1fr)` }}
-    >
-      {stages.map((stage) => (
-        <div key={stage.id} className="rd-rail-step" data-state={stage.state} role="listitem">
-          <div className="rd-rail-marker-row">
-            <span className="rd-rail-dot" aria-hidden />
-            <span className="rd-rail-line" aria-hidden />
-          </div>
-          <span className="rd-rail-label">{stage.label}</span>
-          <span className="rd-rail-sub">{stage.sub}</span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function DetailEntry({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div>
-      <dt className="rd-metric-label" style={{ marginBottom: 6 }}>
-        {label}
-      </dt>
-      <dd style={{ margin: 0, fontSize: 13, color: 'var(--ax-text)' }}>{children}</dd>
-    </div>
-  );
-}
-
 function TimelineRow({
   title,
   meta,
@@ -954,12 +712,10 @@ function PrimaryAction(props: {
   selectedWalletId: string | undefined;
   onSelectWallet: (id: string | undefined) => void;
   submitting: boolean;
-  approving: boolean;
   signing: boolean;
   exporting: boolean;
   cancelling: boolean;
   onSubmit: () => void;
-  onApprove: () => void;
   onSign: () => void;
   onExportProof: () => void;
   onCancel: () => void;
@@ -991,11 +747,9 @@ function PrimaryAction(props: {
     selectedWalletId,
     onSelectWallet,
     submitting,
-    approving,
     signing,
     exporting,
     onSubmit,
-    onApprove,
     onSign,
     onExportProof,
     ownPersonalWallets,
@@ -1019,9 +773,9 @@ function PrimaryAction(props: {
     return (
       <div className="rd-primary" data-emphasis="action">
         <p className="rd-primary-eyebrow">Next step · Submit</p>
-        <h2 className="rd-primary-title">Ready to route through policy</h2>
+        <h2 className="rd-primary-title">Ready to submit</h2>
         <p className="rd-primary-body">
-          Submit this payment for policy evaluation. If approval is required, it will route to reviewers.
+          Submit this payment to advance it to execution. The Squads multisig flow handles the on-chain approval.
         </p>
         <div className="rd-actions">
           <button
@@ -1032,29 +786,6 @@ function PrimaryAction(props: {
             aria-busy={submitting}
           >
             {submitting ? 'Submitting…' : 'Submit for approval'}
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  if (variant === 'needs_approval') {
-    return (
-      <div className="rd-primary" data-emphasis="action">
-        <p className="rd-primary-eyebrow">Next step · Approval</p>
-        <h2 className="rd-primary-title">Awaiting approval</h2>
-        <p className="rd-primary-body">
-          Policy routed this payment for review. Approve to unlock signing.
-        </p>
-        <div className="rd-actions">
-          <button
-            type="button"
-            className="rd-btn rd-btn-primary"
-            onClick={onApprove}
-            disabled={approving}
-            aria-busy={approving}
-          >
-            {approving ? 'Approving…' : 'Approve'}
           </button>
         </div>
       </div>

@@ -12,8 +12,6 @@ TRUNCATE TABLE
   wallet_challenges,
   user_wallets,
   organization_memberships,
-  approval_decisions,
-  approval_policies,
   execution_records,
   transfer_request_notes,
   transfer_request_events,
@@ -746,26 +744,28 @@ test('payment order duplicate references and unsafe source wallets are rejected'
   assert.match((await response.json()).message, /Source wallet not found/i);
 });
 
-test('unreviewed destinations route payment orders to the approval inbox without activating matching', async () => {
+test('unreviewed destinations are blocked at submit instead of routing to a pre-Squads approval inbox', async () => {
   const setup = await createPaymentOrderSetup({ destinationTrustState: 'unreviewed' });
 
-  const paymentOrder = await post(
-    `/organizations/${setup.organization.organizationId}/payment-orders`,
-    {
+  const response = await fetch(`${baseUrl}/organizations/${setup.organization.organizationId}/payment-orders`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      ...authHeaders(setup.sessionToken),
+    },
+    body: JSON.stringify({
       destinationId: setup.destination.destinationId,
       sourceTreasuryWalletId: setup.sourceAddress.treasuryWalletId,
       amountRaw: '10000',
       memo: 'New vendor review',
       submitNow: true,
-    },
-    setup.sessionToken,
-  );
+    }),
+  });
 
-  assert.equal(paymentOrder.state, 'pending_approval');
-  assert.equal(paymentOrder.derivedState, 'pending_approval');
-  assert.equal(paymentOrder.reconciliationDetail.status, 'pending_approval');
-  assert.equal(paymentOrder.reconciliationDetail.approvalState, 'pending_approval');
-  assert.equal(paymentOrder.reconciliationDetail.approvalDecisions[0].action, 'routed_for_approval');
+  assert.equal(response.status, 400);
+  const body = await response.json();
+  assert.match(body.message, /unreviewed/i);
+  assert.match(body.message, /trusted/i);
 });
 
 test('payment order execution handoff records external references and submitted signatures without custody', async () => {
@@ -871,7 +871,7 @@ test('payment orders prepare a signer-ready Solana USDC transfer packet', async 
   assert.ok(events.some((event) => event.eventType === 'payment_order_execution_prepared'));
 });
 
-test('payment order execution preparation cannot bypass approval', async () => {
+test('payment order execution preparation cannot bypass destination trust gate', async () => {
   const setup = await createPaymentOrderSetup({ destinationTrustState: 'unreviewed' });
   const draftOrder = await post(
     `/organizations/${setup.organization.organizationId}/payment-orders`,
@@ -885,8 +885,12 @@ test('payment order execution preparation cannot bypass approval', async () => {
     setup.sessionToken,
   );
 
-  const response = await fetch(
-    `${baseUrl}/organizations/${setup.organization.organizationId}/payment-orders/${draftOrder.paymentOrderId}/prepare-execution`,
+  // Submitting an order whose destination isn't trusted is blocked at the
+  // payment-orders endpoint — Squads multisig is the approval ceremony, but
+  // we still require destinations to be reviewed and trusted before any
+  // payment can target them.
+  const submitResponse = await fetch(
+    `${baseUrl}/organizations/${setup.organization.organizationId}/payment-orders/${draftOrder.paymentOrderId}/submit`,
     {
       method: 'POST',
       headers: {
@@ -896,21 +900,16 @@ test('payment order execution preparation cannot bypass approval', async () => {
       body: JSON.stringify({}),
     },
   );
+  assert.equal(submitResponse.status, 400);
+  assert.match((await submitResponse.json()).message, /unreviewed/i);
 
-  assert.equal(response.status, 400);
-  assert.match((await response.json()).message, /requires approval/i);
-
+  // The order stays draft, no transfer-request was ever created.
   const paymentOrder = await prisma.paymentOrder.findUniqueOrThrow({
     where: { paymentOrderId: draftOrder.paymentOrderId },
     include: { transferRequests: true },
   });
-  assert.equal(paymentOrder.state, 'pending_approval');
-  assert.equal(paymentOrder.transferRequests[0].status, 'pending_approval');
-
-  const executionCount = await prisma.executionRecord.count({
-    where: { transferRequestId: paymentOrder.transferRequests[0].transferRequestId },
-  });
-  assert.equal(executionCount, 0);
+  assert.equal(paymentOrder.state, 'draft');
+  assert.equal(paymentOrder.transferRequests.length, 0);
 });
 
 test('payment orders derive settled and exception states from existing reconciliation truth', async () => {

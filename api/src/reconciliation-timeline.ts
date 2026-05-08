@@ -47,14 +47,6 @@ export function serializeTransferRequestNote(
   };
 }
 
-type TimelineApprovalDecision = {
-  createdAt: Date | string;
-  action: string;
-  comment: string | null;
-  actorUser: ReturnType<typeof serializeUserRef>;
-  payloadJson: unknown;
-};
-
 type TimelineExecutionRecord = {
   updatedAt: Date | string;
   state: string;
@@ -93,7 +85,6 @@ type TimelineException = {
 export function buildTimeline(args: {
   events: ReturnType<typeof parseTransferRequestEvent>[];
   notes: ReturnType<typeof serializeTransferRequestNote>[];
-  approvalDecisions: TimelineApprovalDecision[];
   executionRecords: TimelineExecutionRecord[];
   observedExecutionTransaction: TimelineObservedTransaction | null;
   match: TimelineMatch | null;
@@ -119,14 +110,6 @@ export function buildTimeline(args: {
       createdAt: note.createdAt,
       body: note.body,
       authorUser: note.authorUser,
-    })),
-    ...args.approvalDecisions.map((decision) => ({
-      timelineType: 'approval_decision' as const,
-      createdAt: decision.createdAt,
-      action: decision.action,
-      comment: decision.comment,
-      actorUser: decision.actorUser,
-      payloadJson: decision.payloadJson,
     })),
     ...args.executionRecords.map((record) => ({
       timelineType: 'execution_record' as const,

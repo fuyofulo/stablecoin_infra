@@ -1,6 +1,5 @@
 import type {
   AcceptInviteResponse,
-  ApprovalPolicy,
   AuthenticatedSession,
   CapabilitiesResponse,
   CollectionCsvPreview,
@@ -14,8 +13,6 @@ import type {
   CollectionSourceTrustState,
   Counterparty,
   Destination,
-  ExceptionItem,
-  ExceptionNote,
   CreateOrganizationInviteResponse,
   LoginResponse,
   ObservedTransfer,
@@ -803,67 +800,6 @@ export const api = {
     return request<{ servedAt: string; items: ReconciliationRow[] }>(
       `/organizations/${organizationId}/reconciliation?limit=100`,
     );
-  },
-  getApprovalPolicy(organizationId: string) {
-    return request<ApprovalPolicy>(`/organizations/${organizationId}/approval-policy`);
-  },
-  updateApprovalPolicy(
-    organizationId: string,
-    input: {
-      policyName?: string;
-      isActive?: boolean;
-      ruleJson?: Partial<ApprovalPolicy['ruleJson']>;
-    },
-  ) {
-    return request<ApprovalPolicy>(`/organizations/${organizationId}/approval-policy`, {
-      method: 'PATCH',
-      body: JSON.stringify(input),
-    });
-  },
-  createApprovalDecision(
-    organizationId: string,
-    transferRequestId: string,
-    input: {
-      action: 'approve' | 'reject' | 'escalate';
-      comment?: string;
-    },
-  ) {
-    return request<{ transferRequestId: string; status: string }>(
-      `/organizations/${organizationId}/transfer-requests/${transferRequestId}/approval-decisions`,
-      {
-        method: 'POST',
-        body: JSON.stringify(input),
-      },
-    );
-  },
-  listExceptions(organizationId: string) {
-    return request<{ servedAt: string; items: ExceptionItem[] }>(
-      `/organizations/${organizationId}/exceptions?limit=100`,
-    );
-  },
-  getOrganizationException(organizationId: string, exceptionId: string) {
-    return request<ExceptionItem & { notes: ExceptionNote[] }>(
-      `/organizations/${organizationId}/exceptions/${exceptionId}`,
-    );
-  },
-  applyExceptionAction(
-    organizationId: string,
-    exceptionId: string,
-    input: {
-      action: 'reviewed' | 'expected' | 'dismissed' | 'reopen';
-      note?: string;
-    },
-  ) {
-    return request<ExceptionItem>(`/organizations/${organizationId}/exceptions/${exceptionId}/actions`, {
-      method: 'POST',
-      body: JSON.stringify(input),
-    });
-  },
-  addExceptionNote(organizationId: string, exceptionId: string, input: { body: string }) {
-    return request<ExceptionNote>(`/organizations/${organizationId}/exceptions/${exceptionId}/notes`, {
-      method: 'POST',
-      body: JSON.stringify(input),
-    });
   },
   listPaymentOrders(organizationId: string, state?: PaymentOrder['state']) {
     const params = new URLSearchParams({ limit: '100' });

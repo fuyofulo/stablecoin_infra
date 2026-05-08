@@ -66,13 +66,11 @@ export async function buildPaymentOrderProofPacket(organizationId: string, payme
     },
     approval: {
       state: reconciliation?.approvalState ?? detail.derivedState,
-      decisions: reconciliation?.approvalDecisions.map((decision) => ({
-        action: decision.action,
-        actorType: decision.actorType,
-        actorEmail: decision.actorUser?.email ?? null,
-        comment: decision.comment,
-        createdAt: decision.createdAt,
-      })) ?? [],
+      // Pre-Squads approval decisions are no longer recorded — Squads
+      // multisig is the on-chain approval ceremony. The proof packet keeps
+      // an empty decisions array so the JSON shape stays stable for
+      // downstream consumers.
+      decisions: [],
     },
     execution: {
       state: latestExecution?.state ?? null,
@@ -185,7 +183,7 @@ function deriveProofReadiness(args: {
       'Execution evidence is present',
       args.latestExecution?.submittedSignature || externalExecutionReference
         ? 'pass'
-        : args.derivedState === 'draft' || args.derivedState === 'pending_approval' || args.derivedState === 'approved'
+        : args.derivedState === 'draft' || args.derivedState === 'approved'
           ? 'pending'
           : 'warn',
       args.latestExecution?.submittedSignature

@@ -429,14 +429,10 @@ export async function preparePaymentRunExecution(args: {
     const request = getPrimaryTransferRequest(order);
     return request?.status === 'rejected';
   });
-  const blocked = orders.filter((order) => {
-    const request = getPrimaryTransferRequest(order);
-    return !request || ['pending_approval', 'escalated'].includes(request.status);
-  });
-
-  if (blocked.length) {
+  const unsubmitted = orders.filter((order) => !getPrimaryTransferRequest(order));
+  if (unsubmitted.length) {
     await refreshPersistedRunState(args.organizationId, args.paymentRunId);
-    throw new Error(`${blocked.length} payment run row(s) need approval before batch execution can be prepared`);
+    throw new Error(`${unsubmitted.length} payment run row(s) have not been submitted yet`);
   }
 
   const executableOrders = orders.filter((order) => {
@@ -718,7 +714,7 @@ function summarizeRunOrders(orders: Array<{ amountRaw: string; derivedState: str
     totalAmountRaw,
     settledCount: actionableOrders.filter((order) => ['settled', 'closed'].includes(order.derivedState)).length,
     exceptionCount: orders.filter((order) => order.derivedState === 'exception').length,
-    pendingApprovalCount: actionableOrders.filter((order) => order.derivedState === 'pending_approval').length,
+    pendingApprovalCount: 0,
     approvedCount: actionableOrders.filter((order) => [
       'approved',
       'ready_for_execution',

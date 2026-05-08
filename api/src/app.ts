@@ -7,7 +7,6 @@ import { capabilitiesRouter } from './routes/capabilities.js';
 import { collectionSourcesRouter } from './routes/collection-sources.js';
 import { collectionsRouter } from './routes/collections.js';
 import { config } from './config.js';
-import { approvalsRouter } from './routes/approvals.js';
 import { destinationsRouter } from './routes/destinations.js';
 import { authRouter } from './routes/auth.js';
 import { healthRouter } from './routes/health.js';
@@ -85,7 +84,6 @@ export function createApp() {
   app.use(opsRouter);
   app.use(treasuryWalletsRouter);
   app.use(walletAuthorizationsRouter);
-  app.use(approvalsRouter);
   app.use(destinationsRouter);
   app.use(collectionSourcesRouter);
   app.use(paymentRequestsRouter);

@@ -11,9 +11,15 @@ import type {
   UserWallet,
 } from '../types';
 import { signAndSubmitIntent } from '../lib/squads-pipeline';
-import { readSettlementVerificationStatus } from '../lib/settlement';
 import {
+  isRetryableConfirmationError,
+  readSettlementVerificationStatus,
+  useAutoRetryProposalVerification,
+} from '../lib/settlement';
+import {
+  assetSymbol,
   discoverSolanaWallets,
+  downloadJson,
   formatRawUsdcCompact,
   formatRelativeTime,
   formatTimestamp,
@@ -22,37 +28,18 @@ import {
   signAndSubmitPreparedPayment,
   orbAccountUrl,
   subscribeSolanaWallets,
+  walletLabel,
   type BrowserWalletOption,
 } from '../domain';
 import { displayPaymentStatus, displayRunStatus, statusToneForPayment } from '../status-labels';
+import { buildSquadsPaymentLifecycle } from '../lib/lifecycle';
+import { DetailPageSkeleton, DetailPageState } from '../ui-primitives';
+import { LifecycleRail, type LifecycleStage, type StageState } from '../ui/LifecycleRail';
 import { useToast } from '../ui/Toast';
-
-type StageState = 'complete' | 'current' | 'pending' | 'blocked';
-
-type LifecycleStage = {
-  id:
-    | 'imported'
-    | 'reviewed'
-    | 'approved'
-    | 'executed'
-    | 'settled'
-    | 'proven'
-    // Squads-source runs use a different lifecycle: Requested · Propose ·
-    // Approve · Execute · Verify (no separate proof stage — settlement
-    // verification covers it).
-    | 'request'
-    | 'proposal'
-    | 'approval'
-    | 'execute'
-    | 'verify';
-  label: string;
-  sub: string;
-  state: StageState;
-};
 
 type PrimaryActionVariant =
   | 'loading'
-  | 'needs_approval'
+  | 'needs_submit'
   | 'ready_to_sign'
   | 'ready_to_propose'
   | 'proposal_in_progress'
@@ -62,29 +49,6 @@ type PrimaryActionVariant =
   | 'settled'
   | 'cancelled'
   | 'empty';
-
-function downloadJson(filename: string, data: unknown) {
-  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
-}
-
-function assetSymbol(asset: string | undefined): string {
-  return (asset ?? 'usdc').toUpperCase();
-}
-
-function walletLabel(address: TreasuryWallet): string {
-  if (address.displayName && address.displayName.trim().length) {
-    return `${address.displayName} · ${shortenAddress(address.address, 4, 4)}`;
-  }
-  return shortenAddress(address.address, 4, 4);
-}
 
 function buildLifecycle(
   run: PaymentRun,
@@ -98,106 +62,21 @@ function buildLifecycle(
   const cancelled = state === 'cancelled';
 
   // Squads-source runs flow through the multisig lifecycle, not the legacy
-  // direct-sign + Yellowstone matcher path. Render a 5-stage rail that
-  // mirrors the single-payment lifecycle on PaymentDetail:
-  // Requested · Propose · Approve · Execute · Verify
+  // direct-sign + Yellowstone matcher path. The 5-stage rail (Requested ·
+  // Propose · Approve · Execute · Verify) is identical to the single-
+  // payment shape — see lib/lifecycle.ts.
   if (run.sourceTreasuryWallet?.source === 'squads_v4') {
-    const proposedDone = ['proposed', 'approved', 'executed', 'submitted_onchain', 'partially_settled', 'settled', 'closed', 'exception'].includes(state);
-    const approvalDone = ['approved', 'executed', 'submitted_onchain', 'partially_settled', 'settled', 'closed', 'exception'].includes(state);
-    const executionDone = ['executed', 'execution_recorded', 'submitted_onchain', 'partially_settled', 'settled', 'closed', 'exception'].includes(state);
-
-    const verifyingNow = executionDone && !settled && settlementVerification === 'pending';
-    const verifyMismatch = settlementVerification === 'mismatch';
-
-    const isReady = state === 'ready' || state === 'ready_for_execution';
-    const stillNeedsDecimalApproval = state === 'pending_approval' || state === 'draft';
-
-    return [
-      {
-        id: 'request',
-        label: 'Requested',
-        sub: `${t.orderCount} payment${t.orderCount === 1 ? '' : 's'}`,
-        state: 'complete',
-      },
-      {
-        id: 'proposal',
-        label: proposedDone ? 'Proposed' : 'Propose',
-        sub: cancelled
-          ? 'Cancelled'
-          : proposedDone
-            ? 'On-chain'
-            : isReady
-              ? 'Ready'
-              : stillNeedsDecimalApproval
-                ? 'Pending approval'
-                : 'Pending',
-        state: cancelled
-          ? 'blocked'
-          : proposedDone
-            ? 'complete'
-            : isReady
-              ? 'current'
-              : 'pending',
-      },
-      {
-        id: 'approval',
-        label: approvalDone ? 'Approved' : 'Approve',
-        sub: approvalDone
-          ? 'Threshold met'
-          : proposedDone
-            ? 'Voting'
-            : 'Pending proposal',
-        state: cancelled || blocked
-          ? 'blocked'
-          : approvalDone
-            ? 'complete'
-            : proposedDone
-              ? 'current'
-              : 'pending',
-      },
-      {
-        id: 'execute',
-        label: executionDone ? 'Executed' : 'Execute',
-        sub: blocked && !verifyMismatch
-          ? 'Blocked'
-          : executionDone
-            ? 'On-chain'
-            : approvalDone
-              ? 'Ready'
-              : 'Pending approval',
-        state: blocked && !verifyMismatch
-          ? 'blocked'
-          : executionDone
-            ? 'complete'
-            : approvalDone
-              ? 'current'
-              : 'pending',
-      },
-      {
-        id: 'verify',
-        label: verifyMismatch ? 'Mismatch' : settled ? 'Settled' : 'Verify',
-        sub: verifyMismatch
-          ? 'Settlement deltas did not match'
-          : blocked
-            ? 'Needs review'
-            : settled
-              ? `${t.settledCount} of ${Math.max(t.actionableCount, 1)} matched`
-              : verifyingNow
-                ? 'Verifying on RPC…'
-                : executionDone
-                  ? 'Verification pending'
-                  : 'Pending execution',
-        state: verifyMismatch
-          ? 'blocked'
-          : blocked
-            ? 'blocked'
-            : settled
-              ? 'complete'
-              : executionDone
-                ? 'current'
-                : 'pending',
-      },
-    ];
+    return buildSquadsPaymentLifecycle({
+      derivedState: state,
+      settlementVerification,
+      requestSub: `${t.orderCount} payment${t.orderCount === 1 ? '' : 's'}`,
+      settledSub: `${t.settledCount} of ${Math.max(t.actionableCount, 1)} matched`,
+      // Runs can land in 'exception'/'partially_settled' even when the
+      // settlement verification itself didn't mismatch. Surface that as
+      // "Needs review" instead of falling through to the verification
+      // pending/verifying branches.
+      showBlockedReviewState: true,
+    });
   }
 
   const anySubmitted = orders.some((o) => {
@@ -297,22 +176,14 @@ function buildLifecycle(
   ];
 }
 
-// See PaymentDetail.tsx — same retryable-confirmation surface.
-function isUnconfirmedSignatureError(err: unknown): boolean {
-  if (!(err instanceof ApiError) || err.status !== 400) return false;
-  return /(not confirmed yet|could not be verified from RPC yet)/i.test(err.message);
-}
-
 function determinePrimaryVariant(run: PaymentRun, runOrders: PaymentOrder[]): PrimaryActionVariant {
   if (!runOrders.length) return 'empty';
   if (run.derivedState === 'settled' || run.derivedState === 'closed') return 'settled';
   if (run.derivedState === 'exception' || run.derivedState === 'partially_settled') return 'exception';
   if (run.derivedState === 'cancelled') return 'cancelled';
 
-  const needsApproval = runOrders.some(
-    (o) => o.derivedState === 'draft' || o.derivedState === 'pending_approval',
-  );
-  if (needsApproval) return 'needs_approval';
+  const hasDrafts = runOrders.some((o) => o.derivedState === 'draft');
+  if (hasDrafts) return 'needs_submit';
 
   const isSquadsSource = run.sourceTreasuryWallet?.source === 'squads_v4';
 
@@ -398,64 +269,39 @@ export function PaymentRunDetailPage() {
     || sourceAddresses[0]?.treasuryWalletId
     || '';
 
-  const routeForReviewMutation = useMutation({
+  // Submit all draft orders so the run can advance to "ready" and the user
+  // can create the Squads batch proposal. Backend rejects orders whose
+  // destination isn't trusted yet, so we surface partial-failure detail
+  // (which destinations need review) instead of routing to an inbox.
+  const submitDraftsMutation = useMutation({
     mutationFn: async () => {
       const orders = runQuery.data?.paymentOrders ?? [];
       const drafts = orders.filter((o) => o.derivedState === 'draft');
-      if (drafts.length === 0) return { routed: 0, failed: 0 };
+      if (drafts.length === 0) return { submitted: 0, failures: [] as { paymentOrderId: string; reason: string }[] };
       const results = await Promise.allSettled(
         drafts.map((o) => api.submitPaymentOrder(organizationId!, o.paymentOrderId)),
       );
-      const routed = results.filter((r) => r.status === 'fulfilled').length;
-      const failed = drafts.length - routed;
-      return { routed, failed };
+      const submitted = results.filter((r) => r.status === 'fulfilled').length;
+      const failures = results
+        .map((r, i) => ({ result: r, draft: drafts[i]! }))
+        .filter((entry): entry is { result: PromiseRejectedResult; draft: PaymentOrder } => entry.result.status === 'rejected')
+        .map(({ result, draft }) => ({
+          paymentOrderId: draft.paymentOrderId,
+          reason: result.reason instanceof Error ? result.reason.message : String(result.reason),
+        }));
+      return { submitted, failures };
     },
-    onSuccess: async ({ routed, failed }) => {
-      if (failed) {
+    onSuccess: async ({ submitted, failures }) => {
+      if (failures.length) {
         toastError(
-          `Routed ${routed} payment${routed === 1 ? '' : 's'} for approval. ${failed} failed to route.`,
-        );
-      }
-      await queryClient.invalidateQueries({ queryKey: ['payment-run', organizationId, paymentRunId] });
-      navigate(`/organizations/${organizationId}/approvals?runId=${paymentRunId}`);
-    },
-    onError: (err) => toastError(err instanceof Error ? err.message : 'Could not route payments for approval.'),
-  });
-
-  const approveMutation = useMutation({
-    mutationFn: async () => {
-      const orders = runQuery.data?.paymentOrders ?? [];
-      const drafts = orders.filter((o) => o.derivedState === 'draft');
-      const submitResults = await Promise.allSettled(
-        drafts.map((o) => api.submitPaymentOrder(organizationId!, o.paymentOrderId)),
-      );
-      const routedDrafts = submitResults.filter((r) => r.status === 'fulfilled').length;
-      const draftFailures = drafts.length - routedDrafts;
-      const refreshedRun = await api.getPaymentRunDetail(organizationId!, paymentRunId!);
-      const pending = (refreshedRun.paymentOrders ?? []).filter(
-        (o) => o.derivedState === 'pending_approval' && Boolean(o.transferRequestId),
-      );
-      const approveResults = await Promise.allSettled(
-        pending.map((o) =>
-          api.createApprovalDecision(organizationId!, o.transferRequestId!, { action: 'approve' }),
-        ),
-      );
-      const approved = approveResults.filter((r) => r.status === 'fulfilled').length;
-      const failed = draftFailures + (pending.length - approved);
-      return { routedDrafts, approved, failed };
-    },
-    onSuccess: async ({ routedDrafts, approved, failed }) => {
-      const advanced = routedDrafts + approved;
-      if (failed) {
-        toastError(
-          `Advanced ${advanced} payment${advanced === 1 ? '' : 's'}. ${failed} failed — retry or inspect below.`,
+          `${submitted} submitted. ${failures.length} blocked: ${failures[0]!.reason}${failures.length > 1 ? ` (and ${failures.length - 1} more)` : ''}`,
         );
       } else {
-        success(`Approved ${advanced} payment${advanced === 1 ? '' : 's'}.`);
+        success(`${submitted} payment${submitted === 1 ? '' : 's'} ready to propose.`);
       }
       await queryClient.invalidateQueries({ queryKey: ['payment-run', organizationId, paymentRunId] });
     },
-    onError: (err) => toastError(err instanceof Error ? err.message : 'Could not approve payments.'),
+    onError: (err) => toastError(err instanceof Error ? err.message : 'Could not submit payments.'),
   });
 
   const signMutation = useMutation({
@@ -611,7 +457,7 @@ export function PaymentRunDetailPage() {
         info('A proposal already exists for this run.');
         return;
       }
-      if (isUnconfirmedSignatureError(err)) {
+      if (isRetryableConfirmationError(err)) {
         info('Transaction submitted. Confirmation pending — retry in a moment.');
         return;
       }
@@ -636,7 +482,7 @@ export function PaymentRunDetailPage() {
       navigate(`/organizations/${organizationId}/proposals/${result.decimalProposalId}`);
     },
     onError: (err) => {
-      if (isUnconfirmedSignatureError(err)) {
+      if (isRetryableConfirmationError(err)) {
         info('Still pending. Try again in a few seconds.');
         return;
       }
@@ -644,43 +490,15 @@ export function PaymentRunDetailPage() {
     },
   });
 
-  // Auto-retry settlement verification on the linked run proposal while the
-  // backend has the executed signature stored but RPC hasn't yet allowed the
-  // settlement-deltas check to succeed. confirm-execution is idempotent for
-  // the same signature.
-  const linkedRunVerificationStatus = readSettlementVerificationStatus(linkedRunProposal);
-  useEffect(() => {
-    if (!organizationId) return;
-    if (!linkedRunProposal?.decimalProposalId) return;
-    if (!linkedRunProposal.executedSignature) return;
-    if (linkedRunVerificationStatus !== 'pending') return;
-    let cancelled = false;
-    const handle = window.setTimeout(async () => {
-      if (cancelled) return;
-      try {
-        await api.confirmProposalExecution(organizationId, linkedRunProposal.decimalProposalId, {
-          signature: linkedRunProposal.executedSignature!,
-        });
-        await queryClient.invalidateQueries({ queryKey: ['payment-run', organizationId, paymentRunId] });
-        await queryClient.invalidateQueries({
-          queryKey: ['organization-proposals', organizationId, 'linked-run', paymentRunId],
-        });
-      } catch {
-        // Stay on pending; the next render schedules another retry.
-      }
-    }, 6_000);
-    return () => {
-      cancelled = true;
-      window.clearTimeout(handle);
-    };
-  }, [
+  useAutoRetryProposalVerification({
     organizationId,
-    paymentRunId,
-    linkedRunProposal?.decimalProposalId,
-    linkedRunProposal?.executedSignature,
-    linkedRunVerificationStatus,
-    queryClient,
-  ]);
+    proposal: linkedRunProposal,
+    invalidationKeys: [
+      ['payment-run', organizationId, paymentRunId],
+      ['organization-proposals', organizationId, 'linked-run', paymentRunId],
+    ],
+  });
+  const linkedRunVerificationStatus = readSettlementVerificationStatus(linkedRunProposal);
   // ----------------------------------------------------------------------------
 
   const deleteMutation = useMutation({
@@ -696,50 +514,36 @@ export function PaymentRunDetailPage() {
 
   if (!organizationId || !paymentRunId) {
     return (
-      <main className="page-frame" data-layout="rd">
-        <div className="rd-container">
-          <div className="rd-state">
-            <h2 className="rd-state-title">Run unavailable</h2>
-            <p className="rd-state-body">Open a payment run from the runs page.</p>
-          </div>
-        </div>
-      </main>
+      <DetailPageState
+        title="Run unavailable"
+        body="Open a payment run from the runs page."
+        containerClassName="rd-container"
+      />
     );
   }
 
   if (runQuery.isLoading) {
-    return (
-      <main className="page-frame" data-layout="rd">
-        <div className="rd-container">
-          <div className="rd-skeleton rd-skeleton-line" style={{ width: 120 }} />
-          <div className="rd-skeleton rd-skeleton-line" style={{ width: 280, height: 28, marginBottom: 8 }} />
-          <div className="rd-skeleton rd-skeleton-line" style={{ width: 360 }} />
-          <div className="rd-skeleton rd-skeleton-block" style={{ height: 120, marginTop: 32 }} />
-          <div className="rd-skeleton rd-skeleton-block" style={{ height: 200, marginTop: 32 }} />
-        </div>
-      </main>
-    );
+    return <DetailPageSkeleton containerClassName="rd-container" showMetaLine />;
   }
 
   if (runQuery.isError || !runQuery.data) {
     return (
-      <main className="page-frame" data-layout="rd">
-        <div className="rd-container">
+      <DetailPageState
+        title="Couldn't load this run"
+        body={runQuery.error instanceof Error ? runQuery.error.message : 'Something went wrong.'}
+        containerClassName="rd-container"
+        back={
           <Link to={`/organizations/${organizationId}/runs`} className="rd-back">
             <span className="rd-back-arrow">←</span>
             <span>Payment runs</span>
           </Link>
-          <div className="rd-state">
-            <h2 className="rd-state-title">Couldn't load this run</h2>
-            <p className="rd-state-body">
-              {runQuery.error instanceof Error ? runQuery.error.message : 'Something went wrong.'}
-            </p>
-            <button className="rd-btn rd-btn-secondary" onClick={() => void runQuery.refetch()} type="button">
-              Try again
-            </button>
-          </div>
-        </div>
-      </main>
+        }
+        action={
+          <button className="rd-btn rd-btn-secondary" onClick={() => void runQuery.refetch()} type="button">
+            Try again
+          </button>
+        }
+      />
     );
   }
 
@@ -848,7 +652,7 @@ export function PaymentRunDetailPage() {
           </div>
         </header>
 
-        <LifecycleRail stages={lifecycle} />
+        <LifecycleRail stages={lifecycle} ariaLabel="Payment run lifecycle" />
 
         <PrimaryActionCard
           variant={variant}
@@ -864,12 +668,10 @@ export function PaymentRunDetailPage() {
           onSelectWallet={setSelectedWalletId}
           submittedSignatures={submittedSignatures}
           settledCount={settledCount}
-          approving={approveMutation.isPending}
-          routing={routeForReviewMutation.isPending}
+          submittingDrafts={submitDraftsMutation.isPending}
           signing={signMutation.isPending}
           exporting={proofMutation.isPending}
-          onApprove={() => approveMutation.mutate()}
-          onReviewIndividually={() => routeForReviewMutation.mutate()}
+          onSubmitDrafts={() => submitDraftsMutation.mutate()}
           onSign={() => signMutation.mutate()}
           onExportProof={() => proofMutation.mutate()}
           ownPersonalWallets={ownPersonalWallets}
@@ -915,28 +717,6 @@ export function PaymentRunDetailPage() {
   );
 }
 
-function LifecycleRail({ stages }: { stages: LifecycleStage[] }) {
-  return (
-    <div
-      className="rd-rail"
-      role="list"
-      aria-label="Payment run lifecycle"
-      style={{ gridTemplateColumns: `repeat(${stages.length}, 1fr)` }}
-    >
-      {stages.map((stage) => (
-        <div key={stage.id} className="rd-rail-step" data-state={stage.state} role="listitem">
-          <div className="rd-rail-marker-row">
-            <span className="rd-rail-dot" aria-hidden />
-            <span className="rd-rail-line" aria-hidden />
-          </div>
-          <span className="rd-rail-label">{stage.label}</span>
-          <span className="rd-rail-sub">{stage.sub}</span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
 function PrimaryActionCard(props: {
   variant: PrimaryActionVariant;
   run: PaymentRun;
@@ -951,12 +731,10 @@ function PrimaryActionCard(props: {
   onSelectWallet: (id: string | undefined) => void;
   submittedSignatures: string[];
   settledCount: number;
-  approving: boolean;
-  routing: boolean;
+  submittingDrafts: boolean;
   signing: boolean;
   exporting: boolean;
-  onApprove: () => void;
-  onReviewIndividually: () => void;
+  onSubmitDrafts: () => void;
   onSign: () => void;
   onExportProof: () => void;
   ownPersonalWallets: UserWallet[];
@@ -984,12 +762,10 @@ function PrimaryActionCard(props: {
     onSelectWallet,
     submittedSignatures,
     settledCount,
-    approving,
-    routing,
+    submittingDrafts,
     signing,
     exporting,
-    onApprove,
-    onReviewIndividually,
+    onSubmitDrafts,
     onSign,
     onExportProof,
     ownPersonalWallets,
@@ -1004,36 +780,25 @@ function PrimaryActionCard(props: {
     organizationId,
   } = props;
 
-  if (variant === 'needs_approval') {
+  if (variant === 'needs_submit') {
     return (
       <div className="rd-primary" data-emphasis="action">
-        <p className="rd-primary-eyebrow">Next step · Approvals</p>
+        <p className="rd-primary-eyebrow">Next step · Submit</p>
         <h2 className="rd-primary-title">
-          {pendingCount} payment{pendingCount === 1 ? '' : 's'} need{pendingCount === 1 ? 's' : ''} approval
+          {pendingCount} payment{pendingCount === 1 ? '' : 's'} to submit
         </h2>
         <p className="rd-primary-body">
-          Policy routed these because the destinations are not in your trusted set. Approve the whole
-          batch at once, or review individually to approve some and reject others.
+          Submit drafts to advance them to ready. Destinations must be reviewed and trusted first; any draft pointing at an unreviewed destination will be rejected with the destination's name.
         </p>
         <div className="rd-actions">
           <button
             type="button"
             className="rd-btn rd-btn-primary"
-            onClick={onApprove}
-            disabled={approving || routing}
-            aria-busy={approving}
+            onClick={onSubmitDrafts}
+            disabled={submittingDrafts}
+            aria-busy={submittingDrafts}
           >
-            {approving ? 'Approving…' : `Approve all (${pendingCount})`}
-          </button>
-          <button
-            type="button"
-            className="rd-btn rd-btn-secondary"
-            onClick={onReviewIndividually}
-            disabled={approving || routing}
-            aria-busy={routing}
-          >
-            {routing ? 'Preparing…' : 'Review individually'}
-            {!routing ? <span className="rd-btn-arrow" aria-hidden>→</span> : null}
+            {submittingDrafts ? 'Submitting…' : `Submit all (${pendingCount})`}
           </button>
         </div>
       </div>

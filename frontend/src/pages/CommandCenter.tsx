@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '../api';
 import type { AuthenticatedSession, PaymentOrder, PaymentRun, TreasuryWallet } from '../types';
 import {
+  assetSymbol,
   computeWalletUsdValue,
   formatRawUsdcCompact,
   formatRelativeTime,
@@ -12,10 +13,6 @@ import {
 } from '../domain';
 import { displayPaymentStatus, displayRunStatus, statusToneForPayment } from '../status-labels';
 import { useTour } from '../Tour';
-
-function assetSymbol(asset: string | undefined): string {
-  return (asset ?? 'usdc').toUpperCase();
-}
 
 function toneToPill(tone: 'success' | 'warning' | 'danger' | 'neutral'): 'success' | 'warning' | 'danger' | 'info' {
   return tone === 'success' ? 'success' : tone === 'danger' ? 'danger' : tone === 'warning' ? 'warning' : 'info';
@@ -75,12 +72,6 @@ export function CommandCenterPage({ session }: { session: AuthenticatedSession }
     enabled: Boolean(organizationId),
     refetchInterval: 10_000,
   });
-  const exceptionsQuery = useQuery({
-    queryKey: ['exceptions', organizationId] as const,
-    queryFn: () => api.listExceptions(organizationId!),
-    enabled: Boolean(organizationId),
-    refetchInterval: 15_000,
-  });
   const balancesQuery = useQuery({
     queryKey: ['treasury-wallet-balances', organizationId] as const,
     queryFn: () => api.listTreasuryWalletBalances(organizationId!),
@@ -107,7 +98,6 @@ export function CommandCenterPage({ session }: { session: AuthenticatedSession }
 
   const orders = ordersQuery.data?.items ?? [];
   const runs = runsQuery.data?.items ?? [];
-  const exceptions = exceptionsQuery.data?.items ?? [];
 
   const balances = balancesQuery.data?.items ?? [];
   const solUsdPrice = balancesQuery.data?.solUsdPrice ?? null;
@@ -144,7 +134,7 @@ export function CommandCenterPage({ session }: { session: AuthenticatedSession }
   ).length;
   const inFlight = orders.filter((o) => o.derivedState === 'execution_recorded').length;
   const settled = orders.filter((o) => ['settled', 'closed'].includes(o.derivedState)).length;
-  const openExceptions = exceptions.filter((e) => e.status !== 'dismissed').length;
+  const openExceptions = orders.filter((o) => o.derivedState === 'exception').length;
 
   const recent: RecentRow[] = useMemo(() => {
     const list: RecentRow[] = [
@@ -289,15 +279,8 @@ export function CommandCenterPage({ session }: { session: AuthenticatedSession }
 
         {openExceptions > 0 ? (
           <div className="rd-notice" data-tone="danger" style={{ marginBottom: 32 }}>
-            <strong style={{ fontWeight: 600 }}>{openExceptions}</strong> open exception
-            {openExceptions === 1 ? '' : 's'} — payments that didn't match expected settlement.{' '}
-            <Link
-              to={`/organizations/${organizationId}/exceptions`}
-              style={{ color: 'inherit', textDecoration: 'underline' }}
-            >
-              Review
-            </Link>
-            .
+            <strong style={{ fontWeight: 600 }}>{openExceptions}</strong> payment
+            {openExceptions === 1 ? '' : 's'} did not match expected settlement. Open the affected payment to investigate.
           </div>
         ) : null}
 

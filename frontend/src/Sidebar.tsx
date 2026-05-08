@@ -48,50 +48,6 @@ const icons = {
       <path d="M3 14.5h14v2H3z" />
     </SvgIcon>
   ),
-  proofs: (
-    <SvgIcon>
-      <path d="M5 2.5h6L15 6.5v10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-13a1 1 0 0 1 1-1Z" />
-      <path d="M11 2.5v4h4" />
-      <path d="M7 11h6M7 14h4" />
-    </SvgIcon>
-  ),
-  address: (
-    <SvgIcon>
-      <path d="M10 17.5s-5.5-4.5-5.5-9a5.5 5.5 0 0 1 11 0c0 4.5-5.5 9-5.5 9Z" />
-      <circle cx="10" cy="8.5" r="2.2" />
-    </SvgIcon>
-  ),
-  approvals: (
-    <SvgIcon>
-      <circle cx="10" cy="10" r="7" />
-      <path d="M7 10.5l2 2 4-4.5" />
-    </SvgIcon>
-  ),
-  execution: (
-    <SvgIcon>
-      <path d="M11 3 4 12h5l-1 6 7-9h-5l1-6Z" />
-    </SvgIcon>
-  ),
-  settlement: (
-    <SvgIcon>
-      <path d="M3 5.5h14" />
-      <path d="M5.5 5.5v9a2 2 0 0 0 2 2h5a2 2 0 0 0 2-2v-9" />
-      <path d="M8 9.5h4" />
-    </SvgIcon>
-  ),
-  exceptions: (
-    <SvgIcon>
-      <path d="M10 2.5 18 16H2L10 2.5Z" />
-      <path d="M10 8v3" />
-      <circle cx="10" cy="13.5" r="0.7" fill="currentColor" />
-    </SvgIcon>
-  ),
-  policy: (
-    <SvgIcon>
-      <path d="M10 2.5 17 5v5c0 4-3 6.5-7 7.5-4-1-7-3.5-7-7.5V5l7-2.5Z" />
-      <path d="M7.5 10.5l2 2 3.5-4" />
-    </SvgIcon>
-  ),
   wallet: (
     <SvgIcon>
       <rect x="2.5" y="5" width="15" height="11" rx="2" />
@@ -245,8 +201,6 @@ export function AppSidebar({
   collectionsOpenCount,
   destinationsUnreviewedCount,
   payersUnreviewedCount,
-  approvalPendingCount,
-  executionQueueCount,
   onOrganizationSwitch,
   onLogout,
 }: {
@@ -257,8 +211,6 @@ export function AppSidebar({
   collectionsOpenCount?: number;
   destinationsUnreviewedCount?: number;
   payersUnreviewedCount?: number;
-  approvalPendingCount?: number;
-  executionQueueCount?: number;
   onOrganizationSwitch: (organizationId: string) => void;
   onLogout: () => void;
 }) {
@@ -386,8 +338,6 @@ export function AppSidebar({
                 badge={collectionsOpenCount}
                 tourKey="collections"
               />
-              <NavLinkItem to={`${base}/policy`} icon={icons.policy} label="Policy" tourKey="policy" />
-              <NavLinkItem to={`${base}/proofs`} icon={icons.proofs} label="Proofs" tourKey="proofs" />
             </div>
 
             <div className="ax-nav-group">
@@ -416,30 +366,6 @@ export function AppSidebar({
               />
             </div>
 
-            <details className="ax-nav-advanced">
-              <summary>
-                <span className="ax-nav-advanced-chev" aria-hidden>
-                  ▸
-                </span>
-                <span>Advanced</span>
-              </summary>
-              <div className="ax-nav-advanced-body">
-                <NavLinkItem
-                  to={`${base}/approvals`}
-                  icon={icons.approvals}
-                  label="Approvals"
-                  badge={approvalPendingCount}
-                />
-                <NavLinkItem
-                  to={`${base}/execution`}
-                  icon={icons.execution}
-                  label="Execution"
-                  badge={executionQueueCount}
-                />
-                <NavLinkItem to={`${base}/settlement`} icon={icons.settlement} label="Settlement" />
-                <NavLinkItem to={`${base}/exceptions`} icon={icons.exceptions} label="Exceptions" />
-              </div>
-            </details>
           </>
         ) : null}
       </nav>

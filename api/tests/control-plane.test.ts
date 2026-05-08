@@ -19,8 +19,6 @@ TRUNCATE TABLE
   idempotency_records,
   organization_invites,
   organization_memberships,
-  approval_decisions,
-  approval_policies,
   execution_records,
   transfer_request_notes,
   transfer_request_events,
@@ -136,7 +134,7 @@ test('public routes enforce configured rate limits', async () => {
   }
 });
 
-test('session auth supports organization, address-book, and policy setup', async () => {
+test('session auth supports organization and address-book setup', async () => {
   const register = await post('/auth/register', {
     email: 'ops@example.com',
     password: 'DemoPass123!',
@@ -184,12 +182,6 @@ test('session auth supports organization, address-book, and policy setup', async
   );
   assert.equal(destination.label, 'Fuyo payout wallet');
   assert.equal(destination.trustState, 'trusted');
-
-  const policy = await get(`/organizations/${organization.organizationId}/approval-policy`, register.sessionToken);
-  assert.equal(policy.isActive, true);
-
-  const inbox = await get(`/organizations/${organization.organizationId}/approval-inbox`, register.sessionToken);
-  assert.deepEqual(inbox.items, []);
 
   const summary = await get(`/organizations/${organization.organizationId}/summary`, register.sessionToken);
   assert.equal(summary.paymentsIncompleteCount, 0);
