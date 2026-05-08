@@ -1,13 +1,27 @@
-import { useEffect, useState } from 'react';
+import { Suspense, lazy, useEffect, useState } from 'react';
 import { Link } from 'react-router';
 import '../styles/landing.css';
 import { CodeWall } from './landing/CodeWall';
 import { IconArrowRight, IconMoon, IconSun } from './landing/Icons';
 import { Hero } from './landing/Hero';
-import { ConveyorHero } from './landing/heroVisuals/ConveyorHero';
 import { Workflow } from './landing/Workflow';
 import { Features } from './landing/Features';
 import { FinalCTA } from './landing/FinalCTA';
+
+// react-three-fiber + drei + three pull ~400 KB (gzip ~150 KB) into the
+// main bundle. Splitting the conveyor visual into its own chunk keeps the
+// app shell shipping fast for the 99% of sessions that hit the
+// authenticated app routes, where the landing page is never rendered.
+const ConveyorHero = lazy(() =>
+  import('./landing/heroVisuals/ConveyorHero').then((module) => ({ default: module.ConveyorHero })),
+);
+
+// Lightweight placeholder that holds the hero's vertical space while the
+// 3D chunk downloads. Matches the conveyor-hero minHeight so the page
+// doesn't reflow when the real visual swaps in.
+function ConveyorHeroPlaceholder() {
+  return <div style={{ width: '100%', height: '100%', minHeight: 480 }} aria-hidden />;
+}
 
 const THEME_KEY = 'decimal.theme';
 const LEGACY_THEME_KEY = 'ax-theme';
@@ -82,7 +96,14 @@ export function LandingPage() {
         </div>
       </nav>
       <main>
-        <Hero startHref="/login" visual={<ConveyorHero accent="var(--ax-accent)" />} />
+        <Hero
+          startHref="/login"
+          visual={
+            <Suspense fallback={<ConveyorHeroPlaceholder />}>
+              <ConveyorHero accent="var(--ax-accent)" />
+            </Suspense>
+          }
+        />
         <Workflow />
         <Features />
         <FinalCTA startHref="/login" />
