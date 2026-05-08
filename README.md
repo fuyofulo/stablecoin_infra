@@ -1,168 +1,124 @@
 # Decimal
 
-Decimal is a stablecoin payment operations layer for Solana.
+Decimal is a Solana USDC treasury operations product.
 
-It helps teams define expected USDC movement, route approvals, hand off execution, reconcile onchain settlement, and export proof packets.
+It helps teams create payment requests, route them into Squads multisig proposals, verify execution through Solana RPC, and export deterministic JSON proof packets.
 
-## What it does
+## What Works
 
-- single payment requests
-- batch payment runs from CSV
-- single expected collections
-- batch collection runs from CSV
-- approval policy and approval inbox
-- non-custodial execution handoff
-- signer-ready Solana USDC transfer packets
-- reconciliation and exception handling
-- JSON proof packets for payments and collections
+- Email/password and Google OAuth auth.
+- Invite-only organizations.
+- User-owned personal wallets, including Privy-managed embedded wallets.
+- Organization treasury accounts, including Squads v4 vaults.
+- Squads treasury creation with selected members and threshold.
+- Squads config proposals for member and threshold changes.
+- Single payment orders and CSV payment runs.
+- Squads payment proposals for single payments and payment runs.
+- RPC confirmation for proposal submission and execution.
+- RPC settlement verification for app-originated USDC payments.
+- JSON proof packets for payment orders and payment runs.
+- Audit log and API/OpenAPI surfaces.
 
-## Core workflows
-
-### Payments
-
-```text
-Request / CSV Run
-  -> Order
-  -> Approval
-  -> Execution Handoff
-  -> Onchain Settlement
-  -> Reconciliation
-  -> Proof
-```
-
-### Collections
+## Current Architecture
 
 ```text
-Expected Collection / CSV Run
-  -> Receiving Wallet + Optional Expected Payer
-  -> Onchain Receipt
-  -> Match / Source Review
-  -> Proof
+frontend/  React + Vite operator UI
+api/       Express + Prisma API
+postgres/  local bootstrap SQL
+config/    committed non-secret runtime config
+outputs/   handoffs, research notes, scorecards
 ```
 
-## Architecture
+Runtime dependencies:
 
-- `frontend/` — React + Vite operator UI
-- `api/` — Express + Prisma control plane
-- `yellowstone/` — Rust ingestion worker
-- `Postgres` — durable control-plane state
-- `ClickHouse` — observed transfer and reconciliation data
+- PostgreSQL stores durable product state.
+- Solana RPC verifies Squads transactions and USDC settlement deltas.
+- Privy creates and signs with embedded personal wallets.
+- Squads v4 is the on-chain multisig treasury layer.
 
-Current deployment:
+The old Yellowstone/ClickHouse indexer stack has been removed from the active product. Decimal now verifies app-originated payments by RPC instead of storing the global USDC stream.
 
-- frontend on Vercel
-- backend API, PostgreSQL, ClickHouse, and Yellowstone worker on a MacBook
-- Cloudflare Tunnel exposing `api.decimal.finance`
-
-## Repo structure
-
-```text
-frontend/     operator UI
-api/          control-plane API
-yellowstone/  Solana ingestion worker
-postgres/     bootstrap SQL
-clickhouse/   bootstrap SQL
-config/       non-secret runtime config
-outputs/      notes and handoff docs
-```
-
-## Local development
-
-Install dependencies:
+## Local Development
 
 ```bash
 cd api && npm install
 cd ../frontend && npm install
-cd ../yellowstone && cargo fetch
-```
-
-Run everything:
-
-```bash
-make dev
+make dev devnet
 ```
 
 Useful commands:
 
 ```bash
-make test
+make dev mainnet
 make test-api
-make test-worker
 make test-frontend
 make infra-up
-make infra-down
+make reset-data
 make help
 ```
 
 ## API
 
-Useful endpoints:
+Useful public endpoints:
 
 - `GET /health`
 - `GET /capabilities`
 - `GET /openapi.json`
 
-Main route groups:
+Main authenticated groups:
 
-- auth
-- organizations and workspaces
-- treasury wallets, counterparties, destinations, collection sources
-- payment requests, payment orders, payment runs
-- collection requests, collection runs
-- approvals, reconciliation, exceptions, proofs
+- `/organizations`
+- `/organizations/:organizationId/invites`
+- `/personal-wallets`
+- `/organizations/:organizationId/treasury-wallets`
+- `/organizations/:organizationId/squads/proposals`
+- `/organizations/:organizationId/proposals`
+- `/organizations/:organizationId/payment-requests`
+- `/organizations/:organizationId/payment-runs`
+- `/organizations/:organizationId/payment-orders`
+- `/organizations/:organizationId/approval-policy`
+- `/organizations/:organizationId/approval-inbox`
+- `/organizations/:organizationId/audit-log`
 
-## Proof packets
+## Proof Packets
 
-Decimal exports JSON proof packets for:
+Proof packets are canonical JSON documents with a SHA-256 digest over stable JSON. They capture:
 
-- payment orders
-- payment runs
-- collection requests
-- collection runs
+- intent
+- parties
+- approval state
+- Squads execution evidence
+- RPC settlement verification
+- source artifacts
+- audit trail
 
-These are meant to capture operational truth, not just raw chain activity.
+They are meant to be verifiable operational records, not a private ledger and not custody.
 
 ## Configuration
 
 Committed non-secret config:
 
 - `config/api.config.json`
-- `config/worker.config.json`
 - `config/frontend.public.json`
 
 Local secrets:
 
 - `api/.env`
-- `yellowstone/.env`
-- root `.env`
+- frontend deploy env vars
 
-If it reaches the browser, it is public.
+Secrets never belong in committed config files.
 
 ## Status
 
-Built:
-
-- auth
-- org and workspace setup
-- payment and collection workflows
-- batch CSV flows
-- approval routing
-- execution preparation
-- reconciliation
-- proof exports
+Decimal is currently a non-custodial Squads treasury workflow and proof layer.
 
 Not built:
 
-- custody
 - fiat rails
-- bank integrations
-- full enterprise infra
+- custody
+- card issuing
+- accounting sync
+- private transactions
+- automatic inbound collection watching
 
-Decimal is an operations and proof layer, not a custodian.
-
-## More docs
-
-- [api/README.md](/Users/fuyofulo/code/stablecoin_intelligence/api/README.md)
-- [postgres/README.md](/Users/fuyofulo/code/stablecoin_intelligence/postgres/README.md)
-- [config/README.md](/Users/fuyofulo/code/stablecoin_intelligence/config/README.md)
-- [system_explained/README.md](/Users/fuyofulo/code/stablecoin_intelligence/system_explained/README.md)
+See [system_explained/README.md](system_explained/README.md) for the current engineering map.

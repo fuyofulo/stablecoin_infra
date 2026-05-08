@@ -1,61 +1,60 @@
-# API
+# Decimal API
 
-## Purpose
+The API is the backend source of truth for Decimal.
 
-This service is the TypeScript control-plane API built with `Express` and `Prisma`.
+It is an Express + Prisma service backed by PostgreSQL. It does not store private keys and it no longer depends on Yellowstone or ClickHouse.
 
-It owns the control plane in `Postgres`:
+## Responsibilities
 
-- users, organizations, and workspaces
-- treasury wallets the workspace owns
-- counterparties and payment destinations
-- payment requests, payment runs, and payment orders
-- approval policy, execution evidence, exceptions, and proof/audit state
+- User sessions, Google OAuth, and email/password auth.
+- Organization creation and invite-only membership.
+- Personal signing wallets and Privy embedded wallet operations.
+- Organization treasury wallets and Squads v4 treasury records.
+- Squads proposal intents, confirmations, approvals, rejections, and executions.
+- Payment requests, payment orders, and payment runs.
+- Approval policy and approval inbox.
+- RPC verification of app-originated payment settlement.
+- JSON proof packet generation.
+- Audit log and API contract generation.
 
-It also exposes read-side endpoints backed by `ClickHouse` for:
-
-- observed Solana USDC movement
-- reconciliation rows
-- settlement matches and exceptions
-
-## Start
-
-1. Install dependencies
+## Local Commands
 
 ```bash
-cd api
 npm install
-```
-
-2. Generate the Prisma client
-
-```bash
 npm run prisma:generate
+npm run dev
+npm run build
+npm test
 ```
 
-3. Run the API
+From the repo root, prefer:
 
 ```bash
-npm run dev
+make dev devnet
+make test-api
 ```
 
 ## Environment
 
-See [.env.example](/Users/fuyofulo/code/stablecoin_intelligence/api/.env.example).
+See [.env.example](.env.example).
 
-## Current Routes
+Secrets live in `api/.env`. Non-secret runtime config lives in `config/api.config.json`.
 
-Use `GET /openapi.json` for the machine-readable contract and `GET /capabilities` for the compact workflow map.
+## API Contract
 
-Main route groups:
+- `GET /capabilities` returns a compact workflow map.
+- `GET /openapi.json` returns the generated OpenAPI 3.1 contract.
+- `api/src/api-contract.ts` is the source of truth for the generated contract.
 
-- auth: `/auth/register`, `/auth/login`, `/auth/session`, `/auth/logout`
-- org/workspace setup: `/organizations`, `/organizations/:organizationId/workspaces`
-- address book: `/workspaces/:workspaceId/treasury-wallets`, `/counterparties`, `/destinations`
-- inputs: `/workspaces/:workspaceId/payment-requests`
-- batches: `/workspaces/:workspaceId/payment-runs`
-- payments: `/workspaces/:workspaceId/payment-orders`
-- approvals: `/workspaces/:workspaceId/approval-policy`, `/approval-inbox`
-- reconciliation: `/workspaces/:workspaceId/reconciliation`, `/reconciliation-queue`, `/exceptions`
-- proofs/audit: `/workspaces/:workspaceId/payment-orders/:paymentOrderId/proof`, `/payment-runs/:paymentRunId/proof`, `/audit-log`
-- worker internals: `/internal/*`
+## Settlement Verification
+
+App-originated Squads payments are verified through Solana RPC:
+
+1. The frontend signs/submits a Squads proposal transaction.
+2. The API confirms the submitted signature with RPC.
+3. The frontend signs/submits the Squads execution transaction.
+4. The API confirms the execution signature with RPC.
+5. The API reads the parsed transaction and checks expected USDC token-account deltas.
+6. Payment orders/runs move to `settled` only when those deltas match.
+
+Inbound collections are currently intent records only. Automatic inbound matching is intentionally detached from the lean MVP.
