@@ -36,3 +36,12 @@ tmp/
 
 # Local Postgres backups
 backups/
+
+# MagicBlock SDK clone (re-fetchable from github.com/magicblock-labs/ephemeral-rollups-sdk)
+research/ephemeral-rollups-sdk/
+
+# Spike state contains throwaway devnet secret keys — keep local
+research/spike-magicblock/state.json
+research/spike-magicblock/node_modules/
+research/spike-doc-to-proposal/node_modules/
+research/spike-doc-to-proposal/state.json
