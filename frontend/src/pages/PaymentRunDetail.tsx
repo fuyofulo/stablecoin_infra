@@ -34,7 +34,7 @@ import {
 import { displayPaymentStatus, displayRunStatus, statusToneForPayment } from '../status-labels';
 import { buildSquadsPaymentLifecycle } from '../lib/lifecycle';
 import { DetailPageSkeleton, DetailPageState, RdPageHeader, RdPrimaryCard } from '../ui-primitives';
-import { LifecycleRail, type LifecycleStage, type StageState } from '../ui/LifecycleRail';
+import { LifecycleRail, type LifecycleStage } from '../ui/LifecycleRail';
 import { useToast } from '../ui/Toast';
 
 type PrimaryActionVariant =
@@ -52,128 +52,23 @@ type PrimaryActionVariant =
 
 function buildLifecycle(
   run: PaymentRun,
-  orders: PaymentOrder[],
   settlementVerification: ReturnType<typeof readSettlementVerificationStatus>,
 ): LifecycleStage[] {
   const t = run.totals;
-  const state = run.derivedState;
-  const blocked = state === 'exception' || state === 'partially_settled' || settlementVerification === 'mismatch';
-  const settled = state === 'settled' || state === 'closed';
-  const cancelled = state === 'cancelled';
-
-  // Squads-source runs flow through the multisig lifecycle, not the legacy
-  // direct-sign + Yellowstone matcher path. The 5-stage rail (Requested ·
-  // Propose · Approve · Execute · Verify) is identical to the single-
-  // payment shape — see lib/lifecycle.ts.
-  if (run.sourceTreasuryWallet?.source === 'squads_v4') {
-    return buildSquadsPaymentLifecycle({
-      derivedState: state,
-      settlementVerification,
-      requestSub: `${t.orderCount} payment${t.orderCount === 1 ? '' : 's'}`,
-      settledSub: `${t.settledCount} of ${Math.max(t.actionableCount, 1)} matched`,
-      // Runs can land in 'exception'/'partially_settled' even when the
-      // settlement verification itself didn't mismatch. Surface that as
-      // "Needs review" instead of falling through to the verification
-      // pending/verifying branches.
-      showBlockedReviewState: true,
-    });
-  }
-
-  const anySubmitted = orders.some((o) => {
-    if (['execution_recorded', 'partially_settled', 'settled', 'closed', 'exception'].includes(o.derivedState)) {
-      return true;
-    }
-    return Boolean(o.reconciliationDetail?.latestExecution?.submittedSignature);
+  // Batch runs share the same Squads 5-stage rail as single payments
+  // (Requested · Propose · Approve · Execute · Verify). The per-row trust
+  // review for unreviewed destinations is handled by the Submit action
+  // card, not a separate rail stage.
+  return buildSquadsPaymentLifecycle({
+    derivedState: run.derivedState,
+    settlementVerification,
+    requestSub: `${t.orderCount} payment${t.orderCount === 1 ? '' : 's'}`,
+    settledSub: `${t.settledCount} of ${Math.max(t.actionableCount, 1)} matched`,
+    // Runs can land in 'exception'/'partially_settled' even when the
+    // settlement verification itself didn't mismatch. Surface that as
+    // "Needs review" instead of falling through to verification states.
+    showBlockedReviewState: true,
   });
-  const submittedDone =
-    ['execution_recorded', 'partially_settled', 'settled', 'closed', 'exception'].includes(state)
-    || anySubmitted;
-  const approvedDone =
-    t.approvedCount > 0
-    || settled
-    || state === 'execution_recorded'
-    || state === 'exception'
-    || state === 'partially_settled'
-    || anySubmitted;
-  const pendingApproval = t.pendingApprovalCount;
-  const draftCount = Math.max(t.actionableCount - pendingApproval - t.approvedCount, 0);
-
-  const reviewedCurrent = !approvedDone && draftCount > 0;
-  const reviewedState: StageState = reviewedCurrent ? 'current' : 'complete';
-
-  const approvedState: StageState = approvedDone
-    ? 'complete'
-    : pendingApproval > 0
-      ? 'current'
-      : 'pending';
-
-  const executedState: StageState = blocked
-    ? 'blocked'
-    : submittedDone
-      ? 'complete'
-      : approvedDone
-        ? 'current'
-        : 'pending';
-
-  const settledState: StageState = blocked
-    ? 'blocked'
-    : settled
-      ? 'complete'
-      : submittedDone
-        ? 'current'
-        : 'pending';
-
-  const provenState: StageState = settled ? 'complete' : 'pending';
-
-  return [
-    {
-      id: 'imported',
-      label: 'Imported',
-      sub: `${t.orderCount} payment${t.orderCount === 1 ? '' : 's'}`,
-      state: 'complete',
-    },
-    {
-      id: 'reviewed',
-      label: reviewedState === 'complete' ? 'Reviewed' : 'Reviewing',
-      sub: draftCount > 0 ? `${draftCount} to review` : 'All reviewed',
-      state: reviewedState,
-    },
-    {
-      id: 'approved',
-      label: approvedState === 'complete' ? 'Approved' : 'Approval',
-      sub:
-        pendingApproval > 0
-          ? `${pendingApproval} awaiting`
-          : t.approvedCount > 0
-            ? `${t.approvedCount} of ${t.actionableCount}`
-            : 'Pending',
-      state: approvedState,
-    },
-    {
-      id: 'executed',
-      label: executedState === 'complete' ? 'Executed' : 'Execute',
-      sub: blocked
-        ? 'Blocked'
-        : submittedDone
-          ? 'On-chain'
-          : approvedDone
-            ? 'Ready to sign'
-            : 'Pending',
-      state: executedState,
-    },
-    {
-      id: 'settled',
-      label: settledState === 'complete' ? 'Settled' : 'Settle',
-      sub: `${t.settledCount} of ${Math.max(t.actionableCount, 1)} matched`,
-      state: settledState,
-    },
-    {
-      id: 'proven',
-      label: provenState === 'complete' ? 'Proven' : 'Prove',
-      sub: provenState === 'complete' ? 'Ready to export' : 'Pending settlement',
-      state: provenState,
-    },
-  ];
 }
 
 function determinePrimaryVariant(run: PaymentRun, runOrders: PaymentOrder[]): PrimaryActionVariant {
@@ -549,7 +444,7 @@ export function PaymentRunDetailPage() {
 
   const run = runQuery.data;
   const runOrders = run.paymentOrders ?? [];
-  const lifecycle = buildLifecycle(run, runOrders, linkedRunVerificationStatus);
+  const lifecycle = buildLifecycle(run, linkedRunVerificationStatus);
   const variant = determinePrimaryVariant(run, runOrders);
   const totalAmount = `${formatRawUsdcCompact(run.totals.totalAmountRaw)} ${assetSymbol(runOrders[0]?.asset)}`;
   const statusTone = statusToneForPayment(run.derivedState);

@@ -55,90 +55,12 @@ function buildLifecycle(
   settlementVerification: ReturnType<typeof readSettlementVerificationStatus>,
 ): LifecycleStage[] {
   const s = order.productLifecycle?.productState ?? order.derivedState;
-  const blocked = s === 'exception' || s === 'partially_settled' || settlementVerification === 'mismatch';
-  const settled = s === 'settled' || s === 'closed';
-  const cancelled = s === 'cancelled';
-  const squads = order.productLifecycle?.source === 'squads_v4';
-
-  const executionDone = ['execution_recorded', 'executed', 'proposal_executed', 'partially_settled', 'settled', 'closed', 'exception'].includes(s);
-  const proofDone = settled;
-
-  const verifyingNow = executionDone && !settled && settlementVerification === 'pending';
-  const verifyMismatch = settlementVerification === 'mismatch';
-
-  if (squads) {
-    return buildSquadsPaymentLifecycle({
-      derivedState: s,
-      settlementVerification,
-      requestSub: formatRelativeTime(order.createdAt),
-      settledSub: 'Matched',
-    });
-  }
-
-  const approveDone = !['draft', 'pending_approval', 'cancelled'].includes(s);
-
-  return [
-    {
-      id: 'request',
-      label: 'Requested',
-      sub: formatRelativeTime(order.createdAt),
-      state: 'complete',
-    },
-    {
-      id: 'approval',
-      label: approveDone ? 'Approved' : 'Approval',
-      sub: cancelled
-        ? 'Cancelled'
-        : approveDone
-          ? 'Cleared'
-          : s === 'pending_approval'
-            ? 'Awaiting'
-            : s === 'draft'
-              ? 'Not submitted'
-              : 'Pending',
-      state: cancelled
-        ? 'blocked'
-        : approveDone
-          ? 'complete'
-          : s === 'pending_approval' || s === 'draft'
-            ? 'current'
-            : 'pending',
-    },
-    {
-      id: 'execution',
-      label: executionDone ? 'Executed' : 'Execute',
-      sub: executionDone ? 'On-chain' : approveDone ? 'Ready to sign' : 'Pending',
-      state: blocked
-        ? 'blocked'
-        : executionDone
-          ? 'complete'
-          : approveDone
-            ? 'current'
-            : 'pending',
-    },
-    {
-      id: 'settlement',
-      label: verifyMismatch ? 'Mismatch' : settled ? 'Settled' : 'Settle',
-      sub: verifyMismatch
-        ? 'Settlement deltas did not match'
-        : blocked
-          ? 'Needs review'
-          : settled
-            ? 'Matched'
-            : verifyingNow
-              ? 'Verifying on RPC…'
-              : executionDone
-                ? 'Verification pending'
-                : 'Pending',
-      state: verifyMismatch ? 'blocked' : blocked ? 'blocked' : settled ? 'complete' : executionDone ? 'current' : 'pending',
-    },
-    {
-      id: 'proof',
-      label: proofDone ? 'Proven' : 'Prove',
-      sub: proofDone ? 'Ready to export' : 'Pending settlement',
-      state: proofDone ? 'complete' : 'pending',
-    },
-  ];
+  return buildSquadsPaymentLifecycle({
+    derivedState: s,
+    settlementVerification,
+    requestSub: formatRelativeTime(order.createdAt),
+    settledSub: 'Matched',
+  });
 }
 
 function determineVariant(order: PaymentOrder): ActionVariant {
