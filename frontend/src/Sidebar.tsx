@@ -233,9 +233,12 @@ export function AppSidebar({
   return (
     <aside className="ax-sidebar" aria-label="Application">
       <div className="ax-sidebar-brand">
-        <span className="ax-sidebar-brand-mark" aria-hidden>
-          A
-        </span>
+        <img
+          src="/favicon.svg"
+          alt=""
+          aria-hidden
+          className="ax-sidebar-brand-mark"
+        />
         <div className="ax-sidebar-brand-text">
           <strong>Decimal</strong>
         </div>

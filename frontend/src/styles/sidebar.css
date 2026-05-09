@@ -40,16 +40,9 @@
 .ax-sidebar-brand-mark {
   width: 28px;
   height: 28px;
-  border-radius: 7px;
-  background: var(--ax-accent);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--ax-on-accent);
-  font-weight: 700;
-  font-size: 13px;
-  letter-spacing: 0.02em;
+  object-fit: contain;
   flex-shrink: 0;
+  display: block;
 }
 .ax-sidebar-brand-text {
   display: flex;
