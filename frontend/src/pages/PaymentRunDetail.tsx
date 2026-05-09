@@ -199,6 +199,32 @@ export function PaymentRunDetailPage() {
     onError: (err) => toastError(err instanceof Error ? err.message : 'Could not submit payments.'),
   });
 
+  // Per-row Approve flips the destination's trustState to 'trusted' so the
+  // next Submit-all clears the trust gate for that row. Per-row Cancel is
+  // straight cancellation of the payment order — that row drops out of the
+  // batch's actionable count.
+  const approveDestinationMutation = useMutation({
+    mutationFn: ({ destinationId }: { destinationId: string; paymentOrderId: string }) =>
+      api.updateDestination(organizationId!, destinationId, { trustState: 'trusted' }),
+    onSuccess: async () => {
+      success('Destination approved.');
+      await queryClient.invalidateQueries({ queryKey: ['payment-run', organizationId, paymentRunId] });
+      await queryClient.invalidateQueries({ queryKey: ['destinations', organizationId] });
+    },
+    onError: (err) => toastError(err instanceof Error ? err.message : 'Could not approve destination.'),
+  });
+
+  const cancelOrderMutation = useMutation({
+    mutationFn: ({ paymentOrderId }: { paymentOrderId: string }) =>
+      api.cancelPaymentOrder(organizationId!, paymentOrderId),
+    onSuccess: async () => {
+      success('Payment cancelled.');
+      await queryClient.invalidateQueries({ queryKey: ['payment-run', organizationId, paymentRunId] });
+      await queryClient.invalidateQueries({ queryKey: ['payment-orders', organizationId] });
+    },
+    onError: (err) => toastError(err instanceof Error ? err.message : 'Could not cancel payment.'),
+  });
+
   const signMutation = useMutation({
     mutationFn: async () => {
       if (!effectiveSourceAddressId) throw new Error('Choose a source wallet before signing.');
@@ -595,7 +621,22 @@ export function PaymentRunDetailPage() {
               {runOrders.length} row{runOrders.length === 1 ? '' : 's'}
             </span>
           </div>
-          <RecipientsTable organizationId={organizationId} orders={runOrders} />
+          <RecipientsTable
+            organizationId={organizationId}
+            orders={runOrders}
+            onApproveDestination={(destinationId, paymentOrderId) =>
+              approveDestinationMutation.mutate({ destinationId, paymentOrderId })
+            }
+            onCancelOrder={(paymentOrderId) => cancelOrderMutation.mutate({ paymentOrderId })}
+            pendingApproveOrderId={
+              approveDestinationMutation.isPending
+                ? approveDestinationMutation.variables?.paymentOrderId
+                : undefined
+            }
+            pendingCancelOrderId={
+              cancelOrderMutation.isPending ? cancelOrderMutation.variables?.paymentOrderId : undefined
+            }
+          />
         </section>
       </div>
 
@@ -976,7 +1017,21 @@ function PrimaryActionCard(props: {
   );
 }
 
-function RecipientsTable({ organizationId, orders }: { organizationId: string; orders: PaymentOrder[] }) {
+function RecipientsTable({
+  organizationId,
+  orders,
+  onApproveDestination,
+  onCancelOrder,
+  pendingApproveOrderId,
+  pendingCancelOrderId,
+}: {
+  organizationId: string;
+  orders: PaymentOrder[];
+  onApproveDestination: (destinationId: string, paymentOrderId: string) => void;
+  onCancelOrder: (paymentOrderId: string) => void;
+  pendingApproveOrderId: string | undefined;
+  pendingCancelOrderId: string | undefined;
+}) {
   if (!orders.length) {
     return (
       <div className="rd-table-shell">
@@ -1004,10 +1059,16 @@ function RecipientsTable({ organizationId, orders }: { organizationId: string; o
           {orders.map((order) => {
             const latestExec = order.reconciliationDetail?.latestExecution;
             const signature = latestExec?.submittedSignature ?? null;
-            const match = order.reconciliationDetail?.match;
             const tone = statusToneForPayment(order.derivedState);
             const pillTone: 'success' | 'warning' | 'danger' | 'info' =
               tone === 'success' ? 'success' : tone === 'danger' ? 'danger' : tone === 'warning' ? 'warning' : 'info';
+            const isDraft = order.derivedState === 'draft';
+            const trustState = order.destination.trustState;
+            const trustTone: 'success' | 'warning' | 'danger' =
+              trustState === 'trusted' ? 'success' : trustState === 'blocked' || trustState === 'restricted' ? 'danger' : 'warning';
+            const approving = pendingApproveOrderId === order.paymentOrderId;
+            const cancelling = pendingCancelOrderId === order.paymentOrderId;
+            const rowBusy = approving || cancelling;
             return (
               <tr key={order.paymentOrderId}>
                 <td>
@@ -1040,10 +1101,17 @@ function RecipientsTable({ organizationId, orders }: { organizationId: string; o
                   </span>
                 </td>
                 <td>
-                  <span className="rd-pill" data-tone={pillTone}>
-                    <span className="rd-pill-dot" aria-hidden />
-                    {displayPaymentStatus(order.derivedState)}
-                  </span>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-start' }}>
+                    <span className="rd-pill" data-tone={pillTone}>
+                      <span className="rd-pill-dot" aria-hidden />
+                      {displayPaymentStatus(order.derivedState)}
+                    </span>
+                    {isDraft ? (
+                      <span className="rd-pill" data-tone={trustTone} style={{ fontSize: 10 }}>
+                        {trustState}
+                      </span>
+                    ) : null}
+                  </div>
                 </td>
                 <td>
                   {signature ? (
@@ -1064,16 +1132,42 @@ function RecipientsTable({ organizationId, orders }: { organizationId: string; o
                   )}
                 </td>
                 <td>
-                  <Link
-                    to={`/organizations/${organizationId}/payments/${rid(order.paymentOrderId)}`}
-                    className="rd-btn rd-btn-ghost"
-                    style={{ minHeight: 32, padding: '6px 10px', fontSize: 12 }}
-                  >
-                    Details
-                    <span className="rd-btn-arrow" aria-hidden>
-                      →
-                    </span>
-                  </Link>
+                  <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+                    {isDraft && trustState !== 'trusted' ? (
+                      <button
+                        type="button"
+                        className="rd-btn rd-btn-primary"
+                        style={{ minHeight: 32, padding: '6px 10px', fontSize: 12 }}
+                        disabled={rowBusy}
+                        aria-busy={approving}
+                        onClick={() => onApproveDestination(order.destination.destinationId, order.paymentOrderId)}
+                      >
+                        {approving ? 'Approving…' : 'Approve'}
+                      </button>
+                    ) : null}
+                    {isDraft ? (
+                      <button
+                        type="button"
+                        className="rd-btn rd-btn-secondary"
+                        style={{ minHeight: 32, padding: '6px 10px', fontSize: 12 }}
+                        disabled={rowBusy}
+                        aria-busy={cancelling}
+                        onClick={() => onCancelOrder(order.paymentOrderId)}
+                      >
+                        {cancelling ? 'Cancelling…' : 'Cancel'}
+                      </button>
+                    ) : null}
+                    <Link
+                      to={`/organizations/${organizationId}/payments/${rid(order.paymentOrderId)}`}
+                      className="rd-btn rd-btn-ghost"
+                      style={{ minHeight: 32, padding: '6px 10px', fontSize: 12 }}
+                    >
+                      Details
+                      <span className="rd-btn-arrow" aria-hidden>
+                        →
+                      </span>
+                    </Link>
+                  </div>
                 </td>
               </tr>
             );
