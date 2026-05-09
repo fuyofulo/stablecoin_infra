@@ -858,23 +858,20 @@ function Foot() {
         </div>
         <div style={{ display: 'flex', gap: 24 }}>
           <a
-            href="https://twitter.com"
+            href="https://x.com/decimalfinance"
             target="_blank"
             rel="noreferrer"
             style={{ color: 'inherit', textDecoration: 'none' }}
           >
-            Twitter
+            X
           </a>
           <a
-            href="https://github.com"
+            href="https://github.com/decimalfinance/decimal"
             target="_blank"
             rel="noreferrer"
             style={{ color: 'inherit', textDecoration: 'none' }}
           >
             GitHub
-          </a>
-          <a href="#how" style={{ color: 'inherit', textDecoration: 'none' }}>
-            Docs
           </a>
           <a href="#why" style={{ color: 'inherit', textDecoration: 'none' }}>
             colosseum '25
