@@ -35,7 +35,6 @@ const importPaymentRunCsvSchema = z.object({
   csv: z.string().min(1),
   runName: z.string().trim().max(200).optional(),
   sourceTreasuryWalletId: z.string().uuid().optional(),
-  submitOrderNow: z.boolean().default(false),
   importKey: z.string().trim().max(200).optional(),
 });
 
@@ -64,7 +63,6 @@ paymentRunsRouter.post('/organizations/:organizationId/payment-runs/import-csv',
       csv: input.csv,
       runName: input.runName,
       sourceTreasuryWalletId: input.sourceTreasuryWalletId,
-      submitOrderNow: input.submitOrderNow,
       importKey: input.importKey,
     }));
 }));

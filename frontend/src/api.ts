@@ -825,7 +825,6 @@ export const api = {
       csv: string;
       runName?: string;
       sourceTreasuryWalletId?: string;
-      submitOrderNow?: boolean;
     },
   ) {
     return request<PaymentRunImportResult>(`/organizations/${organizationId}/payment-runs/import-csv`, {

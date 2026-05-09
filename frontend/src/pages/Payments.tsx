@@ -400,7 +400,7 @@ export function PaymentsPage({ session }: { session: AuthenticatedSession }) {
           onClose={() => setImportOpen(false)}
           onSuccess={async (name, rows) => {
             setImportOpen(false);
-            success(`Imported "${name}" with ${rows} rows. Submitted for approval.`);
+            success(`Imported "${name}" with ${rows} rows. Open the batch to review destinations and submit.`);
             await queryClient.invalidateQueries({ queryKey: ['payment-runs', organizationId] });
             await queryClient.invalidateQueries({ queryKey: ['payment-orders', organizationId] });
           }}
@@ -585,7 +585,6 @@ function ImportCsvDialog(props: {
         csv,
         runName: runName.trim() || undefined,
         sourceTreasuryWalletId: sourceAddressId || undefined,
-        submitOrderNow: true,
       });
       if (result.importResult.imported === 0) {
         const existingName = result.paymentRun?.runName;

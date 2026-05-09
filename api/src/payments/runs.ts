@@ -125,7 +125,6 @@ export async function importPaymentRunFromCsv(args: {
   csv: string;
   runName?: string | null;
   sourceTreasuryWalletId?: string | null;
-  submitOrderNow?: boolean;
   importKey?: string | null;
 }) {
   const csvFingerprint = buildCsvFingerprint(args.csv);
@@ -176,12 +175,16 @@ export async function importPaymentRunFromCsv(args: {
     },
   });
 
+  // CSV-imported destinations land as `unreviewed`, so submitting orders here
+  // would always trip the trust gate in submitPaymentOrder. Leave the orders
+  // in `draft` and let the operator review destinations + submit the batch
+  // from the run detail page.
   const importResult = await importPaymentRequestsFromCsv({
     organizationId: args.organizationId,
     actorUserId: args.actorUserId,
     csv: args.csv,
     createOrderNow: true,
-    submitOrderNow: args.submitOrderNow ?? false,
+    submitOrderNow: false,
     sourceTreasuryWalletId: args.sourceTreasuryWalletId,
     paymentRunId: run.paymentRunId,
   });
