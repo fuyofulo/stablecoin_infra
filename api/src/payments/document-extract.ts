@@ -114,13 +114,27 @@ export async function extractPaymentRowsFromDocument(args: {
     );
   }
 
-  // Send every rendered page as its own image content block so the
-  // model sees the entire document (multi-invoice PDFs have one
-  // invoice per page). Order matters — keep page 1 first.
-  const imageBlocks = pages.map(({ bytes, mime }) => ({
-    type: 'image_url' as const,
-    image_url: { url: `data:${mime};base64,${bytes.toString('base64')}` },
-  }));
+  // Interleave a text marker before every image. Without these markers
+  // the model tends to merge multiple images into a single document
+  // and miss invoices on the leading pages.
+  const userContent: Array<
+    | { type: 'text'; text: string }
+    | { type: 'image_url'; image_url: { url: string } }
+  > = [];
+  pages.forEach(({ bytes, mime }, i) => {
+    userContent.push({ type: 'text', text: `=== PAGE ${i + 1} of ${pages.length} ===` });
+    userContent.push({
+      type: 'image_url',
+      image_url: { url: `data:${mime};base64,${bytes.toString('base64')}` },
+    });
+  });
+  userContent.push({
+    type: 'text',
+    text:
+      `The ${pages.length} image(s) above are the consecutive pages of one document. ` +
+      `Treat each page independently — if it is its own invoice, emit one row for it. ` +
+      `Do NOT skip the first page. Return ONLY the JSON object with rows for every payment found.`,
+  });
 
   const t0 = Date.now();
   const response = await fetch(OPENROUTER_BASE_URL, {
@@ -135,16 +149,7 @@ export async function extractPaymentRowsFromDocument(args: {
       model: MODEL,
       messages: [
         { role: 'system', content: SYSTEM_PROMPT },
-        {
-          role: 'user',
-          content: [
-            ...imageBlocks,
-            {
-              type: 'text',
-              text: `Extract every payment across all ${pages.length} page(s) of this document. Return ONLY the JSON object.`,
-            },
-          ],
-        },
+        { role: 'user', content: userContent },
       ],
     }),
   });
@@ -173,6 +178,12 @@ export async function extractPaymentRowsFromDocument(args: {
   if (!parsed.success) {
     throw new Error(`Extracted rows failed schema validation: ${parsed.error.message}`);
   }
+
+  console.log(
+    `[doc-extract] ${pages.length} page(s) → ${parsed.data.rows.length} row(s) in ${latencyMs}ms ` +
+      `(${parsed.data.rows.map((r) => `"${r.counterparty}"$${r.amount}`).join(', ')})`,
+  );
+
   return { rows: parsed.data.rows, modelLatencyMs: latencyMs, pageCount: pages.length };
 }
 
