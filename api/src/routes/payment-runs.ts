@@ -7,6 +7,7 @@ import {
   deletePaymentRun,
   getPaymentRunDetail,
   importPaymentRunFromCsv,
+  importPaymentRunFromDocument,
   listPaymentRuns,
   preparePaymentRunExecution,
   previewPaymentRunCsv,
@@ -38,6 +39,17 @@ const importPaymentRunCsvSchema = z.object({
   importKey: z.string().trim().max(200).optional(),
 });
 
+// Doc-to-proposal: client base64-encodes the file in JSON to avoid pulling
+// in a multipart parser. 10MB cap on the decoded payload.
+const MAX_DOCUMENT_BYTES = 10 * 1024 * 1024;
+const importPaymentRunFromDocumentSchema = z.object({
+  filename: z.string().trim().min(1).max(255),
+  mimeType: z.string().trim().min(1).max(100),
+  dataBase64: z.string().min(1),
+  runName: z.string().trim().max(200).optional(),
+  sourceTreasuryWalletId: z.string().uuid().optional(),
+});
+
 const preparePaymentRunExecutionSchema = z.object({
   sourceTreasuryWalletId: z.string().uuid().optional(),
 });
@@ -64,6 +76,25 @@ paymentRunsRouter.post('/organizations/:organizationId/payment-runs/import-csv',
       runName: input.runName,
       sourceTreasuryWalletId: input.sourceTreasuryWalletId,
       importKey: input.importKey,
+    }));
+}));
+
+paymentRunsRouter.post('/organizations/:organizationId/payment-runs/from-document', asyncRoute(async (req, res) => {
+    const { organizationId } = organizationParamsSchema.parse(req.params);
+    await assertOrganizationAdmin(organizationId, req.auth!);
+    const input = importPaymentRunFromDocumentSchema.parse(req.body);
+    const fileBytes = Buffer.from(input.dataBase64, 'base64');
+    if (fileBytes.length > MAX_DOCUMENT_BYTES) {
+      throw new Error(`Document exceeds ${MAX_DOCUMENT_BYTES / (1024 * 1024)}MB limit`);
+    }
+    sendCreated(res, await importPaymentRunFromDocument({
+      organizationId,
+      actorUserId: req.auth!.userId,
+      fileBytes,
+      filename: input.filename,
+      mimeType: input.mimeType,
+      runName: input.runName,
+      sourceTreasuryWalletId: input.sourceTreasuryWalletId,
     }));
 }));
 

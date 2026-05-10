@@ -1031,6 +1031,29 @@ export type PaymentRunImportResult = {
   importResult: PaymentRequestsCsvImportResult;
 };
 
+export type PaymentRunDocumentExtractedRow = {
+  counterparty: string;
+  amount: number;
+  currency: string;
+  reference: string | null;
+  due_date: string | null;
+  notes: string | null;
+};
+
+export type PaymentRunDocumentSkippedRow = {
+  counterparty: string;
+  amount: number;
+  currency: string;
+  reference: string | null;
+  reason: 'no_destination_match' | 'unsupported_currency';
+};
+
+export type PaymentRunDocumentImportResult = PaymentRunImportResult & {
+  extractedRows: PaymentRunDocumentExtractedRow[];
+  skippedRows: PaymentRunDocumentSkippedRow[];
+  modelLatencyMs: number;
+};
+
 export type PaymentOrder = {
   paymentOrderId: string;
   organizationId: string;

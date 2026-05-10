@@ -58,6 +58,13 @@ type DecimalConfig = {
   resendApiKey: string;
   resendFromEmail: string;
   resendFromName: string;
+  /**
+   * OpenRouter API key for the doc-to-proposal pipeline (invoice PDFs/
+   * images → structured payment rows via a free vision model). If
+   * unset, the from-document endpoint returns a clear error rather
+   * than failing silently.
+   */
+  openRouterApiKey: string;
   squadsProgramId: string;
   squadsDefaultVaultIndex: number;
   squadsDefaultTimelockSeconds: number;
@@ -104,6 +111,7 @@ function buildConfig(): DecimalConfig {
     resendApiKey: (process.env.RESEND_API_KEY ?? '').trim(),
     resendFromEmail: (process.env.RESEND_FROM_EMAIL ?? '').trim(),
     resendFromName: (process.env.RESEND_FROM_NAME ?? 'Decimal').trim(),
+    openRouterApiKey: (process.env.OPEN_ROUTER_API_KEY ?? process.env.OPENROUTER_API_KEY ?? '').trim(),
     squadsProgramId:
       (process.env.SQUADS_V4_PROGRAM_ID ?? fileConfig.squadsProgramId ?? 'SQDS4ep65T869zMMBKyuUq6aD6EgTu8psMjkvj52pCf').trim(),
     squadsDefaultVaultIndex: Number(process.env.SQUADS_DEFAULT_VAULT_INDEX ?? fileConfig.squadsDefaultVaultIndex ?? 0),

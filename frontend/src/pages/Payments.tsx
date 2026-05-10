@@ -79,6 +79,7 @@ export function PaymentsPage({ session }: { session: AuthenticatedSession }) {
 
   const [createOpen, setCreateOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  const [uploadDocOpen, setUploadDocOpen] = useState(false);
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<'all' | 'active' | 'settled' | 'needs_review'>('all');
 
@@ -206,6 +207,9 @@ export function PaymentsPage({ session }: { session: AuthenticatedSession }) {
           </p>
         </div>
         <div className="page-actions">
+          <button type="button" className="button button-secondary" onClick={() => setUploadDocOpen(true)}>
+            Upload invoice
+          </button>
           <button type="button" className="button button-secondary" onClick={() => setImportOpen(true)}>
             Import CSV
           </button>
@@ -401,6 +405,26 @@ export function PaymentsPage({ session }: { session: AuthenticatedSession }) {
           onSuccess={async (name, rows) => {
             setImportOpen(false);
             success(`Imported "${name}" with ${rows} rows. Open the batch to review destinations and submit.`);
+            await queryClient.invalidateQueries({ queryKey: ['payment-runs', organizationId] });
+            await queryClient.invalidateQueries({ queryKey: ['payment-orders', organizationId] });
+          }}
+          onError={(message) => toastError(message)}
+        />
+      ) : null}
+
+      {uploadDocOpen ? (
+        <UploadDocumentDialog
+          organizationId={organizationId}
+          onClose={() => setUploadDocOpen(false)}
+          onSuccess={async (name, rows, skipped) => {
+            setUploadDocOpen(false);
+            const skippedNote = skipped.length
+              ? ` ${skipped.length} row(s) skipped — no destination match for ${skipped
+                  .slice(0, 2)
+                  .map((s) => `"${s.counterparty}"`)
+                  .join(', ')}${skipped.length > 2 ? ` and ${skipped.length - 2} more` : ''}.`
+              : '';
+            success(`Imported "${name}" with ${rows} row(s).${skippedNote}`);
             await queryClient.invalidateQueries({ queryKey: ['payment-runs', organizationId] });
             await queryClient.invalidateQueries({ queryKey: ['payment-orders', organizationId] });
           }}
@@ -748,4 +772,139 @@ function ImportCsvDialog(props: {
       </div>
     </div>
   );
+}
+
+function UploadDocumentDialog(props: {
+  organizationId: string;
+  onClose: () => void;
+  onSuccess: (
+    runName: string,
+    importedRows: number,
+    skippedRows: { counterparty: string; reason: string }[],
+  ) => void;
+  onError: (message: string) => void;
+}) {
+  const { organizationId, onClose, onSuccess, onError } = props;
+  const [file, setFile] = useState<File | null>(null);
+  const [runName, setRunName] = useState('');
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') onClose();
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const uploadMutation = useMutation({
+    mutationFn: async () => {
+      if (!file) throw new Error('Pick a file first.');
+      const dataBase64 = await fileToBase64(file);
+      const result = await api.importPaymentRunFromDocument(organizationId, {
+        filename: file.name,
+        mimeType: file.type || guessMimeFromFilename(file.name),
+        dataBase64,
+        runName: runName.trim() || undefined,
+      });
+      return result;
+    },
+    onSuccess: (result) => {
+      onSuccess(
+        result.paymentRun.runName,
+        result.importResult.imported,
+        result.skippedRows.map((s) => ({ counterparty: s.counterparty, reason: s.reason })),
+      );
+    },
+    onError: (err) => onError(err instanceof Error ? err.message : 'Document import failed.'),
+  });
+
+  return (
+    <div className="rd-dialog-backdrop" role="dialog" aria-modal="true" aria-labelledby="rd-upload-doc-title">
+      <div className="rd-dialog" style={{ maxWidth: 560 }}>
+        <h2 id="rd-upload-doc-title" className="rd-dialog-title">
+          Upload invoice
+        </h2>
+        <p className="rd-dialog-body">
+          Drop a PDF, PNG, or JPG. We'll extract every payment in it and match each vendor to your destination registry.
+          Rows whose vendor isn't in your registry will be skipped — add them in <strong>Destinations</strong> first if needed.
+        </p>
+
+        <label className="rd-field" style={{ marginBottom: 16 }}>
+          <span className="rd-field-label">Batch name</span>
+          <input
+            value={runName}
+            onChange={(e) => setRunName(e.target.value)}
+            placeholder="April vendor invoices"
+            className="rd-input"
+          />
+        </label>
+
+        <label className="rd-field">
+          <span className="rd-field-label">Document</span>
+          <input
+            type="file"
+            accept=".pdf,.png,.jpg,.jpeg,.webp,.gif"
+            onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+            className="rd-input"
+            style={{ padding: 8 }}
+          />
+        </label>
+
+        {file ? (
+          <p style={{ fontSize: 12, color: 'var(--ax-text-muted)', margin: '8px 0 0' }}>
+            <span className="rd-mono">{file.name}</span> · {(file.size / 1024).toFixed(0)} KB
+          </p>
+        ) : null}
+
+        <div className="rd-dialog-actions" style={{ marginTop: 24 }}>
+          <button type="button" className="rd-btn rd-btn-secondary" onClick={onClose} disabled={uploadMutation.isPending}>
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="rd-btn rd-btn-primary"
+            disabled={!file || uploadMutation.isPending}
+            onClick={() => uploadMutation.mutate()}
+            aria-busy={uploadMutation.isPending}
+          >
+            {uploadMutation.isPending ? 'Extracting…' : 'Extract & create batch'}
+          </button>
+        </div>
+
+        {uploadMutation.isPending ? (
+          <p style={{ fontSize: 12, color: 'var(--ax-text-muted)', margin: '12px 0 0' }}>
+            Vision model is reading the document — usually 5-15 seconds.
+          </p>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result;
+      if (typeof result !== 'string') {
+        reject(new Error('FileReader returned non-string result'));
+        return;
+      }
+      // result is a data URL like "data:application/pdf;base64,JVBERi0..."
+      const comma = result.indexOf(',');
+      resolve(comma >= 0 ? result.slice(comma + 1) : result);
+    };
+    reader.onerror = () => reject(reader.error ?? new Error('FileReader failed'));
+    reader.readAsDataURL(file);
+  });
+}
+
+function guessMimeFromFilename(name: string): string {
+  const ext = name.slice(name.lastIndexOf('.') + 1).toLowerCase();
+  if (ext === 'pdf') return 'application/pdf';
+  if (ext === 'png') return 'image/png';
+  if (ext === 'jpg' || ext === 'jpeg') return 'image/jpeg';
+  if (ext === 'webp') return 'image/webp';
+  if (ext === 'gif') return 'image/gif';
+  return 'application/octet-stream';
 }

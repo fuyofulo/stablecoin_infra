@@ -8,6 +8,7 @@ import type {
 } from '@prisma/client';
 import { createHash } from 'node:crypto';
 import { serializeExecutionRecord } from '../transfer-requests/execution-records.js';
+import { extractPaymentRowsFromDocument, type ExtractedRow } from './document-extract.js';
 import { listPaymentOrders, submitPaymentOrder } from './orders.js';
 import { importPaymentRequestsFromCsv, previewPaymentRequestsCsv } from './requests.js';
 import {
@@ -207,6 +208,163 @@ export async function importPaymentRunFromCsv(args: {
     paymentRun: await getPaymentRunDetail(args.organizationId, run.paymentRunId),
     importResult,
   };
+}
+
+export type DocumentImportSkippedRow = {
+  counterparty: string;
+  amount: number;
+  currency: string;
+  reference: string | null;
+  reason: 'no_destination_match' | 'unsupported_currency';
+};
+
+/**
+ * Run the doc-to-proposal pipeline: extract structured rows from an
+ * invoice/expense document, match each counterparty against the org's
+ * destination registry, then route the matched rows through the
+ * existing CSV-import machinery to create a draft PaymentRun.
+ *
+ * Rows whose counterparty has no matching destination (or whose
+ * currency isn't USDC/USD) are skipped and reported back so the
+ * caller can prompt the operator to add a destination first.
+ */
+export async function importPaymentRunFromDocument(args: {
+  organizationId: string;
+  actorUserId: string;
+  fileBytes: Buffer;
+  filename: string;
+  mimeType: string;
+  runName?: string | null;
+  sourceTreasuryWalletId?: string | null;
+}) {
+  const extraction = await extractPaymentRowsFromDocument({
+    fileBytes: args.fileBytes,
+    filename: args.filename,
+    mimeType: args.mimeType,
+  });
+
+  if (extraction.rows.length === 0) {
+    throw new Error('No payments could be extracted from this document.');
+  }
+
+  const destinations = await prisma.destination.findMany({
+    where: { organizationId: args.organizationId, isActive: true },
+    include: { counterparty: true },
+  });
+
+  const matched: Array<{ row: ExtractedRow; destinationLabel: string; walletAddress: string }> = [];
+  const skipped: DocumentImportSkippedRow[] = [];
+
+  for (const row of extraction.rows) {
+    if (!isUsdLikeCurrency(row.currency)) {
+      skipped.push({
+        counterparty: row.counterparty,
+        amount: row.amount,
+        currency: row.currency,
+        reference: row.reference,
+        reason: 'unsupported_currency',
+      });
+      continue;
+    }
+    const destination = matchDestination(destinations, row.counterparty);
+    if (!destination) {
+      skipped.push({
+        counterparty: row.counterparty,
+        amount: row.amount,
+        currency: row.currency,
+        reference: row.reference,
+        reason: 'no_destination_match',
+      });
+      continue;
+    }
+    matched.push({
+      row,
+      destinationLabel: destination.label,
+      walletAddress: destination.walletAddress,
+    });
+  }
+
+  if (matched.length === 0) {
+    throw new Error(
+      `Extracted ${extraction.rows.length} row(s) but none matched a destination in your registry. ` +
+        `Add destinations for: ${skipped.map((s) => s.counterparty).join(', ')}`,
+    );
+  }
+
+  const csv = buildCsvFromMatchedRows(matched);
+  const result = await importPaymentRunFromCsv({
+    organizationId: args.organizationId,
+    actorUserId: args.actorUserId,
+    csv,
+    runName: args.runName,
+    sourceTreasuryWalletId: args.sourceTreasuryWalletId,
+  });
+
+  return {
+    ...result,
+    extractedRows: extraction.rows,
+    skippedRows: skipped,
+    modelLatencyMs: extraction.modelLatencyMs,
+  };
+}
+
+function isUsdLikeCurrency(currency: string): boolean {
+  const normalized = currency.trim().toUpperCase();
+  // We pay in USDC; treat USD as a stand-in (the human readable amount
+  // matches 1:1 in the demo path). A future iteration can do FX.
+  return normalized === 'USDC' || normalized === 'USD' || normalized === '$';
+}
+
+function matchDestination(
+  destinations: Array<{ destinationId: string; label: string; walletAddress: string; counterparty: { displayName: string } | null }>,
+  counterpartyName: string,
+) {
+  const needle = counterpartyName.trim().toLowerCase();
+  if (!needle) return null;
+  // Prefer exact label match, fall back to counterparty.displayName
+  // exact match, then a containment check in either direction.
+  const exact = destinations.find(
+    (d) =>
+      d.label.toLowerCase() === needle
+      || d.counterparty?.displayName.toLowerCase() === needle,
+  );
+  if (exact) return exact;
+  return destinations.find(
+    (d) =>
+      d.label.toLowerCase().includes(needle)
+      || needle.includes(d.label.toLowerCase())
+      || (d.counterparty && d.counterparty.displayName.toLowerCase().includes(needle))
+      || (d.counterparty && needle.includes(d.counterparty.displayName.toLowerCase())),
+  ) ?? null;
+}
+
+function buildCsvFromMatchedRows(
+  rows: Array<{ row: ExtractedRow; destinationLabel: string; walletAddress: string }>,
+): string {
+  const header = 'counterparty,destination,amount,reference,due_date';
+  const body = rows
+    .map(({ row, destinationLabel, walletAddress }) => {
+      // CSV escape: wrap in quotes + double up internal quotes if the
+      // value contains a comma, quote, or newline.
+      const cells = [
+        csvCell(row.counterparty || destinationLabel),
+        csvCell(walletAddress),
+        csvCell(row.amount.toString()),
+        csvCell(row.reference ?? ''),
+        csvCell(row.due_date ?? ''),
+      ];
+      return cells.join(',');
+    })
+    .join('\n');
+  return `${header}\n${body}\n`;
+}
+
+function csvCell(value: string): string {
+  if (value === '') return '';
+  if (/[",\n\r]/.test(value)) {
+    return `"${value.replace(/"/g, '""')}"`;
+  }
+  return value;
 }
 
 export async function cancelPaymentRun(args: {

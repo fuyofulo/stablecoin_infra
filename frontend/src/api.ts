@@ -26,6 +26,7 @@ import type {
   PaymentProofPacket,
   PaymentRequest,
   PaymentRun,
+  PaymentRunDocumentImportResult,
   PaymentRunImportResult,
   PublicInvite,
   Organization,
@@ -830,6 +831,21 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(input),
     });
+  },
+  importPaymentRunFromDocument(
+    organizationId: string,
+    input: {
+      filename: string;
+      mimeType: string;
+      dataBase64: string;
+      runName?: string;
+      sourceTreasuryWalletId?: string;
+    },
+  ) {
+    return request<PaymentRunDocumentImportResult>(
+      `/organizations/${organizationId}/payment-runs/from-document`,
+      { method: 'POST', body: JSON.stringify(input) },
+    );
   },
   createPaymentRequest(
     organizationId: string,

@@ -69,7 +69,10 @@ export function createApp() {
   });
 
   app.use(publicRateLimitMiddleware());
-  app.use(express.json());
+  // 15mb covers base64-encoded invoice uploads on the doc-to-proposal
+  // route (10mb decoded, ~13.4mb encoded + headers). The 1mb default
+  // is too tight for that payload.
+  app.use(express.json({ limit: '15mb' }));
 
   app.use(healthRouter);
   app.use(capabilitiesRouter);
