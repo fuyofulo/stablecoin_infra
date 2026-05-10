@@ -16,6 +16,7 @@ import {
   toneToPill,
 } from '../status-labels';
 import { useToast } from '../ui/Toast';
+import { RdFilterBar } from '../ui-primitives';
 
 type TrustFilter = 'all' | CollectionSourceTrustState;
 
@@ -131,40 +132,21 @@ export function CollectionSourcesPage({ session: _session }: { session: Authenti
         </div>
       </div>
 
-      <div className="rd-filter-bar">
-        <div className="rd-search">
-          <svg className="rd-search-icon" viewBox="0 0 16 16" fill="none" aria-hidden>
-            <circle cx="7" cy="7" r="5" stroke="currentColor" strokeWidth="1.5" />
-            <path d="m14 14-3-3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-          </svg>
-          <input
-            type="search"
-            placeholder="Search label, wallet, counterparty"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            aria-label="Search payers"
-          />
-        </div>
-        <div className="rd-tabs" role="tablist" aria-label="Trust filter">
-          {(['all', 'unreviewed', 'trusted', 'restricted', 'blocked'] as const).map((key) => (
-            <button
-              key={key}
-              role="tab"
-              aria-selected={filter === key}
-              className="rd-tab"
-              onClick={() => setFilter(key)}
-              type="button"
-            >
-              {key === 'all' ? 'All' : displayCollectionSourceTrust(key)}
-            </button>
-          ))}
-        </div>
-        <div className="rd-toolbar-right">
-          <span className="rd-section-meta">
-            {filtered.length} of {sources.length}
-          </span>
-        </div>
-      </div>
+      <RdFilterBar
+        search={{
+          value: search,
+          onChange: setSearch,
+          placeholder: 'Search label, wallet, counterparty',
+          ariaLabel: 'Search payers',
+        }}
+        tabs={(['all', 'unreviewed', 'trusted', 'restricted', 'blocked'] as const).map((key) => ({
+          id: key,
+          label: key === 'all' ? 'All' : displayCollectionSourceTrust(key),
+          active: filter === key,
+          onClick: () => setFilter(key),
+        }))}
+        rightMeta={`${filtered.length} of ${sources.length}`}
+      />
 
       <section className="rd-section" style={{ marginTop: 0 }}>
         <div className="rd-table-shell">

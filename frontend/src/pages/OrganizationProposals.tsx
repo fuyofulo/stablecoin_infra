@@ -11,6 +11,7 @@ import type {
 import { signAndSubmitIntent } from '../lib/squads-pipeline';
 import { useToast } from '../ui/Toast';
 import { ProposalsTable, type ProposalsTableBusy } from '../ui/ProposalsTable';
+import { RdFilterBar } from '../ui-primitives';
 
 const SEMANTIC_FILTER_OPTIONS: Array<{
   value: '' | ProposalSemanticType;
@@ -270,96 +271,33 @@ function FilterRow({
   treasuryFilter: string;
   onTreasuryFilterChange: (treasuryWalletId: string) => void;
 }) {
-  return (
-    <div
-      style={{
-        display: 'flex',
-        gap: 12,
-        marginBottom: 16,
-        alignItems: 'center',
-        flexWrap: 'wrap',
-      }}
-    >
-      <div style={{ display: 'flex', gap: 6 }}>
-        {(['pending', 'all', 'closed'] as SquadsProposalListStatusFilter[]).map((filter) => {
-          const active = statusFilter === filter;
-          return (
-            <button
-              key={filter}
-              type="button"
-              onClick={() => onStatusFilterChange(filter)}
-              style={{
-                padding: '6px 14px',
-                fontSize: 13,
-                borderRadius: 999,
-                border: '1px solid var(--ax-border)',
-                background: active ? 'var(--ax-accent-dim)' : 'transparent',
-                color: active ? 'var(--ax-accent)' : 'var(--ax-text-muted)',
-                cursor: 'pointer',
-                textTransform: 'capitalize',
-              }}
-            >
-              {filter}
-            </button>
-          );
-        })}
-      </div>
-      <FilterSelect
-        label="Type"
-        value={semanticFilter}
-        onChange={(next) => onSemanticFilterChange(next as '' | ProposalSemanticType)}
-        options={SEMANTIC_FILTER_OPTIONS.map((o) => ({ value: o.value, label: o.label }))}
-      />
-      <FilterSelect
-        label="Treasury"
-        value={treasuryFilter}
-        onChange={onTreasuryFilterChange}
-        options={[
-          { value: '', label: 'All treasuries' },
-          ...treasuries.map((t) => ({
-            value: t.treasuryWalletId,
-            label: t.displayName ?? 'Untitled treasury',
-          })),
-        ]}
-      />
-    </div>
-  );
-}
-
-function FilterSelect({
-  label,
-  value,
-  onChange,
-  options,
-}: {
-  label: string;
-  value: string;
-  onChange: (next: string) => void;
-  options: Array<{ value: string; label: string }>;
-}) {
-  return (
-    <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
-      <span style={{ color: 'var(--ax-text-muted)' }}>{label}:</span>
-      <select
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        style={{
-          fontSize: 13,
-          padding: '5px 8px',
-          borderRadius: 6,
-          border: '1px solid var(--ax-border)',
-          background: 'transparent',
-          color: 'inherit',
-        }}
-      >
-        {options.map((option) => (
-          <option key={option.value} value={option.value}>
-            {option.label}
-          </option>
-        ))}
-      </select>
-    </label>
-  );
+  const tabs = (['pending', 'all', 'closed'] as SquadsProposalListStatusFilter[]).map((id) => ({
+    id,
+    label: id.charAt(0).toUpperCase() + id.slice(1),
+    active: statusFilter === id,
+    onClick: () => onStatusFilterChange(id),
+  }));
+  const selects = [
+    {
+      label: 'Type',
+      value: semanticFilter,
+      onChange: (next: string) => onSemanticFilterChange(next as '' | ProposalSemanticType),
+      options: SEMANTIC_FILTER_OPTIONS.map((o) => ({ value: o.value, label: o.label })),
+    },
+    {
+      label: 'Treasury',
+      value: treasuryFilter,
+      onChange: onTreasuryFilterChange,
+      options: [
+        { value: '', label: 'All treasuries' },
+        ...treasuries.map((t) => ({
+          value: t.treasuryWalletId,
+          label: t.displayName ?? 'Untitled treasury',
+        })),
+      ],
+    },
+  ];
+  return <RdFilterBar tabs={tabs} selects={selects} />;
 }
 
 function NewProposalButton({

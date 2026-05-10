@@ -350,6 +350,108 @@ export function DetailPageState({
   );
 }
 
+// Shared filter bar used above every list-style table — search input
+// (optional), pill tabs (optional), labelled selects (optional), and a
+// right-aligned meta slot (e.g. "1 of 12"). Renders nothing if no
+// filters are passed.
+export type RdFilterBarTab = {
+  id: string;
+  label: string;
+  active: boolean;
+  onClick: () => void;
+};
+
+export type RdFilterBarSelectOption = { value: string; label: string };
+
+export type RdFilterBarSelect = {
+  label: string;
+  value: string;
+  onChange: (next: string) => void;
+  options: RdFilterBarSelectOption[];
+  ariaLabel?: string;
+};
+
+export type RdFilterBarSearch = {
+  value: string;
+  onChange: (next: string) => void;
+  placeholder?: string;
+  ariaLabel?: string;
+};
+
+export function RdFilterBar({
+  search,
+  tabs,
+  selects,
+  rightMeta,
+}: {
+  search?: RdFilterBarSearch;
+  tabs?: RdFilterBarTab[];
+  selects?: RdFilterBarSelect[];
+  rightMeta?: ReactNode;
+}) {
+  if (!search && !tabs?.length && !selects?.length && !rightMeta) {
+    return null;
+  }
+  return (
+    <div className="rd-filter-bar">
+      {search ? (
+        <div className="rd-search">
+          <svg className="rd-search-icon" viewBox="0 0 16 16" fill="none" aria-hidden>
+            <circle cx="7" cy="7" r="5" stroke="currentColor" strokeWidth="1.5" />
+            <path d="m14 14-3-3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+          </svg>
+          <input
+            type="search"
+            placeholder={search.placeholder ?? 'Search'}
+            value={search.value}
+            onChange={(e) => search.onChange(e.target.value)}
+            aria-label={search.ariaLabel ?? search.placeholder ?? 'Search'}
+          />
+        </div>
+      ) : null}
+      {tabs && tabs.length > 0 ? (
+        <div className="rd-tabs" role="tablist" aria-label="Filter">
+          {tabs.map((tab) => (
+            <button
+              key={tab.id}
+              role="tab"
+              aria-selected={tab.active}
+              className="rd-tab"
+              onClick={tab.onClick}
+              type="button"
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+      ) : null}
+      {selects && selects.length > 0
+        ? selects.map((sel) => (
+            <label key={sel.label} className="rd-filter-select">
+              <span className="rd-filter-select-label">{sel.label}:</span>
+              <select
+                value={sel.value}
+                onChange={(e) => sel.onChange(e.target.value)}
+                aria-label={sel.ariaLabel ?? sel.label}
+              >
+                {sel.options.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ))
+        : null}
+      {rightMeta ? (
+        <div className="rd-toolbar-right">
+          <span className="rd-section-meta">{rightMeta}</span>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 // Mono-style address link that opens Solscan in a new tab. Used wherever
 // detail pages render an on-chain account/PDA reference.
 export function ChainLink({

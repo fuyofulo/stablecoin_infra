@@ -5,6 +5,7 @@ import { api } from '../api';
 import type { AuthenticatedSession, CollectionSource, Counterparty, Destination } from '../types';
 import { shortenAddress, orbAccountUrl } from '../domain';
 import { useToast } from '../ui/Toast';
+import { RdFilterBar } from '../ui-primitives';
 
 type CategoryFilter = 'all' | 'categorized' | 'uncategorized';
 
@@ -159,46 +160,27 @@ export function CounterpartiesPage({ session: _session }: { session: Authenticat
         </div>
       </div>
 
-      <div className="rd-filter-bar">
-        <div className="rd-search">
-          <svg className="rd-search-icon" viewBox="0 0 16 16" fill="none" aria-hidden>
-            <circle cx="7" cy="7" r="5" stroke="currentColor" strokeWidth="1.5" />
-            <path d="m14 14-3-3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-          </svg>
-          <input
-            type="search"
-            placeholder="Search counterparty, category, wallet label"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            aria-label="Search counterparties"
-          />
-        </div>
-        <div className="rd-tabs" role="tablist" aria-label="Category filter">
-          {(
-            [
-              ['all', 'All'],
-              ['categorized', 'Categorized'],
-              ['uncategorized', 'Uncategorized'],
-            ] as const
-          ).map(([key, label]) => (
-            <button
-              key={key}
-              role="tab"
-              aria-selected={filter === key}
-              className="rd-tab"
-              onClick={() => setFilter(key)}
-              type="button"
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-        <div className="rd-toolbar-right">
-          <span className="rd-section-meta">
-            {filteredRollups.length} of {rollups.length}
-          </span>
-        </div>
-      </div>
+      <RdFilterBar
+        search={{
+          value: search,
+          onChange: setSearch,
+          placeholder: 'Search counterparty, category, wallet label',
+          ariaLabel: 'Search counterparties',
+        }}
+        tabs={(
+          [
+            ['all', 'All'],
+            ['categorized', 'Categorized'],
+            ['uncategorized', 'Uncategorized'],
+          ] as const
+        ).map(([id, label]) => ({
+          id,
+          label,
+          active: filter === id,
+          onClick: () => setFilter(id),
+        }))}
+        rightMeta={`${filteredRollups.length} of ${rollups.length}`}
+      />
 
       {orphanDestinations + orphanPayers > 0 ? (
         <div

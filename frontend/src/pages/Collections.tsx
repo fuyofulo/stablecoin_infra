@@ -21,6 +21,7 @@ import {
   toneToPill,
 } from '../status-labels';
 import { useToast } from '../ui/Toast';
+import { RdFilterBar } from '../ui-primitives';
 import { AddCollectionSourceDialog } from './CollectionSources';
 
 type UnifiedRow =
@@ -255,40 +256,21 @@ export function CollectionsPage({ session: _session }: { session: AuthenticatedS
         </div>
       </div>
 
-      <div className="rd-filter-bar">
-        <div className="rd-search">
-          <svg className="rd-search-icon" viewBox="0 0 16 16" fill="none" aria-hidden>
-            <circle cx="7" cy="7" r="5" stroke="currentColor" strokeWidth="1.5" />
-            <path d="m14 14-3-3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-          </svg>
-          <input
-            type="search"
-            placeholder="Search payer or reference"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            aria-label="Search collections"
-          />
-        </div>
-        <div className="rd-tabs" role="tablist" aria-label="Filter">
-          {(['all', 'open', 'collected', 'needs_review'] as const).map((key) => (
-            <button
-              key={key}
-              role="tab"
-              aria-selected={filter === key}
-              className="rd-tab"
-              onClick={() => setFilter(key)}
-              type="button"
-            >
-              {key === 'needs_review' ? 'Needs review' : key.charAt(0).toUpperCase() + key.slice(1)}
-            </button>
-          ))}
-        </div>
-        <div className="rd-toolbar-right">
-          <span className="rd-section-meta">
-            {filteredRows.length} of {rows.length}
-          </span>
-        </div>
-      </div>
+      <RdFilterBar
+        search={{
+          value: search,
+          onChange: setSearch,
+          placeholder: 'Search payer or reference',
+          ariaLabel: 'Search collections',
+        }}
+        tabs={(['all', 'open', 'collected', 'needs_review'] as const).map((key) => ({
+          id: key,
+          label: key === 'needs_review' ? 'Needs review' : key.charAt(0).toUpperCase() + key.slice(1),
+          active: filter === key,
+          onClick: () => setFilter(key),
+        }))}
+        rightMeta={`${filteredRows.length} of ${rows.length}`}
+      />
 
       <div className="rd-table-shell">
         <table className="rd-table">
