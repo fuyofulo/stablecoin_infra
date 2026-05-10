@@ -1,4 +1,4 @@
-import type { Counterparty, Destination, Prisma } from '@prisma/client';
+import type { Counterparty, CounterpartyWallet, Prisma } from '@prisma/client';
 import { prisma } from './infra/prisma.js';
 import { deriveUsdcAtaForWallet, SOLANA_CHAIN, USDC_ASSET } from './solana.js';
 
@@ -17,13 +17,13 @@ export type UpdateCounterpartyInput = {
   status?: string;
 };
 
-export type CreateDestinationInput = {
+export type CreateCounterpartyWalletInput = {
   counterpartyId?: string | null;
   chain?: 'solana';
   asset?: 'usdc';
   walletAddress: string;
   tokenAccountAddress?: string | null;
-  destinationType?: string;
+  walletType?: string;
   trustState?: 'unreviewed' | 'trusted' | 'restricted' | 'blocked';
   label: string;
   notes?: string | null;
@@ -32,11 +32,11 @@ export type CreateDestinationInput = {
   metadataJson?: Prisma.InputJsonValue;
 };
 
-export type UpdateDestinationInput = {
+export type UpdateCounterpartyWalletInput = {
   counterpartyId?: string | null;
   walletAddress?: string;
   tokenAccountAddress?: string | null;
-  destinationType?: string;
+  walletType?: string;
   trustState?: 'unreviewed' | 'trusted' | 'restricted' | 'blocked';
   label?: string;
   notes?: string | null;
@@ -102,8 +102,14 @@ export async function updateCounterparty(organizationId: string, counterpartyId:
   return serializeCounterparty(updated);
 }
 
-export async function listDestinations(organizationId: string, options?: { limit?: number; includeInternal?: boolean }) {
-  const items = await prisma.destination.findMany({
+export async function listCounterpartyWallets(
+  organizationId: string,
+  options?: {
+    limit?: number;
+    includeInternal?: boolean;
+  },
+) {
+  const items = await prisma.counterpartyWallet.findMany({
     where: {
       organizationId,
       ...(options?.includeInternal ? {} : { isInternal: false }),
@@ -115,21 +121,20 @@ export async function listDestinations(organizationId: string, options?: { limit
     take: options?.limit ?? 100,
   });
 
-  return { items: items.map(serializeDestination) };
+  return { items: items.map(serializeCounterpartyWallet) };
 }
 
-export async function createDestination(organizationId: string, input: CreateDestinationInput) {
+export async function createCounterpartyWallet(organizationId: string, input: CreateCounterpartyWalletInput) {
   const organization = await getOrganization(organizationId);
 
   if (input.counterpartyId) {
     await assertCounterpartyBelongsToOrg(organization.organizationId, input.counterpartyId);
   }
 
-  await assertDestinationLabelAvailable(organizationId, input.label);
-  await assertDestinationWalletAvailable(organizationId, input.walletAddress);
+  await assertCounterpartyWalletWalletAvailable(organizationId, input.walletAddress);
   const tokenAccountAddress = normalizeOptionalText(input.tokenAccountAddress) ?? deriveUsdcAtaForWallet(input.walletAddress);
 
-  const destination = await prisma.destination.create({
+  const wallet = await prisma.counterpartyWallet.create({
     data: {
       organizationId,
       counterpartyId: input.counterpartyId,
@@ -137,7 +142,7 @@ export async function createDestination(organizationId: string, input: CreateDes
       asset: input.asset ?? USDC_ASSET,
       walletAddress: input.walletAddress,
       tokenAccountAddress,
-      destinationType: input.destinationType ?? 'wallet',
+      walletType: input.walletType ?? 'wallet',
       trustState: input.trustState ?? 'unreviewed',
       label: input.label,
       notes: normalizeOptionalText(input.notes),
@@ -150,14 +155,18 @@ export async function createDestination(organizationId: string, input: CreateDes
     },
   });
 
-  return serializeDestination(destination);
+  return serializeCounterpartyWallet(wallet);
 }
 
-export async function updateDestination(organizationId: string, destinationId: string, input: UpdateDestinationInput) {
+export async function updateCounterpartyWallet(
+  organizationId: string,
+  counterpartyWalletId: string,
+  input: UpdateCounterpartyWalletInput,
+) {
   const [organization, current] = await Promise.all([
     getOrganization(organizationId),
-    prisma.destination.findFirstOrThrow({
-      where: { organizationId, destinationId },
+    prisma.counterpartyWallet.findFirstOrThrow({
+      where: { organizationId, counterpartyWalletId },
     }),
   ]);
 
@@ -165,12 +174,9 @@ export async function updateDestination(organizationId: string, destinationId: s
     await assertCounterpartyBelongsToOrg(organization.organizationId, input.counterpartyId);
   }
 
-  const nextLabel = input.label?.trim() || current.label;
-  await assertDestinationLabelAvailable(organizationId, nextLabel, destinationId);
-
   const nextWalletAddress = input.walletAddress?.trim();
   if (nextWalletAddress && nextWalletAddress !== current.walletAddress) {
-    await assertDestinationWalletAvailable(organizationId, nextWalletAddress, destinationId);
+    await assertCounterpartyWalletWalletAvailable(organizationId, nextWalletAddress, counterpartyWalletId);
   }
   const shouldUpdateTokenAccount = input.tokenAccountAddress !== undefined || Boolean(nextWalletAddress);
   const tokenAccountAddress = shouldUpdateTokenAccount
@@ -178,13 +184,13 @@ export async function updateDestination(organizationId: string, destinationId: s
       ?? deriveUsdcAtaForWallet(nextWalletAddress ?? current.walletAddress)
     : undefined;
 
-  const updated = await prisma.destination.update({
-    where: { destinationId },
+  const updated = await prisma.counterpartyWallet.update({
+    where: { counterpartyWalletId },
     data: {
       counterpartyId: input.counterpartyId !== undefined ? input.counterpartyId : undefined,
       walletAddress: nextWalletAddress,
       tokenAccountAddress,
-      destinationType: input.destinationType,
+      walletType: input.walletType,
       trustState: input.trustState,
       label: input.label,
       notes: input.notes !== undefined ? normalizeOptionalText(input.notes) : undefined,
@@ -196,7 +202,95 @@ export async function updateDestination(organizationId: string, destinationId: s
     },
   });
 
-  return serializeDestination(updated);
+  return serializeCounterpartyWallet(updated);
+}
+
+/**
+ * Look up an existing wallet for a payer, or create one. A wallet has no
+ * direction, so the same record is reused for outbound and inbound flows;
+ * we just upsert by (organizationId, walletAddress) and optionally link the
+ * counterparty if it wasn't set before.
+ */
+export async function findOrCreateWalletForPayer(args: {
+  organizationId: string;
+  counterpartyId?: string | null;
+  payerWalletAddress: string;
+  payerTokenAccountAddress?: string | null;
+  label?: string | null;
+  inputSource: string;
+}) {
+  const payerWalletAddress = normalizeRequiredText(args.payerWalletAddress, 'Payer wallet address is required');
+  const tokenAccountAddress = normalizeOptionalText(args.payerTokenAccountAddress) ?? deriveUsdcAtaForWallet(payerWalletAddress);
+  const existing = await prisma.counterpartyWallet.findUnique({
+    where: {
+      organizationId_walletAddress: {
+        organizationId: args.organizationId,
+        walletAddress: payerWalletAddress,
+      },
+    },
+    include: { counterparty: true },
+  });
+
+  if (existing) {
+    const needsCounterpartyLink = !existing.counterpartyId && args.counterpartyId;
+    if (!needsCounterpartyLink) {
+      return existing;
+    }
+    return prisma.counterpartyWallet.update({
+      where: { counterpartyWalletId: existing.counterpartyWalletId },
+      data: {
+        counterpartyId: args.counterpartyId,
+      },
+      include: { counterparty: true },
+    });
+  }
+
+  const wallet = await prisma.counterpartyWallet.create({
+    data: {
+      organizationId: args.organizationId,
+      counterpartyId: args.counterpartyId ?? null,
+      chain: SOLANA_CHAIN,
+      asset: USDC_ASSET,
+      walletAddress: payerWalletAddress,
+      tokenAccountAddress,
+      walletType: 'payer_wallet',
+      trustState: 'unreviewed',
+      label: await buildAvailableInboundWalletLabel(args.organizationId, args.label ?? shortenAddress(payerWalletAddress)),
+      notes: 'Automatically created from an expected collection payer wallet.',
+      isActive: true,
+      metadataJson: {
+        inputSource: args.inputSource,
+        autoCreated: true,
+      },
+    },
+    include: { counterparty: true },
+  });
+
+  return wallet;
+}
+
+export function serializeCounterpartyWallet(wallet: CounterpartyWallet & {
+  counterparty?: Counterparty | null;
+}) {
+  return {
+    counterpartyWalletId: wallet.counterpartyWalletId,
+    organizationId: wallet.organizationId,
+    counterpartyId: wallet.counterpartyId,
+    chain: wallet.chain,
+    asset: wallet.asset,
+    walletAddress: wallet.walletAddress,
+    tokenAccountAddress: wallet.tokenAccountAddress,
+    walletType: wallet.walletType,
+    trustState: wallet.trustState,
+    label: wallet.label,
+    notes: wallet.notes,
+    isInternal: wallet.isInternal,
+    isActive: wallet.isActive,
+    metadataJson: wallet.metadataJson,
+    createdAt: wallet.createdAt,
+    updatedAt: wallet.updatedAt,
+    counterparty: wallet.counterparty ? serializeCounterparty(wallet.counterparty) : null,
+  };
 }
 
 function getOrganization(organizationId: string) {
@@ -241,48 +335,44 @@ async function assertCounterpartyNameAvailable(
   }
 }
 
-async function assertDestinationLabelAvailable(
-  organizationId: string,
-  label: string,
-  excludeDestinationId?: string,
-) {
-  const existing = await prisma.destination.findFirst({
-    where: {
-      organizationId,
-      label: {
-        equals: label,
-        mode: 'insensitive',
-      },
-      ...(excludeDestinationId ? { destinationId: { not: excludeDestinationId } } : {}),
-    },
-    select: { destinationId: true },
-  });
-
-  if (existing) {
-    throw new Error(`Destination name "${label}" already exists in this organization`);
-  }
-}
-
-async function assertDestinationWalletAvailable(
+async function assertCounterpartyWalletWalletAvailable(
   organizationId: string,
   walletAddress: string,
-  excludeDestinationId?: string,
+  excludeCounterpartyWalletId?: string,
 ) {
-  const existing = await prisma.destination.findFirst({
+  const existing = await prisma.counterpartyWallet.findFirst({
     where: {
       organizationId,
       walletAddress,
-      ...(excludeDestinationId ? { destinationId: { not: excludeDestinationId } } : {}),
+      ...(excludeCounterpartyWalletId ? { counterpartyWalletId: { not: excludeCounterpartyWalletId } } : {}),
     },
-    select: { destinationId: true },
+    select: { counterpartyWalletId: true },
   });
 
   if (existing) {
-    throw new Error(`Destination wallet "${walletAddress}" already exists in this organization`);
+    throw new Error(`Counterparty wallet "${walletAddress}" already exists in this organization`);
   }
 }
 
-function serializeCounterparty(counterparty: Counterparty) {
+async function buildAvailableInboundWalletLabel(organizationId: string, baseLabel: string) {
+  let candidate = normalizeRequiredText(baseLabel, 'Counterparty wallet label is required');
+  for (let suffix = 1; suffix <= 50; suffix += 1) {
+    const existing = await prisma.counterpartyWallet.findFirst({
+      where: {
+        organizationId,
+        label: { equals: candidate, mode: 'insensitive' },
+      },
+      select: { counterpartyWalletId: true },
+    });
+    if (!existing) {
+      return candidate;
+    }
+    candidate = `${baseLabel} ${suffix + 1}`;
+  }
+  throw new Error(`Could not allocate a unique counterparty wallet label for "${baseLabel}"`);
+}
+
+export function serializeCounterparty(counterparty: Counterparty) {
   return {
     counterpartyId: counterparty.counterpartyId,
     organizationId: counterparty.organizationId,
@@ -296,30 +386,18 @@ function serializeCounterparty(counterparty: Counterparty) {
   };
 }
 
-function serializeDestination(destination: Destination & {
-  counterparty?: Counterparty | null;
-}) {
-  return {
-    destinationId: destination.destinationId,
-    organizationId: destination.organizationId,
-    counterpartyId: destination.counterpartyId,
-    chain: destination.chain,
-    asset: destination.asset,
-    walletAddress: destination.walletAddress,
-    tokenAccountAddress: destination.tokenAccountAddress,
-    destinationType: destination.destinationType,
-    trustState: destination.trustState,
-    label: destination.label,
-    notes: destination.notes,
-    isInternal: destination.isInternal,
-    isActive: destination.isActive,
-    metadataJson: destination.metadataJson,
-    createdAt: destination.createdAt,
-    updatedAt: destination.updatedAt,
-    counterparty: destination.counterparty ? serializeCounterparty(destination.counterparty) : null,
-  };
+function normalizeRequiredText(value: string | null | undefined, message: string) {
+  const normalized = normalizeOptionalText(value);
+  if (!normalized) {
+    throw new Error(message);
+  }
+  return normalized;
 }
 
 function normalizeOptionalText(value?: string | null) {
   return value?.trim() || null;
+}
+
+function shortenAddress(value: string) {
+  return `${value.slice(0, 6)}...${value.slice(-6)}`;
 }

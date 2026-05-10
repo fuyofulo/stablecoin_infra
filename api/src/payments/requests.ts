@@ -1,4 +1,4 @@
-import type { Counterparty, Destination, PaymentRequest, Prisma, User } from '@prisma/client';
+import type { Counterparty, CounterpartyWallet, PaymentRequest, Prisma, User } from '@prisma/client';
 import { createPaymentOrder, getPaymentOrderDetail } from './orders.js';
 import { prisma } from '../infra/prisma.js';
 import { deriveUsdcAtaForWallet, SOLANA_CHAIN, USDC_ASSET } from '../solana.js';
@@ -12,7 +12,7 @@ export const PAYMENT_REQUEST_STATES = [
 export type PaymentRequestState = (typeof PAYMENT_REQUEST_STATES)[number];
 
 type PaymentRequestWithRelations = PaymentRequest & {
-  destination: Destination & { counterparty: Counterparty | null };
+  counterpartyWallet: CounterpartyWallet & { counterparty: Counterparty | null };
   counterparty: Counterparty | null;
   requestedByUser: Pick<User, 'userId' | 'email' | 'displayName'> | null;
   paymentOrder: { paymentOrderId: string; state: string; createdAt: Date } | null;
@@ -55,7 +55,7 @@ export async function createPaymentRequest(args: {
   organizationId: string;
   actorUserId: string;
   paymentRunId?: string | null;
-  destinationId: string;
+  counterpartyWalletId: string;
   amountRaw: string | bigint;
   asset?: string;
   reason: string;
@@ -66,26 +66,26 @@ export async function createPaymentRequest(args: {
   sourceTreasuryWalletId?: string | null;
   submitOrderNow?: boolean;
 }) {
-  const destination = await prisma.destination.findFirst({
+  const counterpartyWallet = await prisma.counterpartyWallet.findFirst({
     where: {
       organizationId: args.organizationId,
-      destinationId: args.destinationId,
+      counterpartyWalletId: args.counterpartyWalletId,
       isActive: true,
     },
     include: { counterparty: true },
   });
 
-  if (!destination) {
-    throw new Error('Destination not found');
+  if (!counterpartyWallet) {
+    throw new Error('Counterparty wallet not found');
   }
 
-  if (destination.trustState === 'blocked') {
-    throw new Error(`Destination "${destination.label}" is blocked and cannot receive payment requests`);
+  if (counterpartyWallet.trustState === 'blocked') {
+    throw new Error(`Counterparty wallet "${counterpartyWallet.label}" is blocked and cannot receive payment requests`);
   }
 
   await enforceDuplicatePaymentRequest({
     organizationId: args.organizationId,
-    destinationId: destination.destinationId,
+    counterpartyWalletId: counterpartyWallet.counterpartyWalletId,
     amountRaw: args.amountRaw,
     externalReference: normalizeOptionalText(args.externalReference),
   });
@@ -94,8 +94,8 @@ export async function createPaymentRequest(args: {
     data: {
       organizationId: args.organizationId,
       paymentRunId: args.paymentRunId ?? null,
-      destinationId: destination.destinationId,
-      counterpartyId: destination.counterpartyId,
+      counterpartyWalletId: counterpartyWallet.counterpartyWalletId,
+      counterpartyId: counterpartyWallet.counterpartyId,
       requestedByUserId: args.actorUserId,
       amountRaw: BigInt(args.amountRaw),
       asset: args.asset ?? 'usdc',
@@ -147,7 +147,7 @@ export async function promotePaymentRequestToOrder(args: {
   const paymentOrder = await createPaymentOrder({
     organizationId: args.organizationId,
     actorUserId: args.actorUserId,
-    destinationId: request.destinationId,
+    counterpartyWalletId: request.counterpartyWalletId,
     paymentRunId: args.paymentRunId ?? request.paymentRunId,
     sourceTreasuryWalletId: args.sourceTreasuryWalletId ?? null,
     amountRaw: request.amountRaw,
@@ -229,7 +229,7 @@ export async function importPaymentRequestsFromCsv(args: {
       }
       seenImportKeys.set(importKey, rowNumber);
 
-      const destination = await resolveCsvDestination({
+      const counterpartyWallet = await resolveCsvCounterpartyWallet({
         organizationId: args.organizationId,
         destinationInput: parsed.destinationInput,
         counterpartyName: parsed.counterpartyName,
@@ -240,7 +240,7 @@ export async function importPaymentRequestsFromCsv(args: {
         organizationId: args.organizationId,
         actorUserId: args.actorUserId,
         paymentRunId: args.paymentRunId,
-        destinationId: destination.destinationId,
+        counterpartyWalletId: counterpartyWallet.counterpartyWalletId,
         amountRaw: parsed.amountRaw,
         asset: parsed.asset,
         reason: parsed.reason,
@@ -302,16 +302,16 @@ export async function previewPaymentRequestsCsv(args: {
       const duplicateRowNumber = seenImportKeys.get(importKey) ?? null;
       seenImportKeys.set(importKey, duplicateRowNumber ?? rowNumber);
 
-      const resolution = await previewCsvDestination({
+      const resolution = await previewCsvCounterpartyWallet({
         organizationId: args.organizationId,
         destinationInput: parsed.destinationInput,
         counterpartyName: parsed.counterpartyName,
         rowNumber,
       });
-      const duplicate = resolution.destination
+      const duplicate = resolution.counterpartyWallet
         ? await findActivePaymentDuplicate({
             organizationId: args.organizationId,
-            destinationId: resolution.destination.destinationId,
+            counterpartyWalletId: resolution.counterpartyWallet.counterpartyWalletId,
             amountRaw: parsed.amountRaw,
             externalReference: parsed.externalReference,
           })
@@ -319,7 +319,7 @@ export async function previewPaymentRequestsCsv(args: {
       const warnings = [
         duplicateRowNumber ? `Duplicate CSV row. Same destination, amount, and reference already appeared on row ${duplicateRowNumber}` : null,
         duplicate ? `Active ${duplicate.kind} with this destination, amount, and reference already exists` : null,
-        resolution.wouldCreateDestination ? 'Destination wallet will be created as unreviewed and may require approval before execution' : null,
+        resolution.wouldCreateCounterpartyWallet ? 'Counterparty wallet will be created as unreviewed and may require approval before execution' : null,
       ].filter((warning): warning is string => Boolean(warning));
 
       items.push({
@@ -358,7 +358,7 @@ export async function previewPaymentRequestsCsv(args: {
 }
 
 const paymentRequestInclude = {
-  destination: {
+  counterpartyWallet: {
     include: {
       counterparty: true,
     },
@@ -380,7 +380,7 @@ const paymentRequestInclude = {
   },
 } satisfies Prisma.PaymentRequestInclude;
 
-async function resolveCsvDestination(args: {
+async function resolveCsvCounterpartyWallet(args: {
   organizationId: string;
   destinationInput: string | null;
   counterpartyName: string | null;
@@ -390,12 +390,12 @@ async function resolveCsvDestination(args: {
     throw new Error(`Row ${args.rowNumber}: destination wallet address is required`);
   }
 
-  const destination = await findDestinationForCsv(args.organizationId, args.destinationInput);
-  if (destination) {
-    return destination;
+  const counterpartyWallet = await findCounterpartyWalletForCsv(args.organizationId, args.destinationInput);
+  if (counterpartyWallet) {
+    return counterpartyWallet;
   }
 
-  return createCsvDestinationFromWallet({
+  return createCsvCounterpartyWalletFromAddress({
     organizationId: args.organizationId,
     walletAddress: args.destinationInput,
     labelFromCsv: args.counterpartyName,
@@ -403,7 +403,7 @@ async function resolveCsvDestination(args: {
   });
 }
 
-async function previewCsvDestination(args: {
+async function previewCsvCounterpartyWallet(args: {
   organizationId: string;
   destinationInput: string | null;
   counterpartyName: string | null;
@@ -413,13 +413,13 @@ async function previewCsvDestination(args: {
     throw new Error(`Row ${args.rowNumber}: destination wallet address is required`);
   }
 
-  const destination = await findDestinationForCsv(args.organizationId, args.destinationInput);
-  if (destination) {
+  const counterpartyWallet = await findCounterpartyWalletForCsv(args.organizationId, args.destinationInput);
+  if (counterpartyWallet) {
     return {
-      destination: serializeDestination({ ...destination, counterparty: null }),
-      wouldCreateDestination: false,
-      walletAddress: destination.walletAddress,
-      tokenAccountAddress: destination.tokenAccountAddress,
+      counterpartyWallet: serializeCounterpartyWalletShallow({ ...counterpartyWallet, counterparty: null }),
+      wouldCreateCounterpartyWallet: false,
+      walletAddress: counterpartyWallet.walletAddress,
+      tokenAccountAddress: counterpartyWallet.tokenAccountAddress,
     };
   }
 
@@ -427,29 +427,29 @@ async function previewCsvDestination(args: {
   try {
     tokenAccountAddress = deriveUsdcAtaForWallet(args.destinationInput);
   } catch {
-    throw new Error(`Row ${args.rowNumber}: destination not found and "${args.destinationInput}" is not a valid Solana wallet address`);
+    throw new Error(`Row ${args.rowNumber}: counterparty wallet not found and "${args.destinationInput}" is not a valid Solana wallet address`);
   }
 
   return {
-    destination: null,
-    wouldCreateDestination: true,
+    counterpartyWallet: null,
+    wouldCreateCounterpartyWallet: true,
     walletAddress: args.destinationInput,
     tokenAccountAddress,
   };
 }
 
-async function findDestinationForCsv(organizationId: string, value: string) {
-  const alternatives: Prisma.DestinationWhereInput[] = [
+async function findCounterpartyWalletForCsv(organizationId: string, value: string) {
+  const alternatives: Prisma.CounterpartyWalletWhereInput[] = [
     { label: { equals: value, mode: 'insensitive' } },
     { walletAddress: value },
     { tokenAccountAddress: value },
   ];
 
   if (isUuid(value)) {
-    alternatives.unshift({ destinationId: value });
+    alternatives.unshift({ counterpartyWalletId: value });
   }
 
-  return prisma.destination.findFirst({
+  return prisma.counterpartyWallet.findFirst({
     where: {
       organizationId,
       isActive: true,
@@ -494,7 +494,7 @@ function buildCsvImportRowKey(parsed: ReturnType<typeof parsePaymentRequestCsvRe
 
 async function findActivePaymentDuplicate(args: {
   organizationId: string;
-  destinationId: string;
+  counterpartyWalletId: string;
   amountRaw: string | bigint;
   externalReference: string | null;
 }) {
@@ -505,7 +505,7 @@ async function findActivePaymentDuplicate(args: {
   const paymentRequest = await prisma.paymentRequest.findFirst({
     where: {
       organizationId: args.organizationId,
-      destinationId: args.destinationId,
+      counterpartyWalletId: args.counterpartyWalletId,
       amountRaw: BigInt(args.amountRaw),
       externalReference: {
         equals: args.externalReference,
@@ -529,7 +529,7 @@ async function findActivePaymentDuplicate(args: {
   const paymentOrder = await prisma.paymentOrder.findFirst({
     where: {
       organizationId: args.organizationId,
-      destinationId: args.destinationId,
+      counterpartyWalletId: args.counterpartyWalletId,
       amountRaw: BigInt(args.amountRaw),
       state: {
         notIn: ['closed', 'cancelled'],
@@ -555,7 +555,7 @@ async function findActivePaymentDuplicate(args: {
   return null;
 }
 
-async function createCsvDestinationFromWallet(args: {
+async function createCsvCounterpartyWalletFromAddress(args: {
   organizationId: string;
   walletAddress: string;
   labelFromCsv: string | null;
@@ -565,13 +565,13 @@ async function createCsvDestinationFromWallet(args: {
   try {
     usdcAtaAddress = deriveUsdcAtaForWallet(args.walletAddress);
   } catch {
-    throw new Error(`Row ${args.rowNumber}: destination not found and "${args.walletAddress}" is not a valid Solana wallet address`);
+    throw new Error(`Row ${args.rowNumber}: counterparty wallet not found and "${args.walletAddress}" is not a valid Solana wallet address`);
   }
 
   const label = normalizeOptionalText(args.labelFromCsv) ?? shortenAddress(args.walletAddress);
 
   return prisma.$transaction(async (tx) => {
-    const existing = await tx.destination.findUnique({
+    const existing = await tx.counterpartyWallet.findUnique({
       where: {
         organizationId_walletAddress: {
           organizationId: args.organizationId,
@@ -581,8 +581,8 @@ async function createCsvDestinationFromWallet(args: {
     });
 
     if (existing) {
-      return tx.destination.update({
-        where: { destinationId: existing.destinationId },
+      return tx.counterpartyWallet.update({
+        where: { counterpartyWalletId: existing.counterpartyWalletId },
         data: {
           isActive: true,
           tokenAccountAddress: existing.tokenAccountAddress ?? usdcAtaAddress,
@@ -590,14 +590,14 @@ async function createCsvDestinationFromWallet(args: {
       });
     }
 
-    return tx.destination.create({
+    return tx.counterpartyWallet.create({
       data: {
         organizationId: args.organizationId,
         chain: SOLANA_CHAIN,
         asset: USDC_ASSET,
         walletAddress: args.walletAddress,
         tokenAccountAddress: usdcAtaAddress,
-        destinationType: 'csv_imported',
+        walletType: 'csv_imported',
         trustState: 'unreviewed',
         label,
         notes: 'Created from CSV payment request import. Review trust state before live execution.',
@@ -616,7 +616,7 @@ function serializePaymentRequest(request: PaymentRequestWithRelations) {
     paymentRequestId: request.paymentRequestId,
     organizationId: request.organizationId,
     paymentRunId: request.paymentRunId,
-    destinationId: request.destinationId,
+    counterpartyWalletId: request.counterpartyWalletId,
     counterpartyId: request.counterpartyId,
     requestedByUserId: request.requestedByUserId,
     amountRaw: request.amountRaw.toString(),
@@ -628,7 +628,7 @@ function serializePaymentRequest(request: PaymentRequestWithRelations) {
     metadataJson: request.metadataJson,
     createdAt: request.createdAt,
     updatedAt: request.updatedAt,
-    destination: serializeDestination(request.destination),
+    counterpartyWallet: serializeCounterpartyWalletShallow(request.counterpartyWallet),
     counterparty: request.counterparty ? serializeCounterparty(request.counterparty) : null,
     requestedByUser: serializeUserRef(request.requestedByUser),
     paymentOrder: request.paymentOrder
@@ -641,25 +641,25 @@ function serializePaymentRequest(request: PaymentRequestWithRelations) {
   };
 }
 
-function serializeDestination(destination: Destination & { counterparty: Counterparty | null }) {
+function serializeCounterpartyWalletShallow(wallet: CounterpartyWallet & { counterparty: Counterparty | null }) {
   return {
-    destinationId: destination.destinationId,
-    organizationId: destination.organizationId,
-    counterpartyId: destination.counterpartyId,
-    chain: destination.chain,
-    asset: destination.asset,
-    walletAddress: destination.walletAddress,
-    tokenAccountAddress: destination.tokenAccountAddress,
-    destinationType: destination.destinationType,
-    trustState: destination.trustState,
-    label: destination.label,
-    notes: destination.notes,
-    isInternal: destination.isInternal,
-    isActive: destination.isActive,
-    metadataJson: destination.metadataJson,
-    createdAt: destination.createdAt,
-    updatedAt: destination.updatedAt,
-    counterparty: destination.counterparty ? serializeCounterparty(destination.counterparty) : null,
+    counterpartyWalletId: wallet.counterpartyWalletId,
+    organizationId: wallet.organizationId,
+    counterpartyId: wallet.counterpartyId,
+    chain: wallet.chain,
+    asset: wallet.asset,
+    walletAddress: wallet.walletAddress,
+    tokenAccountAddress: wallet.tokenAccountAddress,
+    walletType: wallet.walletType,
+    trustState: wallet.trustState,
+    label: wallet.label,
+    notes: wallet.notes,
+    isInternal: wallet.isInternal,
+    isActive: wallet.isActive,
+    metadataJson: wallet.metadataJson,
+    createdAt: wallet.createdAt,
+    updatedAt: wallet.updatedAt,
+    counterparty: wallet.counterparty ? serializeCounterparty(wallet.counterparty) : null,
   };
 }
 
@@ -689,7 +689,7 @@ function serializeUserRef(user: Pick<User, 'userId' | 'email' | 'displayName'> |
 
 async function enforceDuplicatePaymentRequest(args: {
   organizationId: string;
-  destinationId: string;
+  counterpartyWalletId: string;
   amountRaw: string | bigint;
   externalReference: string | null;
 }) {
@@ -700,7 +700,7 @@ async function enforceDuplicatePaymentRequest(args: {
   const duplicate = await prisma.paymentRequest.findFirst({
     where: {
       organizationId: args.organizationId,
-      destinationId: args.destinationId,
+      counterpartyWalletId: args.counterpartyWalletId,
       amountRaw: BigInt(args.amountRaw),
       externalReference: {
         equals: args.externalReference,
@@ -711,7 +711,7 @@ async function enforceDuplicatePaymentRequest(args: {
   });
 
   if (duplicate) {
-    throw new Error(`Active payment request with reference "${args.externalReference}" already exists for this destination and amount`);
+    throw new Error(`Active payment request with reference "${args.externalReference}" already exists for this counterparty wallet and amount`);
   }
 }
 

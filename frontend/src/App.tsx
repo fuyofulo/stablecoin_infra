@@ -11,10 +11,8 @@ import { PaymentDetailPage as PaymentDetailPageV2 } from './pages/PaymentDetail'
 import { CollectionsPage } from './pages/Collections';
 import { CollectionDetailPage } from './pages/CollectionDetail';
 import { CollectionRunDetailPage } from './pages/CollectionRunDetail';
-import { CollectionSourcesPage } from './pages/CollectionSources';
 import { WalletsPage } from './pages/Wallets';
 import { CounterpartiesPage } from './pages/Counterparties';
-import { DestinationsPage } from './pages/Destinations';
 import { LandingPage as LandingPageV2 } from './pages/Landing';
 import { MembersPage } from './pages/Members';
 import { TreasuryWalletDetailPage } from './pages/TreasuryWalletDetail';
@@ -26,7 +24,7 @@ import { useToast } from './ui/Toast';
 import type {
   AuthenticatedSession,
   Counterparty,
-  Destination,
+  CounterpartyWallet,
   PaymentOrder,
   PaymentOrderState,
   PaymentRequest,
@@ -213,7 +211,7 @@ function AppShell({ session }: { session: AuthenticatedSession }) {
           <Route path="/organizations/:organizationId/proposals/:decimalProposalId" element={<OrganizationProposalDetailPage session={session} />} />
           <Route path="/organizations/:organizationId/members" element={<MembersPage session={session} />} />
           <Route path="/organizations/:organizationId/counterparties" element={<CounterpartiesPage session={session} />} />
-          <Route path="/organizations/:organizationId/destinations" element={<DestinationsPage session={session} />} />
+          <Route path="/organizations/:organizationId/destinations" element={<Navigate to="counterparties" replace />} />
           <Route path="/organizations/:organizationId/registry" element={<AddressBookPage session={session} />} />
           <Route path="/organizations/:organizationId/requests" element={<PaymentRequestsPage session={session} />} />
           <Route path="/organizations/:organizationId/runs" element={<PaymentsPageV2 session={session} />} />
@@ -223,7 +221,7 @@ function AppShell({ session }: { session: AuthenticatedSession }) {
           <Route path="/organizations/:organizationId/collections" element={<CollectionsPage session={session} />} />
           <Route path="/organizations/:organizationId/collections/:collectionRequestId" element={<CollectionDetailPage />} />
           <Route path="/organizations/:organizationId/collection-runs/:collectionRunId" element={<CollectionRunDetailPage />} />
-          <Route path="/organizations/:organizationId/payers" element={<CollectionSourcesPage session={session} />} />
+          <Route path="/organizations/:organizationId/payers" element={<Navigate to="../counterparties" replace />} />
         </Routes>
       </main>
     </div>
@@ -1785,7 +1783,7 @@ function PaymentRequestsPage({ session }: { session: AuthenticatedSession }) {
   });
   const destinationsQuery = useQuery({
     queryKey: queryKeys(organizationId).destinations,
-    queryFn: () => api.listDestinations(organizationId!),
+    queryFn: () => api.listCounterpartyWallets(organizationId!),
     enabled: Boolean(organizationId),
   });
   const addressesQuery = useQuery({
@@ -1795,14 +1793,14 @@ function PaymentRequestsPage({ session }: { session: AuthenticatedSession }) {
   });
   const createRequestMutation = useMutation({
     mutationFn: async (formData: FormData) => {
-      const destinationId = getFormString(formData, 'destinationId');
+      const counterpartyWalletId = getFormString(formData, 'counterpartyWalletId');
       const amount = getFormString(formData, 'amount');
       const reason = getFormString(formData, 'reason');
-      if (!destinationId || !amount || !reason) {
+      if (!counterpartyWalletId || !amount || !reason) {
         throw new Error('Destination, amount, and reason are required.');
       }
       return api.createPaymentRequest(organizationId!, {
-        destinationId,
+        counterpartyWalletId,
         amountRaw: usdcToRaw(amount),
         reason,
         externalReference: getOptionalFormString(formData, 'externalReference') ?? undefined,
@@ -1859,10 +1857,10 @@ function PaymentRequestsPage({ session }: { session: AuthenticatedSession }) {
         >
           <label className="field">
             Destination
-            <select name="destinationId" required defaultValue="">
+            <select name="counterpartyWalletId" required defaultValue="">
               <option value="" disabled>Select destination</option>
               {destinations.filter((destination) => destination.isActive).map((destination) => (
-                <option key={destination.destinationId} value={destination.destinationId}>{destination.label} / {destination.trustState}</option>
+                <option key={destination.counterpartyWalletId} value={destination.counterpartyWalletId}>{destination.label} / {destination.trustState}</option>
               ))}
             </select>
           </label>
@@ -1921,7 +1919,7 @@ function AddressBookPage({ session }: { session: AuthenticatedSession }) {
   });
   const destinationsQuery = useQuery({
     queryKey: queryKeys(organizationId).destinations,
-    queryFn: () => api.listDestinations(organizationId!),
+    queryFn: () => api.listCounterpartyWallets(organizationId!),
     enabled: Boolean(organizationId),
   });
 
@@ -1962,11 +1960,11 @@ function AddressBookPage({ session }: { session: AuthenticatedSession }) {
   });
   const createDestinationMutation = useMutation({
     mutationFn: async (formData: FormData) => {
-      return api.createDestination(organizationId!, {
+      return api.createCounterpartyWallet(organizationId!, {
         walletAddress: getFormString(formData, 'walletAddress'),
         counterpartyId: getOptionalFormString(formData, 'counterpartyId') ?? undefined,
         label: getFormString(formData, 'label'),
-        trustState: getFormString(formData, 'trustState') as Destination['trustState'],
+        trustState: getFormString(formData, 'trustState') as CounterpartyWallet['trustState'],
         notes: getOptionalFormString(formData, 'notes') ?? undefined,
       });
     },
@@ -2191,7 +2189,7 @@ function PaymentRequestsTable({
         const content = (
           <>
             <span><strong>{request.reason}</strong><small>{shortenAddress(request.paymentRequestId, 8, 6)}</small></span>
-            <span>{request.destination.label}</span>
+            <span>{request.counterpartyWallet.label}</span>
             <span>{formatRawUsdcCompact(request.amountRaw)} {assetSymbol(request.asset)}</span>
             <span>{request.externalReference ?? 'N/A'}</span>
             <span>
@@ -2225,8 +2223,8 @@ function DestinationsTable({
   destinations,
   onSelect,
 }: {
-  destinations: Destination[];
-  onSelect?: (destination: Destination) => void;
+  destinations: CounterpartyWallet[];
+  onSelect?: (destination: CounterpartyWallet) => void;
 }) {
   if (!destinations.length) return <EmptyState title="No destinations yet" description="Create wallets first, then turn them into destinations." />;
   return (
@@ -2237,7 +2235,7 @@ function DestinationsTable({
       {destinations.map((destination) => (
         <div
           className={`data-table-row data-table-row-destinations${onSelect ? ' data-table-row-clickable' : ''}`}
-          key={destination.destinationId}
+          key={destination.counterpartyWalletId}
           onClick={() => onSelect?.(destination)}
           onKeyDown={(event) => {
             if (onSelect && (event.key === 'Enter' || event.key === ' ')) {
@@ -2248,7 +2246,7 @@ function DestinationsTable({
           role={onSelect ? 'button' : undefined}
           tabIndex={onSelect ? 0 : undefined}
         >
-          <span><strong>{destination.label}</strong><small>{destination.destinationType}</small></span>
+          <span><strong>{destination.label}</strong><small>{destination.walletType}</small></span>
           <span><AddressLink value={destination.walletAddress} /></span>
           <span>{destination.counterparty?.displayName ?? 'Unassigned'}</span>
           <span><StatusBadge tone={toneForGenericState(destination.trustState)}>{trustDisplay(destination.trustState)}</StatusBadge></span>
@@ -2266,7 +2264,7 @@ function WalletsTable({
   onSelect,
 }: {
   addresses: TreasuryWallet[];
-  destinations: Destination[];
+  destinations: CounterpartyWallet[];
   onSelect?: (address: TreasuryWallet) => void;
 }) {
   if (!addresses.length) return <EmptyState title="No wallets saved" description="Save a wallet to watch, source, or destination-match USDC payments." />;
@@ -2300,7 +2298,7 @@ function WalletsTable({
   );
 }
 
-function CounterpartiesTable({ counterparties, destinations }: { counterparties: Counterparty[]; destinations: Destination[] }) {
+function CounterpartiesTable({ counterparties, destinations }: { counterparties: Counterparty[]; destinations: CounterpartyWallet[] }) {
   if (!counterparties.length) return <EmptyState title="No counterparties yet" description="Counterparties are optional business owners behind destinations." />;
   return (
     <DataTableShell>

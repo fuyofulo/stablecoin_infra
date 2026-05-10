@@ -68,24 +68,33 @@ organizationsRouter.get('/organizations/:organizationId/summary', async (req, re
       executionQueueCount,
       paymentsIncompleteCount,
       collectionsOpenCount,
-      destinationsUnreviewedCount,
-      payersUnreviewedCount,
+      unreviewedWalletsCount,
     ] = await Promise.all([
       prisma.paymentOrder.count({ where: { organizationId, state: 'pending_approval' } }),
       prisma.paymentOrder.count({ where: { organizationId, state: { in: ['approved', 'ready_for_execution', 'execution_recorded'] } } }),
       prisma.paymentOrder.count({ where: { organizationId, state: { notIn: ['settled', 'closed', 'cancelled'] } } }),
       prisma.collectionRequest.count({ where: { organizationId, state: { notIn: ['collected', 'closed', 'cancelled'] } } }),
-      prisma.destination.count({ where: { organizationId, trustState: 'unreviewed', isActive: true } }),
-      prisma.collectionSource.count({ where: { organizationId, trustState: 'unreviewed', isActive: true } }),
+      prisma.counterpartyWallet.count({
+        where: {
+          organizationId,
+          trustState: 'unreviewed',
+          isActive: true,
+        },
+      }),
     ]);
 
+    // A wallet no longer has a direction — same row may serve outbound and
+    // inbound flows. Surface a single unreviewed-wallets total under both
+    // legacy field names so the existing frontend OrganizationSummary type
+    // keeps compiling. Drop one of these once the UI converges on a single
+    // count.
     res.json({
       pendingApprovalCount,
       executionQueueCount,
       paymentsIncompleteCount,
       collectionsOpenCount,
-      destinationsUnreviewedCount,
-      payersUnreviewedCount,
+      destinationsUnreviewedCount: unreviewedWalletsCount,
+      payersUnreviewedCount: unreviewedWalletsCount,
       generatedAt: new Date().toISOString(),
     });
   } catch (error) {

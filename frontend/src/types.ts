@@ -537,8 +537,8 @@ export type DecimalProposal = {
     asset: string;
     externalReference: string | null;
     invoiceNumber: string | null;
-    destination: {
-      destinationId: string;
+    counterpartyWallet: {
+      counterpartyWalletId: string;
       label: string;
       walletAddress: string;
       tokenAccountAddress: string | null;
@@ -711,16 +711,18 @@ export type Counterparty = {
   updatedAt: string;
 };
 
-export type Destination = {
-  destinationId: string;
+export type CounterpartyWalletTrustState = 'unreviewed' | 'trusted' | 'restricted' | 'blocked';
+
+export type CounterpartyWallet = {
+  counterpartyWalletId: string;
   organizationId: string;
   counterpartyId: string | null;
   chain: string;
   asset: string;
   walletAddress: string;
   tokenAccountAddress: string | null;
-  destinationType: string;
-  trustState: 'unreviewed' | 'trusted' | 'restricted' | 'blocked';
+  walletType: string;
+  trustState: CounterpartyWalletTrustState;
   label: string;
   notes: string | null;
   isInternal: boolean;
@@ -736,7 +738,7 @@ export type TransferRequest = {
   organizationId: string;
   paymentOrderId: string | null;
   sourceTreasuryWalletId: string | null;
-  destinationId: string;
+  counterpartyWalletId: string;
   requestType: string;
   asset: string;
   amountRaw: string;
@@ -748,7 +750,7 @@ export type TransferRequest = {
   dueAt: string | null;
   propertiesJson: Record<string, unknown>;
   sourceTreasuryWallet: TreasuryWalletLite | null;
-  destination: Destination | null;
+  counterpartyWallet: CounterpartyWallet | null;
 };
 
 export type ExecutionRecord = {
@@ -803,7 +805,7 @@ export type ReconciliationRow = {
   organizationId: string;
   paymentOrderId: string | null;
   sourceTreasuryWalletId: string | null;
-  destinationId: string;
+  counterpartyWalletId: string;
   requestType: string;
   asset: string;
   amountRaw: string;
@@ -815,7 +817,7 @@ export type ReconciliationRow = {
   propertiesJson: Record<string, unknown>;
   requestedByUser: User | null;
   sourceTreasuryWallet: TreasuryWalletLite | null;
-  destination: Destination | null;
+  counterpartyWallet: CounterpartyWallet | null;
   approvalState: 'draft' | 'submitted' | 'pending_approval' | 'escalated' | 'approved' | 'closed' | 'rejected';
   executionState:
     | 'not_started'
@@ -901,7 +903,7 @@ export type PaymentRequest = {
   paymentRequestId: string;
   organizationId: string;
   paymentRunId: string | null;
-  destinationId: string;
+  counterpartyWalletId: string;
   counterpartyId: string | null;
   requestedByUserId: string | null;
   amountRaw: string;
@@ -913,7 +915,7 @@ export type PaymentRequest = {
   metadataJson: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
-  destination: Destination;
+  counterpartyWallet: CounterpartyWallet;
   counterparty: Counterparty | null;
   requestedByUser: User | null;
   paymentOrder: {
@@ -953,7 +955,7 @@ export type PaymentExecutionPacket = {
     label: string | null;
   };
   destination?: {
-    destinationId: string;
+    counterpartyWalletId: string;
     label: string;
     walletAddress: string;
     tokenAccountAddress: string;
@@ -964,7 +966,7 @@ export type PaymentExecutionPacket = {
     transferRequestId: string;
     executionRecordId: string;
     destination: {
-      destinationId: string;
+      counterpartyWalletId: string;
       label: string;
       walletAddress: string;
       tokenAccountAddress: string;
@@ -1060,7 +1062,7 @@ export type PaymentOrder = {
   organizationId: string;
   paymentRequestId: string | null;
   paymentRunId: string | null;
-  destinationId: string;
+  counterpartyWalletId: string;
   counterpartyId: string | null;
   sourceTreasuryWalletId: string | null;
   transferRequestId: string | null;
@@ -1088,11 +1090,11 @@ export type PaymentOrder = {
   createdByUserId: string | null;
   createdAt: string;
   updatedAt: string;
-  destination: Destination;
+  counterpartyWallet: CounterpartyWallet;
   counterparty: Counterparty | null;
   sourceTreasuryWallet: TreasuryWallet | null;
   createdByUser: User | null;
-  paymentRequest: Omit<PaymentRequest, 'destination' | 'counterparty' | 'paymentOrder'> | null;
+  paymentRequest: Omit<PaymentRequest, 'counterpartyWallet' | 'counterparty' | 'paymentOrder'> | null;
   transferRequests: Array<{
     transferRequestId: string;
     status: string;
@@ -1219,26 +1221,10 @@ export type CollectionRequestState =
   | 'closed'
   | 'cancelled';
 
-export type CollectionSourceTrustState = 'unreviewed' | 'trusted' | 'restricted' | 'blocked';
-
-export type CollectionSource = {
-  collectionSourceId: string;
-  organizationId: string;
-  counterpartyId: string | null;
-  chain: string;
-  asset: string;
-  walletAddress: string;
-  tokenAccountAddress: string | null;
-  sourceType: string;
-  trustState: CollectionSourceTrustState;
-  label: string;
-  notes: string | null;
-  isActive: boolean;
-  metadataJson: Record<string, unknown>;
-  createdAt: string;
-  updatedAt: string;
-  counterparty: Counterparty | null;
-};
+// Backwards-compat alias retained for the few status-label call sites that
+// still take a CollectionSourceTrustState. The unified wallet model uses
+// the same trust-state vocabulary, so this just points at the new type.
+export type CollectionSourceTrustState = CounterpartyWalletTrustState;
 
 export type CollectionRequestEvent = {
   collectionRequestEventId: string;
@@ -1259,7 +1245,7 @@ export type CollectionRequest = {
   organizationId: string;
   collectionRunId: string | null;
   receivingTreasuryWalletId: string;
-  collectionSourceId: string | null;
+  counterpartyWalletId: string | null;
   counterpartyId: string | null;
   transferRequestId: string | null;
   payerWalletAddress: string | null;
@@ -1281,7 +1267,7 @@ export type CollectionRequest = {
     createdAt: string;
   } | null;
   receivingTreasuryWallet: TreasuryWallet;
-  collectionSource: CollectionSource | null;
+  counterpartyWallet: CounterpartyWallet | null;
   counterparty: Counterparty | null;
   transferRequest: {
     transferRequestId: string;
@@ -1289,7 +1275,7 @@ export type CollectionRequest = {
     status: string;
     amountRaw: string;
     externalReference: string | null;
-    destinationId: string;
+    counterpartyWalletId: string;
   } | null;
   createdByUser: User | null;
   reconciliationDetail: ReconciliationDetail | null;

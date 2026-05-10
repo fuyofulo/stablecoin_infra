@@ -1,6 +1,6 @@
 import type {
   Counterparty,
-  Destination,
+  CounterpartyWallet,
   ExecutionRecord,
   Prisma,
   TransferRequest,
@@ -22,7 +22,7 @@ import {
 
 type TransferRequestWithRelations = TransferRequest & {
   sourceTreasuryWallet: TreasuryWallet | null;
-  destination: (Destination & { counterparty: Counterparty | null }) | null;
+  counterpartyWallet: (CounterpartyWallet & { counterparty: Counterparty | null }) | null;
   requestedByUser: User | null;
   events?: TransferRequestEvent[];
   notes?: (TransferRequestNote & {
@@ -192,7 +192,7 @@ export async function getReconciliationExplanation(organizationId: string, trans
 function baseTransferRequestInclude(options: { includeNotes?: boolean } = {}) {
   return {
     sourceTreasuryWallet: true,
-    destination: { include: { counterparty: true } },
+    counterpartyWallet: { include: { counterparty: true } },
     requestedByUser: true,
     events: { orderBy: { createdAt: 'asc' as const } },
     ...(options.includeNotes
@@ -406,7 +406,7 @@ export function serializeTransferRequest(request: TransferRequestWithRelations) 
     organizationId: request.organizationId,
     paymentOrderId: request.paymentOrderId,
     sourceTreasuryWalletId: request.sourceTreasuryWalletId,
-    destinationId: request.destinationId,
+    counterpartyWalletId: request.counterpartyWalletId,
     requestType: request.requestType,
     asset: request.asset,
     amountRaw: request.amountRaw.toString(),
@@ -420,7 +420,7 @@ export function serializeTransferRequest(request: TransferRequestWithRelations) 
     sourceTreasuryWallet: request.sourceTreasuryWallet
       ? serializeTreasuryWallet(request.sourceTreasuryWallet)
       : null,
-    destination: request.destination ? serializeDestination(request.destination) : null,
+    counterpartyWallet: request.counterpartyWallet ? serializeCounterpartyWallet(request.counterpartyWallet) : null,
     requestedByUser: serializeUserRef(request.requestedByUser),
   };
 }
@@ -445,25 +445,25 @@ function serializeTreasuryWallet(address: TreasuryWallet) {
   };
 }
 
-function serializeDestination(destination: Destination & { counterparty: Counterparty | null }) {
+function serializeCounterpartyWallet(wallet: CounterpartyWallet & { counterparty: Counterparty | null }) {
   return {
-    destinationId: destination.destinationId,
-    organizationId: destination.organizationId,
-    counterpartyId: destination.counterpartyId,
-    chain: destination.chain,
-    asset: destination.asset,
-    walletAddress: destination.walletAddress,
-    tokenAccountAddress: destination.tokenAccountAddress,
-    destinationType: destination.destinationType,
-    trustState: destination.trustState,
-    label: destination.label,
-    notes: destination.notes,
-    isInternal: destination.isInternal,
-    isActive: destination.isActive,
-    metadataJson: destination.metadataJson,
-    createdAt: destination.createdAt,
-    updatedAt: destination.updatedAt,
-    counterparty: destination.counterparty ? serializeCounterparty(destination.counterparty) : null,
+    counterpartyWalletId: wallet.counterpartyWalletId,
+    organizationId: wallet.organizationId,
+    counterpartyId: wallet.counterpartyId,
+    chain: wallet.chain,
+    asset: wallet.asset,
+    walletAddress: wallet.walletAddress,
+    tokenAccountAddress: wallet.tokenAccountAddress,
+    walletType: wallet.walletType,
+    trustState: wallet.trustState,
+    label: wallet.label,
+    notes: wallet.notes,
+    isInternal: wallet.isInternal,
+    isActive: wallet.isActive,
+    metadataJson: wallet.metadataJson,
+    createdAt: wallet.createdAt,
+    updatedAt: wallet.updatedAt,
+    counterparty: wallet.counterparty ? serializeCounterparty(wallet.counterparty) : null,
   };
 }
 

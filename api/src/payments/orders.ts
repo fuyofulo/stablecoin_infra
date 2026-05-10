@@ -1,6 +1,6 @@
 import type {
   Counterparty,
-  Destination,
+  CounterpartyWallet,
   DecimalProposal,
   PaymentOrder,
   PaymentOrderEvent,
@@ -27,7 +27,7 @@ import type { PaymentOrderState } from './order-state.js';
 export type PaymentOrderWithRelations = PaymentOrder & {
   organization?: unknown;
   paymentRequest: (PaymentRequest & { requestedByUser: Pick<User, 'userId' | 'email' | 'displayName'> | null }) | null;
-  destination: Destination & {
+  counterpartyWallet: CounterpartyWallet & {
     counterparty: Counterparty | null;
   };
   counterparty: Counterparty | null;
@@ -36,7 +36,7 @@ export type PaymentOrderWithRelations = PaymentOrder & {
   transferRequests: Array<
     TransferRequest & {
       sourceTreasuryWallet: TreasuryWallet | null;
-      destination: (Destination & { counterparty: Counterparty | null }) | null;
+      counterpartyWallet: (CounterpartyWallet & { counterparty: Counterparty | null }) | null;
     }
   >;
   proposals?: DecimalProposal[];
@@ -53,7 +53,7 @@ type PaymentActorInput = {
 export async function createPaymentOrder(
   args: PaymentActorInput & {
     organizationId: string;
-    destinationId: string;
+    counterpartyWalletId: string;
     sourceTreasuryWalletId?: string | null;
     amountRaw: string | bigint;
     asset?: string;
@@ -69,11 +69,11 @@ export async function createPaymentOrder(
     submitNow?: boolean;
   },
 ) {
-  const [destination, sourceTreasuryWallet] = await Promise.all([
-    prisma.destination.findFirst({
+  const [counterpartyWallet, sourceTreasuryWallet] = await Promise.all([
+    prisma.counterpartyWallet.findFirst({
       where: {
         organizationId: args.organizationId,
-        destinationId: args.destinationId,
+        counterpartyWalletId: args.counterpartyWalletId,
         isActive: true,
       },
       include: {
@@ -91,22 +91,22 @@ export async function createPaymentOrder(
       : Promise.resolve(null),
   ]);
 
-  if (!destination) {
-    throw new Error('Destination not found');
+  if (!counterpartyWallet) {
+    throw new Error('Counterparty wallet not found');
   }
 
   if (args.sourceTreasuryWalletId && !sourceTreasuryWallet) {
     throw new Error('Source wallet not found');
   }
 
-  validateSourceAndDestination({
+  validateSourceAndCounterpartyWallet({
     sourceTreasuryWallet,
-    destination,
+    counterpartyWallet,
   });
 
   await enforceDuplicatePaymentOrder({
     organizationId: args.organizationId,
-    destinationId: destination.destinationId,
+    counterpartyWalletId: counterpartyWallet.counterpartyWalletId,
     amountRaw: args.amountRaw,
     reference: normalizeReference(args.externalReference ?? args.invoiceNumber ?? null),
   });
@@ -117,8 +117,8 @@ export async function createPaymentOrder(
         organizationId: args.organizationId,
         paymentRequestId: args.paymentRequestId ?? null,
         paymentRunId: args.paymentRunId ?? null,
-        destinationId: destination.destinationId,
-        counterpartyId: destination.counterpartyId,
+        counterpartyWalletId: counterpartyWallet.counterpartyWalletId,
+        counterpartyId: counterpartyWallet.counterpartyId,
         sourceTreasuryWalletId: sourceTreasuryWallet?.treasuryWalletId,
         amountRaw: BigInt(args.amountRaw),
         asset: args.asset ?? 'usdc',
@@ -142,7 +142,7 @@ export async function createPaymentOrder(
       beforeState: null,
       afterState: paymentOrder.state,
       payloadJson: {
-        destinationId: paymentOrder.destinationId,
+        counterpartyWalletId: paymentOrder.counterpartyWalletId,
         sourceTreasuryWalletId: paymentOrder.sourceTreasuryWalletId,
         amountRaw: paymentOrder.amountRaw.toString(),
         asset: paymentOrder.asset,
@@ -243,9 +243,9 @@ export async function updatePaymentOrder(
     throw new Error('Source wallet not found');
   }
 
-  validateSourceAndDestination({
+  validateSourceAndCounterpartyWallet({
     sourceTreasuryWallet,
-    destination: current.destination,
+    counterpartyWallet: current.counterpartyWallet,
   });
 
   const nextReference = normalizeReference(
@@ -257,7 +257,7 @@ export async function updatePaymentOrder(
   );
   await enforceDuplicatePaymentOrder({
     organizationId: args.organizationId,
-    destinationId: current.destinationId,
+    counterpartyWalletId: current.counterpartyWalletId,
     amountRaw: current.amountRaw,
     reference: nextReference,
     excludePaymentOrderId: current.paymentOrderId,
@@ -330,23 +330,24 @@ export async function submitPaymentOrder(
     throw new Error(`Payment order ${current.state} cannot be submitted`);
   }
 
-  validateDestinationForPaymentOrder(current.destination);
-  validateSourceAndDestination({
+  validateCounterpartyWalletForPaymentOrder(current.counterpartyWallet);
+  validateSourceAndCounterpartyWallet({
     sourceTreasuryWallet: current.sourceTreasuryWallet,
-    destination: current.destination,
+    counterpartyWallet: current.counterpartyWallet,
   });
 
   await prisma.$transaction(async (tx) => {
     // Squads multisig is the approval ceremony for payment execution. The
     // pre-Squads "internal approval" inbox was removed — orders submitted
-    // here go straight to 'approved' provided the destination is trusted.
-    // (validateDestinationForPaymentOrder above already gates trust state.)
+    // here go straight to 'approved' provided the counterparty wallet is
+    // trusted. (validateCounterpartyWalletForPaymentOrder above already
+    // gates trust state.)
     const transferRequest = await tx.transferRequest.create({
       data: {
         organizationId: args.organizationId,
         paymentOrderId: current.paymentOrderId,
         sourceTreasuryWalletId: current.sourceTreasuryWalletId,
-        destinationId: current.destinationId,
+        counterpartyWalletId: current.counterpartyWalletId,
         requestType: 'payment_order',
         asset: current.asset,
         amountRaw: current.amountRaw,
@@ -556,9 +557,9 @@ export async function preparePaymentOrderExecution(args: PaymentActorInput & {
       throw new Error('Source wallet not found');
     }
 
-    validateSourceAndDestination({
+    validateSourceAndCounterpartyWallet({
       sourceTreasuryWallet,
-      destination: current.destination,
+      counterpartyWallet: current.counterpartyWallet,
     });
 
     await prisma.$transaction(async (tx) => {
@@ -936,7 +937,7 @@ async function buildPaymentOrderReadModel(order: PaymentOrderWithRelations) {
     organizationId: order.organizationId,
     paymentRequestId: order.paymentRequestId,
     paymentRunId: order.paymentRunId,
-    destinationId: order.destinationId,
+    counterpartyWalletId: order.counterpartyWalletId,
     counterpartyId: order.counterpartyId,
     sourceTreasuryWalletId: order.sourceTreasuryWalletId,
     transferRequestId: primaryTransferRequest?.transferRequestId ?? null,
@@ -956,7 +957,7 @@ async function buildPaymentOrderReadModel(order: PaymentOrderWithRelations) {
     createdByUserId: order.createdByUserId,
     createdAt: order.createdAt,
     updatedAt: order.updatedAt,
-    destination: serializePaymentOrderDestination(order.destination),
+    counterpartyWallet: serializePaymentOrderCounterpartyWallet(order.counterpartyWallet),
     counterparty: order.counterparty ? serializeCounterparty(order.counterparty) : null,
     sourceTreasuryWallet: order.sourceTreasuryWallet ? serializeTreasuryWallet(order.sourceTreasuryWallet) : null,
     createdByUser: serializeUserRef(order.createdByUser),
@@ -1198,12 +1199,12 @@ function buildPaymentExecutionPacketBase(args: {
   }
 
   const sourceTokenAccount = source.usdcAtaAddress ?? deriveUsdcAtaForWallet(source.address);
-  const destinationTokenAccount = args.current.destination.tokenAccountAddress
-    ?? deriveUsdcAtaForWallet(args.current.destination.walletAddress);
+  const destinationTokenAccount = args.current.counterpartyWallet.tokenAccountAddress
+    ?? deriveUsdcAtaForWallet(args.current.counterpartyWallet.walletAddress);
   const instructions = buildUsdcTransferInstructions({
     sourceWallet: source.address,
     sourceTokenAccount,
-    destinationWallet: args.current.destination.walletAddress,
+    destinationWallet: args.current.counterpartyWallet.walletAddress,
     destinationTokenAccount,
     amountRaw: args.current.amountRaw,
   });
@@ -1222,11 +1223,11 @@ function buildPaymentExecutionPacketBase(args: {
       label: source.displayName,
     },
     destination: {
-      destinationId: args.current.destination.destinationId,
-      label: args.current.destination.label,
-      walletAddress: args.current.destination.walletAddress,
+      counterpartyWalletId: args.current.counterpartyWallet.counterpartyWalletId,
+      label: args.current.counterpartyWallet.label,
+      walletAddress: args.current.counterpartyWallet.walletAddress,
       tokenAccountAddress: destinationTokenAccount,
-      counterpartyName: args.current.counterparty?.displayName ?? args.current.destination.counterparty?.displayName ?? null,
+      counterpartyName: args.current.counterparty?.displayName ?? args.current.counterpartyWallet.counterparty?.displayName ?? null,
     },
     token: {
       symbol: 'USDC',
@@ -1304,7 +1305,7 @@ const paymentOrderInclude = {
       },
     },
   },
-  destination: {
+  counterpartyWallet: {
     include: {
       counterparty: true,
     },
@@ -1321,7 +1322,7 @@ const paymentOrderInclude = {
   transferRequests: {
     include: {
       sourceTreasuryWallet: true,
-      destination: {
+      counterpartyWallet: {
         include: {
           counterparty: true,
         },
@@ -1345,42 +1346,42 @@ const paymentOrderIncludeWithEvents = {
   },
 } satisfies Prisma.PaymentOrderInclude;
 
-function validateDestinationForPaymentOrder(destination: Pick<Destination, 'label' | 'trustState' | 'isActive'>) {
-  if (!destination.isActive) {
-    throw new Error(`Destination "${destination.label}" is inactive and cannot be used for payment orders`);
+function validateCounterpartyWalletForPaymentOrder(wallet: Pick<CounterpartyWallet, 'label' | 'trustState' | 'isActive'>) {
+  if (!wallet.isActive) {
+    throw new Error(`Counterparty wallet "${wallet.label}" is inactive and cannot be used for payment orders`);
   }
 
-  if (destination.trustState === 'blocked') {
-    throw new Error(`Destination "${destination.label}" is blocked and cannot be used for payment orders`);
+  if (wallet.trustState === 'blocked') {
+    throw new Error(`Counterparty wallet "${wallet.label}" is blocked and cannot be used for payment orders`);
   }
 
   // Squads multisig is the approval ceremony — pre-Squads we require the
-  // destination to be reviewed and trusted before any payment can be routed
-  // to it. Operators promote destinations to "trusted" from the
-  // Destinations page.
-  if (destination.trustState !== 'trusted') {
+  // counterparty wallet to be reviewed and trusted before any payment can
+  // be routed to it. Operators promote wallets to "trusted" from the
+  // Counterparty Wallets page.
+  if (wallet.trustState !== 'trusted') {
     throw new Error(
-      `Destination "${destination.label}" is ${destination.trustState ?? 'unreviewed'} — review and mark it as trusted before submitting a payment to it.`,
+      `Counterparty wallet "${wallet.label}" is ${wallet.trustState ?? 'unreviewed'} — review and mark it as trusted before submitting a payment to it.`,
     );
   }
 }
 
-function validateSourceAndDestination(args: {
+function validateSourceAndCounterpartyWallet(args: {
   sourceTreasuryWallet: Pick<TreasuryWallet, 'address'> | null;
-  destination: Pick<Destination, 'walletAddress' | 'label'>;
+  counterpartyWallet: Pick<CounterpartyWallet, 'walletAddress' | 'label'>;
 }) {
   if (!args.sourceTreasuryWallet) {
     return;
   }
 
-  if (args.sourceTreasuryWallet.address === args.destination.walletAddress) {
-    throw new Error(`Source wallet cannot be the same as destination "${args.destination.label}"`);
+  if (args.sourceTreasuryWallet.address === args.counterpartyWallet.walletAddress) {
+    throw new Error(`Source wallet cannot be the same as counterparty wallet "${args.counterpartyWallet.label}"`);
   }
 }
 
 async function enforceDuplicatePaymentOrder(args: {
   organizationId: string;
-  destinationId: string;
+  counterpartyWalletId: string;
   amountRaw: string | bigint;
   reference: string | null;
   excludePaymentOrderId?: string;
@@ -1392,7 +1393,7 @@ async function enforceDuplicatePaymentOrder(args: {
   const duplicate = await prisma.paymentOrder.findFirst({
     where: {
       organizationId: args.organizationId,
-      destinationId: args.destinationId,
+      counterpartyWalletId: args.counterpartyWalletId,
       amountRaw: BigInt(args.amountRaw),
       state: {
         notIn: ['closed', 'cancelled'],
@@ -1412,7 +1413,7 @@ async function enforceDuplicatePaymentOrder(args: {
   });
 
   if (duplicate) {
-    throw new Error(`Active payment order with reference "${args.reference}" already exists for this destination and amount`);
+    throw new Error(`Active payment order with reference "${args.reference}" already exists for this counterparty wallet and amount`);
   }
 }
 
@@ -1498,7 +1499,7 @@ function serializePaymentRequestRef(
   return {
     paymentRequestId: request.paymentRequestId,
     organizationId: request.organizationId,
-    destinationId: request.destinationId,
+    counterpartyWalletId: request.counterpartyWalletId,
     counterpartyId: request.counterpartyId,
     requestedByUserId: request.requestedByUserId,
     amountRaw: request.amountRaw.toString(),
@@ -1514,29 +1515,29 @@ function serializePaymentRequestRef(
   };
 }
 
-function serializePaymentOrderDestination(
-  destination: Destination & {
+function serializePaymentOrderCounterpartyWallet(
+  wallet: CounterpartyWallet & {
     counterparty: Counterparty | null;
   },
 ) {
   return {
-    destinationId: destination.destinationId,
-    organizationId: destination.organizationId,
-    counterpartyId: destination.counterpartyId,
-    chain: destination.chain,
-    asset: destination.asset,
-    walletAddress: destination.walletAddress,
-    tokenAccountAddress: destination.tokenAccountAddress,
-    destinationType: destination.destinationType,
-    trustState: destination.trustState,
-    label: destination.label,
-    notes: destination.notes,
-    isInternal: destination.isInternal,
-    isActive: destination.isActive,
-    metadataJson: destination.metadataJson,
-    createdAt: destination.createdAt,
-    updatedAt: destination.updatedAt,
-    counterparty: destination.counterparty ? serializeCounterparty(destination.counterparty) : null,
+    counterpartyWalletId: wallet.counterpartyWalletId,
+    organizationId: wallet.organizationId,
+    counterpartyId: wallet.counterpartyId,
+    chain: wallet.chain,
+    asset: wallet.asset,
+    walletAddress: wallet.walletAddress,
+    tokenAccountAddress: wallet.tokenAccountAddress,
+    walletType: wallet.walletType,
+    trustState: wallet.trustState,
+    label: wallet.label,
+    notes: wallet.notes,
+    isInternal: wallet.isInternal,
+    isActive: wallet.isActive,
+    metadataJson: wallet.metadataJson,
+    createdAt: wallet.createdAt,
+    updatedAt: wallet.updatedAt,
+    counterparty: wallet.counterparty ? serializeCounterparty(wallet.counterparty) : null,
   };
 }
 

@@ -202,8 +202,7 @@ BEGIN
     'transfer_requests',
     'transfer_request_events',
     'transfer_request_notes',
-    'destinations',
-    'collection_sources',
+    'counterparty_wallets',
     'execution_records',
     'payment_runs',
     'payment_orders',
@@ -268,7 +267,7 @@ CREATE TABLE IF NOT EXISTS transfer_requests
   transfer_request_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   organization_id UUID NOT NULL REFERENCES organizations(organization_id) ON DELETE CASCADE,
   source_treasury_wallet_id UUID REFERENCES treasury_wallets(treasury_wallet_id) ON DELETE SET NULL,
-  destination_id UUID NOT NULL,
+  counterparty_wallet_id UUID NOT NULL,
   request_type TEXT NOT NULL,
   asset TEXT NOT NULL DEFAULT 'usdc',
   amount_raw BIGINT NOT NULL,
@@ -324,16 +323,20 @@ CREATE TABLE IF NOT EXISTS counterparties
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE TABLE IF NOT EXISTS destinations
+-- Address book entry. One labeled Solana wallet per row. Trust state
+-- gates whether transfers can actually execute against it; counterparty
+-- linkage is optional. No direction concept — the same wallet can be
+-- used as both a payment destination and a collection source.
+CREATE TABLE IF NOT EXISTS counterparty_wallets
 (
-  destination_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  counterparty_wallet_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   counterparty_id UUID REFERENCES counterparties(counterparty_id) ON DELETE SET NULL,
   organization_id UUID NOT NULL REFERENCES organizations(organization_id) ON DELETE CASCADE,
-  chain TEXT NOT NULL,
+  chain TEXT NOT NULL DEFAULT 'solana',
   asset TEXT NOT NULL DEFAULT 'usdc',
   wallet_address TEXT NOT NULL,
   token_account_address TEXT,
-  destination_type TEXT NOT NULL DEFAULT 'wallet',
+  wallet_type TEXT NOT NULL DEFAULT 'wallet',
   trust_state TEXT NOT NULL DEFAULT 'unreviewed',
   label TEXT NOT NULL,
   notes TEXT,
@@ -343,27 +346,6 @@ CREATE TABLE IF NOT EXISTS destinations
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE (organization_id, wallet_address)
-);
-
-CREATE TABLE IF NOT EXISTS collection_sources
-(
-  collection_source_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  organization_id UUID NOT NULL REFERENCES organizations(organization_id) ON DELETE CASCADE,
-  counterparty_id UUID REFERENCES counterparties(counterparty_id) ON DELETE SET NULL,
-  chain TEXT NOT NULL DEFAULT 'solana',
-  asset TEXT NOT NULL DEFAULT 'usdc',
-  wallet_address TEXT NOT NULL,
-  token_account_address TEXT,
-  source_type TEXT NOT NULL DEFAULT 'payer_wallet',
-  trust_state TEXT NOT NULL DEFAULT 'unreviewed',
-  label TEXT NOT NULL,
-  notes TEXT,
-  is_active BOOLEAN NOT NULL DEFAULT TRUE,
-  metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  UNIQUE (organization_id, wallet_address),
-  UNIQUE (organization_id, label)
 );
 
 CREATE TABLE IF NOT EXISTS execution_records
@@ -387,7 +369,7 @@ CREATE TABLE IF NOT EXISTS payment_orders
   organization_id UUID NOT NULL REFERENCES organizations(organization_id) ON DELETE CASCADE,
   payment_request_id UUID,
   payment_run_id UUID,
-  destination_id UUID NOT NULL REFERENCES destinations(destination_id) ON DELETE RESTRICT,
+  counterparty_wallet_id UUID NOT NULL REFERENCES counterparty_wallets(counterparty_wallet_id) ON DELETE RESTRICT,
   counterparty_id UUID REFERENCES counterparties(counterparty_id) ON DELETE SET NULL,
   source_treasury_wallet_id UUID REFERENCES treasury_wallets(treasury_wallet_id) ON DELETE SET NULL,
   amount_raw BIGINT NOT NULL,
@@ -459,7 +441,7 @@ CREATE TABLE IF NOT EXISTS payment_requests
   payment_request_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   organization_id UUID NOT NULL REFERENCES organizations(organization_id) ON DELETE CASCADE,
   payment_run_id UUID,
-  destination_id UUID NOT NULL REFERENCES destinations(destination_id) ON DELETE RESTRICT,
+  counterparty_wallet_id UUID NOT NULL REFERENCES counterparty_wallets(counterparty_wallet_id) ON DELETE RESTRICT,
   counterparty_id UUID REFERENCES counterparties(counterparty_id) ON DELETE SET NULL,
   requested_by_user_id UUID REFERENCES users(user_id) ON DELETE SET NULL,
   amount_raw BIGINT NOT NULL,
@@ -471,7 +453,7 @@ CREATE TABLE IF NOT EXISTS payment_requests
   metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  UNIQUE (organization_id, destination_id, amount_raw, external_reference)
+  UNIQUE (organization_id, counterparty_wallet_id, amount_raw, external_reference)
 );
 
 CREATE TABLE IF NOT EXISTS collection_runs
@@ -494,7 +476,7 @@ CREATE TABLE IF NOT EXISTS collection_requests
   organization_id UUID NOT NULL REFERENCES organizations(organization_id) ON DELETE CASCADE,
   collection_run_id UUID REFERENCES collection_runs(collection_run_id) ON DELETE SET NULL,
   receiving_treasury_wallet_id UUID NOT NULL REFERENCES treasury_wallets(treasury_wallet_id) ON DELETE RESTRICT,
-  collection_source_id UUID REFERENCES collection_sources(collection_source_id) ON DELETE SET NULL,
+  counterparty_wallet_id UUID REFERENCES counterparty_wallets(counterparty_wallet_id) ON DELETE SET NULL,
   counterparty_id UUID REFERENCES counterparties(counterparty_id) ON DELETE SET NULL,
   transfer_request_id UUID UNIQUE REFERENCES transfer_requests(transfer_request_id) ON DELETE SET NULL,
   payer_wallet_address TEXT,
@@ -513,7 +495,7 @@ CREATE TABLE IF NOT EXISTS collection_requests
 );
 
 ALTER TABLE collection_requests
-  ADD COLUMN IF NOT EXISTS collection_source_id UUID REFERENCES collection_sources(collection_source_id) ON DELETE SET NULL;
+  ADD COLUMN IF NOT EXISTS counterparty_wallet_id UUID REFERENCES counterparty_wallets(counterparty_wallet_id) ON DELETE SET NULL;
 
 CREATE TABLE IF NOT EXISTS collection_request_events
 (
@@ -548,7 +530,10 @@ CREATE TABLE IF NOT EXISTS payment_order_events
 );
 
 ALTER TABLE transfer_requests
-  ADD COLUMN IF NOT EXISTS destination_id UUID;
+  ADD COLUMN IF NOT EXISTS counterparty_wallet_id UUID;
+
+ALTER TABLE transfer_requests
+  ADD COLUMN IF NOT EXISTS payment_order_id UUID;
 
 ALTER TABLE payment_orders
   ADD COLUMN IF NOT EXISTS payment_request_id UUID;
@@ -604,11 +589,11 @@ ALTER TABLE transfer_requests
   FOREIGN KEY (payment_order_id) REFERENCES payment_orders(payment_order_id) ON DELETE SET NULL;
 
 ALTER TABLE transfer_requests
-  DROP CONSTRAINT IF EXISTS transfer_requests_destination_id_fkey;
+  DROP CONSTRAINT IF EXISTS transfer_requests_counterparty_wallet_id_fkey;
 
 ALTER TABLE transfer_requests
-  ADD CONSTRAINT transfer_requests_destination_id_fkey
-  FOREIGN KEY (destination_id) REFERENCES destinations(destination_id) ON DELETE RESTRICT;
+  ADD CONSTRAINT transfer_requests_counterparty_wallet_id_fkey
+  FOREIGN KEY (counterparty_wallet_id) REFERENCES counterparty_wallets(counterparty_wallet_id) ON DELETE RESTRICT;
 
 ALTER TABLE transfer_requests
   DROP COLUMN IF EXISTS counterparty_id;
@@ -744,11 +729,11 @@ ALTER TABLE collection_request_events
     actor_type IN ('user', 'system')
   );
 
-ALTER TABLE collection_sources
-  DROP CONSTRAINT IF EXISTS chk_collection_sources_trust_state;
+ALTER TABLE counterparty_wallets
+  DROP CONSTRAINT IF EXISTS chk_counterparty_wallets_trust_state;
 
-ALTER TABLE collection_sources
-  ADD CONSTRAINT chk_collection_sources_trust_state CHECK (
+ALTER TABLE counterparty_wallets
+  ADD CONSTRAINT chk_counterparty_wallets_trust_state CHECK (
     trust_state IN ('unreviewed', 'trusted', 'restricted', 'blocked')
   );
 
@@ -822,22 +807,18 @@ CREATE INDEX IF NOT EXISTS idx_transfer_requests_source_treasury_wallet_id ON tr
 CREATE INDEX IF NOT EXISTS idx_transfer_requests_status ON transfer_requests(status);
 CREATE INDEX IF NOT EXISTS idx_transfer_requests_org_status_requested_at
   ON transfer_requests(organization_id, status, requested_at DESC);
-CREATE INDEX IF NOT EXISTS idx_transfer_requests_destination_id
-  ON transfer_requests(destination_id, status, requested_at DESC);
+CREATE INDEX IF NOT EXISTS idx_transfer_requests_counterparty_wallet_id
+  ON transfer_requests(counterparty_wallet_id, status, requested_at DESC);
 CREATE INDEX IF NOT EXISTS idx_counterparties_organization_created_at
   ON counterparties(organization_id, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_destinations_org_created_at
-  ON destinations(organization_id, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_destinations_counterparty_created_at
-  ON destinations(counterparty_id, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_destinations_wallet_address
-  ON destinations(wallet_address);
-CREATE INDEX IF NOT EXISTS idx_collection_sources_org_trust_created_at
-  ON collection_sources(organization_id, trust_state, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_collection_sources_counterparty_created_at
-  ON collection_sources(counterparty_id, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_collection_sources_wallet_address
-  ON collection_sources(wallet_address);
+CREATE INDEX IF NOT EXISTS idx_counterparty_wallets_org_created_at
+  ON counterparty_wallets(organization_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_counterparty_wallets_counterparty_created_at
+  ON counterparty_wallets(counterparty_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_counterparty_wallets_wallet_address
+  ON counterparty_wallets(wallet_address);
+CREATE INDEX IF NOT EXISTS idx_counterparty_wallets_org_trust_created_at
+  ON counterparty_wallets(organization_id, trust_state, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_execution_records_org_created_at
   ON execution_records(organization_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_execution_records_request_created_at
@@ -855,8 +836,8 @@ CREATE INDEX IF NOT EXISTS idx_payment_orders_payment_request_id
   ON payment_orders(payment_request_id);
 CREATE INDEX IF NOT EXISTS idx_payment_orders_payment_run_created_at
   ON payment_orders(payment_run_id, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_payment_orders_destination_created_at
-  ON payment_orders(destination_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_payment_orders_counterparty_wallet_created_at
+  ON payment_orders(counterparty_wallet_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_payment_orders_source_created_at
   ON payment_orders(source_treasury_wallet_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_decimal_proposals_org_status_created_at
@@ -870,7 +851,7 @@ CREATE INDEX IF NOT EXISTS idx_decimal_proposals_payment_order_created_at
 CREATE INDEX IF NOT EXISTS idx_decimal_proposals_payment_run_created_at
   ON decimal_proposals(payment_run_id, created_at DESC);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_payment_orders_unique_active_reference
-  ON payment_orders(organization_id, destination_id, amount_raw, lower(coalesce(external_reference, invoice_number)))
+  ON payment_orders(organization_id, counterparty_wallet_id, amount_raw, lower(coalesce(external_reference, invoice_number)))
   WHERE coalesce(external_reference, invoice_number) IS NOT NULL
     AND state NOT IN ('closed', 'cancelled');
 CREATE INDEX IF NOT EXISTS idx_payment_order_events_order_created_at
@@ -881,8 +862,8 @@ CREATE INDEX IF NOT EXISTS idx_payment_requests_org_state_created_at
   ON payment_requests(organization_id, state, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_payment_requests_payment_run_created_at
   ON payment_requests(payment_run_id, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_payment_requests_destination_created_at
-  ON payment_requests(destination_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_payment_requests_counterparty_wallet_created_at
+  ON payment_requests(counterparty_wallet_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_payment_requests_counterparty_created_at
   ON payment_requests(counterparty_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_collection_runs_org_state_created_at
@@ -895,8 +876,8 @@ CREATE INDEX IF NOT EXISTS idx_collection_requests_run_created_at
   ON collection_requests(collection_run_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_collection_requests_receiving_created_at
   ON collection_requests(receiving_treasury_wallet_id, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_collection_requests_source_created_at
-  ON collection_requests(collection_source_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_collection_requests_counterparty_wallet_created_at
+  ON collection_requests(counterparty_wallet_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_collection_requests_counterparty_created_at
   ON collection_requests(counterparty_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_collection_request_events_request_created_at
@@ -961,14 +942,9 @@ CREATE TRIGGER trg_counterparties_updated_at
 BEFORE UPDATE ON counterparties
 FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
-DROP TRIGGER IF EXISTS trg_destinations_updated_at ON destinations;
-CREATE TRIGGER trg_destinations_updated_at
-BEFORE UPDATE ON destinations
-FOR EACH ROW EXECUTE FUNCTION set_updated_at();
-
-DROP TRIGGER IF EXISTS trg_collection_sources_updated_at ON collection_sources;
-CREATE TRIGGER trg_collection_sources_updated_at
-BEFORE UPDATE ON collection_sources
+DROP TRIGGER IF EXISTS trg_counterparty_wallets_updated_at ON counterparty_wallets;
+CREATE TRIGGER trg_counterparty_wallets_updated_at
+BEFORE UPDATE ON counterparty_wallets
 FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 DROP TRIGGER IF EXISTS trg_execution_records_updated_at ON execution_records;

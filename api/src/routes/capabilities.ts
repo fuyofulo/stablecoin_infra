@@ -116,8 +116,7 @@ capabilitiesRouter.get('/capabilities', (_req, res) => {
           'POST /organizations/:organizationId/proposals/:decimalProposalId/execute-intent',
           'GET /organizations/:organizationId/wallet-authorizations',
           'POST /organizations/:organizationId/wallet-authorizations',
-          'GET /organizations/:organizationId/destinations',
-          'GET /organizations/:organizationId/collection-sources',
+          'GET /organizations/:organizationId/counterparty-wallets',
         ],
       },
       {
@@ -133,7 +132,7 @@ capabilitiesRouter.get('/capabilities', (_req, res) => {
           'POST /organizations/:organizationId/collections/import-csv/preview',
           'POST /organizations/:organizationId/collection-runs/import-csv/preview',
           'POST /organizations/:organizationId/collection-runs/import-csv',
-          'POST /organizations/:organizationId/collection-sources',
+          'POST /organizations/:organizationId/counterparty-wallets',
         ],
       },
       {
@@ -150,7 +149,7 @@ capabilitiesRouter.get('/capabilities', (_req, res) => {
           'POST /organizations/:organizationId/payment-runs/:paymentRunId/prepare-execution',
           'POST /organizations/:organizationId/payment-runs/:paymentRunId/attach-signature',
           'POST /organizations/:organizationId/collections/:collectionRequestId/cancel',
-          'PATCH /organizations/:organizationId/collection-sources/:collectionSourceId',
+          'PATCH /organizations/:organizationId/counterparty-wallets/:counterpartyWalletId',
         ],
       },
       {

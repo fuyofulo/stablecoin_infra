@@ -189,8 +189,8 @@ export function PaymentRunDetailPage() {
   // straight cancellation of the payment order — that row drops out of the
   // batch's actionable count.
   const approveDestinationMutation = useMutation({
-    mutationFn: ({ destinationId }: { destinationId: string; paymentOrderId: string }) =>
-      api.updateDestination(organizationId!, destinationId, { trustState: 'trusted' }),
+    mutationFn: ({ counterpartyWalletId }: { counterpartyWalletId: string; paymentOrderId: string }) =>
+      api.updateCounterpartyWallet(organizationId!, counterpartyWalletId, { trustState: 'trusted' }),
     onSuccess: async () => {
       success('Destination approved.');
       await queryClient.invalidateQueries({ queryKey: ['payment-run', organizationId, paymentRunId] });
@@ -557,8 +557,8 @@ export function PaymentRunDetailPage() {
           <RecipientsTable
             organizationId={organizationId}
             orders={runOrders}
-            onApproveDestination={(destinationId, paymentOrderId) =>
-              approveDestinationMutation.mutate({ destinationId, paymentOrderId })
+            onApproveDestination={(counterpartyWalletId, paymentOrderId) =>
+              approveDestinationMutation.mutate({ counterpartyWalletId, paymentOrderId })
             }
             onCancelOrder={(paymentOrderId) => cancelOrderMutation.mutate({ paymentOrderId })}
             pendingApproveOrderId={
@@ -918,7 +918,7 @@ function RecipientsTable({
 }: {
   organizationId: string;
   orders: PaymentOrder[];
-  onApproveDestination: (destinationId: string, paymentOrderId: string) => void;
+  onApproveDestination: (counterpartyWalletId: string, paymentOrderId: string) => void;
   onCancelOrder: (paymentOrderId: string) => void;
   pendingApproveOrderId: string | undefined;
   pendingCancelOrderId: string | undefined;
@@ -954,7 +954,7 @@ function RecipientsTable({
             const pillTone: 'success' | 'warning' | 'danger' | 'info' =
               tone === 'success' ? 'success' : tone === 'danger' ? 'danger' : tone === 'warning' ? 'warning' : 'info';
             const isDraft = order.derivedState === 'draft';
-            const trustState = order.destination.trustState;
+            const trustState = order.counterpartyWallet.trustState;
             const trustTone: 'success' | 'warning' | 'danger' =
               trustState === 'trusted' ? 'success' : trustState === 'blocked' || trustState === 'restricted' ? 'danger' : 'warning';
             const approving = pendingApproveOrderId === order.paymentOrderId;
@@ -965,7 +965,7 @@ function RecipientsTable({
                 <td>
                   <div className="rd-recipient-main">
                     <span className="rd-recipient-name">
-                      {order.counterparty?.displayName ?? order.destination.label}
+                      {order.counterparty?.displayName ?? order.counterpartyWallet.label}
                     </span>
                     {order.externalReference || order.invoiceNumber || order.memo ? (
                       <span className="rd-recipient-ref">
@@ -977,12 +977,12 @@ function RecipientsTable({
                 <td>
                   <a
                     className="rd-addr-link"
-                    href={orbAccountUrl(order.destination.walletAddress)}
+                    href={orbAccountUrl(order.counterpartyWallet.walletAddress)}
                     target="_blank"
                     rel="noreferrer"
-                    title={order.destination.walletAddress}
+                    title={order.counterpartyWallet.walletAddress}
                   >
-                    <span className="rd-addr">{shortenAddress(order.destination.walletAddress, 4, 4)}</span>
+                    <span className="rd-addr">{shortenAddress(order.counterpartyWallet.walletAddress, 4, 4)}</span>
                     <ExternalIcon />
                   </a>
                 </td>
@@ -1030,7 +1030,7 @@ function RecipientsTable({
                         className="rd-btn rd-btn-sm rd-btn-primary"
                         disabled={rowBusy}
                         aria-busy={approving}
-                        onClick={() => onApproveDestination(order.destination.destinationId, order.paymentOrderId)}
+                        onClick={() => onApproveDestination(order.counterpartyWallet.counterpartyWalletId, order.paymentOrderId)}
                       >
                         {approving ? 'Approving…' : 'Approve'}
                       </button>

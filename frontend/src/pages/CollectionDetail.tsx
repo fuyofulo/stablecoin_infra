@@ -178,10 +178,10 @@ export function CollectionDetailPage() {
   const lifecycle = buildLifecycle(collection);
   const statusTone = statusToneForCollection(collection.derivedState);
   const amountLabel = `${formatRawUsdcCompact(collection.amountRaw)} ${assetSymbol(collection.asset)}`;
-  const payerName = collection.collectionSource
+  const payerName = collection.counterpartyWallet
     ? displayCollectionSourceName(
-        collection.collectionSource.label,
-        collection.collectionSource.walletAddress,
+        collection.counterpartyWallet.label,
+        collection.counterpartyWallet.walletAddress,
       )
     : collection.payerWalletAddress
       ? shortenAddress(collection.payerWalletAddress, 4, 4)
@@ -281,7 +281,7 @@ export function CollectionDetailPage() {
               }}
             >
               <DetailEntry label="Payer">
-                {collection.collectionSource ? (
+                {collection.counterpartyWallet ? (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                     <Link
                       to={`/organizations/${organizationId}/payers`}
@@ -294,21 +294,21 @@ export function CollectionDetailPage() {
                       <span
                         className="rd-pill"
                         data-tone={toneToPill(
-                          collectionSourceTrustTone(collection.collectionSource.trustState),
+                          collectionSourceTrustTone(collection.counterpartyWallet.trustState),
                         )}
                         style={{ fontSize: 11 }}
                       >
                         <span className="rd-pill-dot" aria-hidden />
-                        {displayCollectionSourceTrust(collection.collectionSource.trustState)}
+                        {displayCollectionSourceTrust(collection.counterpartyWallet.trustState)}
                       </span>
                       <a
-                        href={orbAccountUrl(collection.collectionSource.walletAddress)}
+                        href={orbAccountUrl(collection.counterpartyWallet.walletAddress)}
                         target="_blank"
                         rel="noreferrer"
                         className="rd-mono"
                         style={{ fontSize: 11, color: 'var(--ax-text-muted)' }}
                       >
-                        {shortenAddress(collection.collectionSource.walletAddress, 4, 4)}
+                        {shortenAddress(collection.counterpartyWallet.walletAddress, 4, 4)}
                       </a>
                     </div>
                   </div>

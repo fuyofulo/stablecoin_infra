@@ -2,8 +2,8 @@ import type {
   CollectionRequest,
   CollectionRequestState,
   CollectionRunSummary,
-  CollectionSourceTrustState,
-  Destination,
+  CounterpartyWallet,
+  CounterpartyWalletTrustState,
   PaymentOrder,
   PaymentOrderState,
   PaymentRun,
@@ -167,7 +167,7 @@ export function runProgressLine(run: PaymentRun): string {
   return `${t.settledCount}/${t.orderCount} settled · ${t.exceptionCount} exc · ${t.pendingApprovalCount} in approval`;
 }
 
-export function trustDisplay(trust: Destination['trustState']): string {
+export function trustDisplay(trust: CounterpartyWallet['trustState']): string {
   switch (trust) {
     case 'trusted':
       return 'Trusted';
@@ -279,7 +279,7 @@ export function collectionRunProgressLine(run: CollectionRunSummary): string {
   return `${s.collected}/${s.total} collected · ${s.exception} exc · ${s.partiallyCollected} partial`;
 }
 
-const COLLECTION_SOURCE_TRUST: Record<CollectionSourceTrustState, string> = {
+const COLLECTION_SOURCE_TRUST: Record<CounterpartyWalletTrustState, string> = {
   unreviewed: 'Unreviewed',
   trusted: 'Trusted',
   restricted: 'Restricted',
@@ -288,7 +288,7 @@ const COLLECTION_SOURCE_TRUST: Record<CollectionSourceTrustState, string> = {
 
 export function displayCollectionSourceTrust(trust: string): string {
   if (trust in COLLECTION_SOURCE_TRUST) {
-    return COLLECTION_SOURCE_TRUST[trust as CollectionSourceTrustState];
+    return COLLECTION_SOURCE_TRUST[trust as CounterpartyWalletTrustState];
   }
   return trust.replaceAll('_', ' ');
 }

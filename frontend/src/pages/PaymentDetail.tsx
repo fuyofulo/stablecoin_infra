@@ -360,7 +360,7 @@ export function PaymentDetailPage() {
   }
 
   const order = orderQuery.data;
-  const recipientName = order.counterparty?.displayName ?? order.destination.label;
+  const recipientName = order.counterparty?.displayName ?? order.counterpartyWallet.label;
   const amountLabel = `${formatRawUsdcCompact(order.amountRaw)} ${assetSymbol(order.asset)}`;
   const lifecycle = buildLifecycle(order, verificationStatus);
   const variant = determineVariant(order);
@@ -386,12 +386,12 @@ export function PaymentDetailPage() {
               <span className="rd-mono">{amountLabel}</span>
               <span className="rd-meta-sep">·</span>
               <a
-                href={orbAccountUrl(order.destination.walletAddress)}
+                href={orbAccountUrl(order.counterpartyWallet.walletAddress)}
                 target="_blank"
                 rel="noreferrer"
                 className="rd-addr-link"
               >
-                <span>{shortenAddress(order.destination.walletAddress, 4, 4)}</span>
+                <span>{shortenAddress(order.counterpartyWallet.walletAddress, 4, 4)}</span>
               </a>
               {order.externalReference || order.invoiceNumber ? (
                 <>
@@ -486,13 +486,13 @@ export function PaymentDetailPage() {
               </DetailEntry>
               <DetailEntry label="To">
                 <a
-                  href={orbAccountUrl(order.destination.walletAddress)}
+                  href={orbAccountUrl(order.counterpartyWallet.walletAddress)}
                   target="_blank"
                   rel="noreferrer"
                   className="rd-addr-link"
                 >
                   <span>
-                    {order.destination.label} · {shortenAddress(order.destination.walletAddress, 4, 4)}
+                    {order.counterpartyWallet.label} · {shortenAddress(order.counterpartyWallet.walletAddress, 4, 4)}
                   </span>
                 </a>
               </DetailEntry>
@@ -501,14 +501,14 @@ export function PaymentDetailPage() {
                   style={{
                     fontSize: 12,
                     color:
-                      order.destination.trustState === 'trusted'
+                      order.counterpartyWallet.trustState === 'trusted'
                         ? 'var(--ax-accent)'
-                        : order.destination.trustState === 'restricted' || order.destination.trustState === 'blocked'
+                        : order.counterpartyWallet.trustState === 'restricted' || order.counterpartyWallet.trustState === 'blocked'
                           ? 'var(--ax-danger)'
                           : 'var(--ax-warning)',
                   }}
                 >
-                  {order.destination.trustState}
+                  {order.counterpartyWallet.trustState}
                 </span>
               </DetailEntry>
               <DetailEntry label="Signature">

@@ -34,7 +34,7 @@ const listPaymentRequestsQuerySchema = z.object({
 });
 
 const createPaymentRequestSchema = z.object({
-  destinationId: z.string().uuid(),
+  counterpartyWalletId: z.string().uuid(),
   amountRaw: amountRawSchema,
   asset: z.string().trim().min(1).max(20).default('usdc'),
   reason: z.string().trim().min(1).max(1000),
@@ -78,7 +78,7 @@ paymentRequestsRouter.post('/organizations/:organizationId/payment-requests', as
     const detail = await createPaymentRequest({
       organizationId,
       actorUserId: req.auth!.userId,
-      destinationId: input.destinationId,
+      counterpartyWalletId: input.counterpartyWalletId,
       amountRaw: input.amountRaw,
       asset: input.asset,
       reason: input.reason,

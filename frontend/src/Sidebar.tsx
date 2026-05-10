@@ -75,19 +75,6 @@ const icons = {
       <path d="M7 11l1.5 1.5L13 8" />
     </SvgIcon>
   ),
-  destinations: (
-    <SvgIcon>
-      <path d="M10 17.5s-5.5-4.5-5.5-9a5.5 5.5 0 0 1 11 0c0 4.5-5.5 9-5.5 9Z" />
-      <circle cx="10" cy="8.5" r="2.2" />
-    </SvgIcon>
-  ),
-  payers: (
-    <SvgIcon>
-      <circle cx="10" cy="7" r="3" />
-      <path d="M4 16.5a6 6 0 0 1 12 0" />
-      <path d="M14 5l2 2 3-3" />
-    </SvgIcon>
-  ),
   chevron: (
     <SvgIcon className="ax-ws-button-chev">
       <path d="M5 7.5 10 12.5 15 7.5" />
@@ -334,19 +321,8 @@ export function AppSidebar({
               <NavLinkItem
                 to={`${base}/counterparties`}
                 icon={icons.counterparty}
-                label="Counterparties"
-              />
-              <NavLinkItem
-                to={`${base}/destinations`}
-                icon={icons.destinations}
-                label="Destinations"
-                badge={destinationsUnreviewedCount}
-              />
-              <NavLinkItem
-                to={`${base}/payers`}
-                icon={icons.payers}
-                label="Payers"
-                badge={payersUnreviewedCount}
+                label="Address book"
+                badge={(destinationsUnreviewedCount ?? 0) + (payersUnreviewedCount ?? 0)}
               />
             </div>
 

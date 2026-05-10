@@ -51,13 +51,13 @@ export async function buildPaymentOrderProofPacket(organizationId: string, payme
         walletAddress: detail.sourceTreasuryWallet.address,
         usdcAtaAddress: detail.sourceTreasuryWallet.usdcAtaAddress,
       } : null,
-      destination: {
-        destinationId: detail.destination.destinationId,
-        label: detail.destination.label,
-        walletAddress: detail.destination.walletAddress,
-        tokenAccountAddress: detail.destination.tokenAccountAddress,
-        trustState: detail.destination.trustState,
-        isInternal: detail.destination.isInternal,
+      counterpartyWallet: {
+        counterpartyWalletId: detail.counterpartyWallet.counterpartyWalletId,
+        label: detail.counterpartyWallet.label,
+        walletAddress: detail.counterpartyWallet.walletAddress,
+        tokenAccountAddress: detail.counterpartyWallet.tokenAccountAddress,
+        trustState: detail.counterpartyWallet.trustState,
+        isInternal: detail.counterpartyWallet.isInternal,
       },
       counterparty: detail.counterparty ? {
         counterpartyId: detail.counterparty.counterpartyId,

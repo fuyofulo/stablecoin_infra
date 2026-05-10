@@ -22,12 +22,12 @@ export async function buildPaymentRunProofPacket(
       paymentOrderId: order.paymentOrderId,
       paymentRequestId: order.paymentRequestId,
       transferRequestId: order.transferRequestId,
-      destination: {
-        destinationId: order.destination.destinationId,
-        label: order.destination.label,
-        walletAddress: order.destination.walletAddress,
-        trustState: order.destination.trustState,
-        isInternal: order.destination.isInternal,
+      counterpartyWallet: {
+        counterpartyWalletId: order.counterpartyWallet.counterpartyWalletId,
+        label: order.counterpartyWallet.label,
+        walletAddress: order.counterpartyWallet.walletAddress,
+        trustState: order.counterpartyWallet.trustState,
+        isInternal: order.counterpartyWallet.isInternal,
       },
       amountRaw: order.amountRaw,
       asset: order.asset,

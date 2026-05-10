@@ -2,7 +2,7 @@ import type {
   CollectionRequest,
   CollectionRequestEvent,
   CollectionRun,
-  CollectionSource,
+  CounterpartyWallet,
   Counterparty,
   Prisma,
   TreasuryWallet,
@@ -14,7 +14,10 @@ import { getReconciliationDetail } from '../transfer-requests/settlement-read-mo
 import { createTransferRequestEvent } from '../transfer-requests/events.js';
 import { prisma } from '../infra/prisma.js';
 import { deriveUsdcAtaForWallet, SOLANA_CHAIN, USDC_ASSET } from '../solana.js';
-import { findOrCreateCollectionSourceForPayer, serializeCollectionSource } from './sources.js';
+import {
+  findOrCreateWalletForPayer,
+  serializeCounterpartyWallet,
+} from '../counterparty-wallets.js';
 
 export const COLLECTION_REQUEST_STATES = [
   'open',
@@ -30,11 +33,11 @@ export type CollectionRequestState = (typeof COLLECTION_REQUEST_STATES)[number];
 type CollectionRequestWithRelations = CollectionRequest & {
   collectionRun: Pick<CollectionRun, 'collectionRunId' | 'runName' | 'state' | 'createdAt'> | null;
   receivingTreasuryWallet: TreasuryWallet;
-  collectionSource: (CollectionSource & { counterparty?: Counterparty | null }) | null;
+  counterpartyWallet: (CounterpartyWallet & { counterparty?: Counterparty | null }) | null;
   counterparty: Counterparty | null;
   transferRequest: Pick<
     TransferRequest,
-    'transferRequestId' | 'requestType' | 'status' | 'amountRaw' | 'externalReference' | 'destinationId'
+    'transferRequestId' | 'requestType' | 'status' | 'amountRaw' | 'externalReference' | 'counterpartyWalletId'
   > | null;
   createdByUser: Pick<User, 'userId' | 'email' | 'displayName'> | null;
   events?: CollectionRequestEvent[];
@@ -88,7 +91,7 @@ export async function createCollectionRequest(args: {
   actorUserId: string;
   collectionRunId?: string | null;
   receivingTreasuryWalletId: string;
-  collectionSourceId?: string | null;
+  counterpartyWalletId?: string | null;
   counterpartyId?: string | null;
   payerWalletAddress?: string | null;
   payerTokenAccountAddress?: string | null;
@@ -123,18 +126,18 @@ export async function createCollectionRequest(args: {
     throw new Error('Counterparty not found');
   }
 
-  const collectionSource = await resolveCollectionSource({
+  const counterpartyWallet = await resolveInboundCounterpartyWallet({
     organizationId: args.organizationId,
-    collectionSourceId: args.collectionSourceId,
+    counterpartyWalletId: args.counterpartyWalletId,
     counterpartyId: counterparty?.counterpartyId ?? null,
     payerWalletAddress: args.payerWalletAddress,
     payerTokenAccountAddress: args.payerTokenAccountAddress,
     reason: args.reason,
     inputSource: args.collectionRunId ? 'collection_run' : 'manual_collection',
   });
-  const resolvedCounterpartyId = counterparty?.counterpartyId ?? collectionSource?.counterpartyId ?? null;
-  const payerWalletAddress = collectionSource?.walletAddress ?? normalizeOptionalText(args.payerWalletAddress);
-  const payerTokenAccountAddress = collectionSource?.tokenAccountAddress ?? normalizeOptionalText(args.payerTokenAccountAddress);
+  const resolvedCounterpartyId = counterparty?.counterpartyId ?? counterpartyWallet?.counterpartyId ?? null;
+  const payerWalletAddress = counterpartyWallet?.walletAddress ?? normalizeOptionalText(args.payerWalletAddress);
+  const payerTokenAccountAddress = counterpartyWallet?.tokenAccountAddress ?? normalizeOptionalText(args.payerTokenAccountAddress);
 
   await enforceDuplicateCollectionRequest({
     organizationId: args.organizationId,
@@ -143,7 +146,7 @@ export async function createCollectionRequest(args: {
     externalReference: normalizeOptionalText(args.externalReference),
   });
 
-  const receivingDestination = await getOrCreateInternalReceivingDestination({
+  const receivingCounterpartyWallet = await getOrCreateInternalReceivingCounterpartyWallet({
     organizationId: args.organizationId,
     receivingWallet,
   });
@@ -154,7 +157,7 @@ export async function createCollectionRequest(args: {
         organizationId: args.organizationId,
         collectionRunId: args.collectionRunId ?? null,
         receivingTreasuryWalletId: receivingWallet.treasuryWalletId,
-        collectionSourceId: collectionSource?.collectionSourceId ?? null,
+        counterpartyWalletId: counterpartyWallet?.counterpartyWalletId ?? null,
         counterpartyId: resolvedCounterpartyId,
         payerWalletAddress,
         payerTokenAccountAddress,
@@ -173,7 +176,7 @@ export async function createCollectionRequest(args: {
       data: {
         organizationId: args.organizationId,
         sourceTreasuryWalletId: null,
-        destinationId: receivingDestination.destinationId,
+        counterpartyWalletId: receivingCounterpartyWallet.counterpartyWalletId,
         requestType: 'collection_request',
         asset: args.asset ?? 'usdc',
         amountRaw: BigInt(args.amountRaw),
@@ -188,7 +191,7 @@ export async function createCollectionRequest(args: {
           collectionRunId: request.collectionRunId,
           receivingTreasuryWalletId: receivingWallet.treasuryWalletId,
           receivingWalletAddress: receivingWallet.address,
-          collectionSourceId: request.collectionSourceId,
+          counterpartyWalletId: request.counterpartyWalletId,
           payerWalletAddress: request.payerWalletAddress,
           payerTokenAccountAddress: request.payerTokenAccountAddress,
         },
@@ -213,7 +216,7 @@ export async function createCollectionRequest(args: {
         amountRaw: transferRequest.amountRaw.toString(),
         asset: transferRequest.asset,
         receivingTreasuryWalletId: receivingWallet.treasuryWalletId,
-        collectionSourceId: request.collectionSourceId,
+        counterpartyWalletId: request.counterpartyWalletId,
         payerWalletAddress: request.payerWalletAddress,
       },
     });
@@ -232,7 +235,7 @@ export async function createCollectionRequest(args: {
         collectionRequestId: request.collectionRequestId,
         collectionRunId: request.collectionRunId,
         receivingTreasuryWalletId: receivingWallet.treasuryWalletId,
-        collectionSourceId: request.collectionSourceId,
+        counterpartyWalletId: request.counterpartyWalletId,
         amountRaw: transferRequest.amountRaw.toString(),
         asset: transferRequest.asset,
       },
@@ -458,7 +461,7 @@ export async function importCollectionRequestsFromCsv(args: {
         actorUserId: args.actorUserId,
         collectionRunId: args.collectionRunId,
         receivingTreasuryWalletId: parsed.receivingTreasuryWalletId,
-        collectionSourceId: parsed.collectionSourceId,
+        counterpartyWalletId: parsed.counterpartyWalletId,
         counterpartyId: parsed.counterpartyId,
         payerWalletAddress: parsed.payerWalletAddress,
         payerTokenAccountAddress: parsed.payerTokenAccountAddress,
@@ -566,7 +569,7 @@ const collectionRequestInclude = {
     },
   },
   receivingTreasuryWallet: true,
-  collectionSource: {
+  counterpartyWallet: {
     include: {
       counterparty: true,
     },
@@ -579,7 +582,7 @@ const collectionRequestInclude = {
       status: true,
       amountRaw: true,
       externalReference: true,
-      destinationId: true,
+      counterpartyWalletId: true,
     },
   },
   createdByUser: {
@@ -613,7 +616,7 @@ async function serializeCollectionRequest(request: CollectionRequestWithRelation
     organizationId: request.organizationId,
     collectionRunId: request.collectionRunId,
     receivingTreasuryWalletId: request.receivingTreasuryWalletId,
-    collectionSourceId: request.collectionSourceId,
+    counterpartyWalletId: request.counterpartyWalletId,
     counterpartyId: request.counterpartyId,
     transferRequestId: request.transferRequestId,
     payerWalletAddress: request.payerWalletAddress,
@@ -630,7 +633,7 @@ async function serializeCollectionRequest(request: CollectionRequestWithRelation
     updatedAt: request.updatedAt,
     collectionRun: request.collectionRun,
     receivingTreasuryWallet: serializeTreasuryWallet(request.receivingTreasuryWallet),
-    collectionSource: request.collectionSource ? serializeCollectionSource(request.collectionSource) : null,
+    counterpartyWallet: request.counterpartyWallet ? serializeCounterpartyWallet(request.counterpartyWallet) : null,
     counterparty: request.counterparty ? serializeCounterparty(request.counterparty) : null,
     transferRequest: request.transferRequest
       ? {
@@ -721,7 +724,7 @@ async function safeGetReconciliationDetail(organizationId: string, transferReque
   }
 }
 
-async function getOrCreateInternalReceivingDestination(args: {
+async function getOrCreateInternalReceivingCounterpartyWallet(args: {
   organizationId: string;
   receivingWallet: TreasuryWallet;
 }) {
@@ -731,7 +734,7 @@ async function getOrCreateInternalReceivingDestination(args: {
     : `${shortenAddress(args.receivingWallet.address)} collections`;
 
   return prisma.$transaction(async (tx) => {
-    const existing = await tx.destination.findUnique({
+    const existing = await tx.counterpartyWallet.findUnique({
       where: {
         organizationId_walletAddress: {
           organizationId: args.organizationId,
@@ -740,8 +743,11 @@ async function getOrCreateInternalReceivingDestination(args: {
       },
     });
     if (existing) {
-      return tx.destination.update({
-        where: { destinationId: existing.destinationId },
+      // The internal collection receiver is essentially a stand-in
+      // destination row pointing at our own treasury wallet so the
+      // collection-side TransferRequest has somewhere to point.
+      return tx.counterpartyWallet.update({
+        where: { counterpartyWalletId: existing.counterpartyWalletId },
         data: {
           isActive: true,
           isInternal: true,
@@ -754,17 +760,17 @@ async function getOrCreateInternalReceivingDestination(args: {
         },
       });
     }
-    return tx.destination.create({
+    return tx.counterpartyWallet.create({
       data: {
         organizationId: args.organizationId,
         chain: SOLANA_CHAIN,
         asset: USDC_ASSET,
         walletAddress: args.receivingWallet.address,
         tokenAccountAddress,
-        destinationType: 'internal_collection_receiver',
+        walletType: 'internal_collection_receiver',
         trustState: 'trusted',
         label,
-        notes: 'Internal destination created for expected inbound collections.',
+        notes: 'Internal counterparty wallet created for expected inbound collections.',
         isInternal: true,
         isActive: true,
         metadataJson: {
@@ -809,19 +815,21 @@ async function parseCollectionCsvRecord(args: {
       ?? args.record.source_wallet
       ?? args.record.from_wallet,
   );
-  const collectionSourceInput = normalizeOptionalText(
-    args.record.collection_source
+  const counterpartyWalletInput = normalizeOptionalText(
+    args.record.counterparty_wallet
+      ?? args.record.counterparty_wallet_id
+      ?? args.record.collection_source
       ?? args.record.collection_source_id
       ?? args.record.payer_source
       ?? args.record.source,
   );
-  const collectionSource = collectionSourceInput
-    ? await findCollectionSource(args.organizationId, collectionSourceInput)
+  const counterpartyWallet = counterpartyWalletInput
+    ? await findInboundCounterpartyWallet(args.organizationId, counterpartyWalletInput)
     : payerWalletAddress
-      ? await findCollectionSource(args.organizationId, payerWalletAddress)
+      ? await findInboundCounterpartyWallet(args.organizationId, payerWalletAddress)
       : null;
-  if (collectionSourceInput && !collectionSource) {
-    throw new Error(`Row ${args.rowNumber}: collection source "${collectionSourceInput}" was not found`);
+  if (counterpartyWalletInput && !counterpartyWallet) {
+    throw new Error(`Row ${args.rowNumber}: counterparty wallet "${counterpartyWalletInput}" was not found`);
   }
   if (payerWalletAddress) {
     try {
@@ -840,12 +848,12 @@ async function parseCollectionCsvRecord(args: {
 
   return {
     counterpartyName,
-    counterpartyId: counterparty?.counterpartyId ?? collectionSource?.counterpartyId ?? null,
+    counterpartyId: counterparty?.counterpartyId ?? counterpartyWallet?.counterpartyId ?? null,
     receivingTreasuryWalletId: receivingWallet.treasuryWalletId,
     receivingWalletAddress: receivingWallet.address,
-    collectionSourceId: collectionSource?.collectionSourceId ?? null,
-    payerWalletAddress: payerWalletAddress ?? collectionSource?.walletAddress ?? null,
-    payerTokenAccountAddress: collectionSource?.tokenAccountAddress ?? null,
+    counterpartyWalletId: counterpartyWallet?.counterpartyWalletId ?? null,
+    payerWalletAddress: payerWalletAddress ?? counterpartyWallet?.walletAddress ?? null,
+    payerTokenAccountAddress: counterpartyWallet?.tokenAccountAddress ?? null,
     amountRaw,
     asset: normalizeOptionalText(args.record.asset) ?? 'usdc',
     externalReference,
@@ -895,14 +903,14 @@ async function findTreasuryWallet(organizationId: string, value: string) {
   });
 }
 
-async function findCollectionSource(organizationId: string, value: string) {
-  const alternatives: Prisma.CollectionSourceWhereInput[] = [
-    { collectionSourceId: isUuid(value) ? value : undefined },
+async function findInboundCounterpartyWallet(organizationId: string, value: string) {
+  const alternatives: Prisma.CounterpartyWalletWhereInput[] = [
+    { counterpartyWalletId: isUuid(value) ? value : undefined },
     { walletAddress: value },
     { tokenAccountAddress: value },
     { label: { equals: value, mode: 'insensitive' as const } },
   ].filter((item) => Object.values(item).some((entry) => entry !== undefined));
-  return prisma.collectionSource.findFirst({
+  return prisma.counterpartyWallet.findFirst({
     where: {
       organizationId,
       isActive: true,
@@ -912,28 +920,28 @@ async function findCollectionSource(organizationId: string, value: string) {
   });
 }
 
-async function resolveCollectionSource(args: {
+async function resolveInboundCounterpartyWallet(args: {
   organizationId: string;
-  collectionSourceId?: string | null;
+  counterpartyWalletId?: string | null;
   counterpartyId?: string | null;
   payerWalletAddress?: string | null;
   payerTokenAccountAddress?: string | null;
   reason: string;
   inputSource: string;
 }) {
-  if (args.collectionSourceId) {
-    const source = await prisma.collectionSource.findFirst({
+  if (args.counterpartyWalletId) {
+    const wallet = await prisma.counterpartyWallet.findFirst({
       where: {
         organizationId: args.organizationId,
-        collectionSourceId: args.collectionSourceId,
+        counterpartyWalletId: args.counterpartyWalletId,
         isActive: true,
       },
       include: { counterparty: true },
     });
-    if (!source) {
-      throw new Error('Collection source not found');
+    if (!wallet) {
+      throw new Error('Counterparty wallet not found');
     }
-    return source;
+    return wallet;
   }
 
   const payerWalletAddress = normalizeOptionalText(args.payerWalletAddress);
@@ -947,17 +955,17 @@ async function resolveCollectionSource(args: {
     throw new Error(`Payer wallet "${payerWalletAddress}" is not a valid Solana wallet address`);
   }
 
-  return findOrCreateCollectionSourceForPayer({
+  return findOrCreateWalletForPayer({
     organizationId: args.organizationId,
     counterpartyId: args.counterpartyId,
     payerWalletAddress,
     payerTokenAccountAddress: args.payerTokenAccountAddress,
-    label: buildCollectionSourceLabel(args.reason, payerWalletAddress),
+    label: buildInboundCounterpartyWalletLabel(args.reason, payerWalletAddress),
     inputSource: args.inputSource,
   });
 }
 
-function buildCollectionSourceLabel(reason: string, walletAddress: string) {
+function buildInboundCounterpartyWalletLabel(reason: string, walletAddress: string) {
   const normalizedReason = normalizeOptionalText(reason);
   if (!normalizedReason) {
     return shortenAddress(walletAddress);

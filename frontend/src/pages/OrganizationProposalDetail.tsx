@@ -407,8 +407,8 @@ function PaymentSummary({ proposal }: { proposal: DecimalProposal }) {
         {payload?.destinationWalletAddress ? (
           <InfoRow label="Destination">
             <ChainLink address={payload.destinationWalletAddress} />
-            {order?.destination?.label ? (
-              <div style={{ fontSize: 11, opacity: 0.7 }}>{order.destination.label}</div>
+            {order?.counterpartyWallet?.label ? (
+              <div style={{ fontSize: 11, opacity: 0.7 }}>{order.counterpartyWallet.label}</div>
             ) : null}
           </InfoRow>
         ) : null}
@@ -446,7 +446,7 @@ function PaymentRunSummary({ proposal }: { proposal: DecimalProposal }) {
     orders?: Array<{
       index: number;
       paymentOrderId: string;
-      destinationId: string;
+      counterpartyWalletId: string;
       destinationWalletAddress: string;
       destinationTokenAccountAddress: string;
       amountRaw: string;

@@ -34,7 +34,7 @@ const amountRawSchema = z.union([
 ]);
 
 const createPaymentOrderSchema = z.object({
-  destinationId: z.string().uuid(),
+  counterpartyWalletId: z.string().uuid(),
   sourceTreasuryWalletId: z.string().uuid().optional(),
   amountRaw: amountRawSchema,
   asset: z.string().trim().min(1).max(20).default('usdc'),
@@ -115,7 +115,7 @@ paymentOrdersRouter.post('/organizations/:organizationId/payment-orders', asyncR
     const detail = await createPaymentOrder({
       organizationId,
       ...actor,
-      destinationId: input.destinationId,
+      counterpartyWalletId: input.counterpartyWalletId,
       sourceTreasuryWalletId: input.sourceTreasuryWalletId,
       amountRaw: input.amountRaw,
       asset: input.asset,

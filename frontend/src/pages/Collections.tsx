@@ -6,8 +6,8 @@ import type {
   AuthenticatedSession,
   CollectionRequest,
   CollectionRunSummary,
-  CollectionSource,
   Counterparty,
+  CounterpartyWallet,
   TreasuryWallet,
 } from '../types';
 import { assetSymbol, formatRawUsdcCompact, formatRelativeTime, shortenAddress, walletLabel } from '../domain';
@@ -64,10 +64,10 @@ function receiverLabel(wallet: TreasuryWallet | null): string {
 }
 
 function payerLabel(collection: CollectionRequest): string {
-  if (collection.collectionSource) {
+  if (collection.counterpartyWallet) {
     return displayCollectionSourceName(
-      collection.collectionSource.label,
-      collection.collectionSource.walletAddress,
+      collection.counterpartyWallet.label,
+      collection.counterpartyWallet.walletAddress,
     );
   }
   if (collection.payerWalletAddress) return shortenAddress(collection.payerWalletAddress, 4, 4);
@@ -115,7 +115,7 @@ export function CollectionsPage({ session: _session }: { session: AuthenticatedS
   });
   const collectionSourcesQuery = useQuery({
     queryKey: ['collection-sources', organizationId] as const,
-    queryFn: () => api.listCollectionSources(organizationId!),
+    queryFn: () => api.listCounterpartyWallets(organizationId!),
     enabled: Boolean(organizationId),
   });
 
@@ -446,7 +446,7 @@ function CreateCollectionDialog(props: {
   organizationId: string;
   wallets: TreasuryWallet[];
   counterparties: Counterparty[];
-  collectionSources: CollectionSource[];
+  collectionSources: CounterpartyWallet[];
   onClose: () => void;
   onSuccess: () => void;
   onError: (message: string) => void;
@@ -475,9 +475,9 @@ function CreateCollectionDialog(props: {
   useEffect(() => {
     if (!knownSourceIdsBeforeAdd) return;
     const oldIds = new Set(knownSourceIdsBeforeAdd);
-    const newSource = collectionSources.find((s) => !oldIds.has(s.collectionSourceId) && s.isActive);
+    const newSource = collectionSources.find((s) => !oldIds.has(s.counterpartyWalletId) && s.isActive);
     if (newSource) {
-      setSelectedSourceId(newSource.collectionSourceId);
+      setSelectedSourceId(newSource.counterpartyWalletId);
       setKnownSourceIdsBeforeAdd(null);
     }
   }, [collectionSources, knownSourceIdsBeforeAdd]);
@@ -499,7 +499,7 @@ function CreateCollectionDialog(props: {
       return api.createCollection(organizationId, {
         receivingTreasuryWalletId,
         counterpartyId: String(form.get('counterpartyId') ?? '') || undefined,
-        collectionSourceId: payerMode === 'existing' ? selectedSourceId : undefined,
+        counterpartyWalletId: payerMode === 'existing' ? selectedSourceId : undefined,
         payerWalletAddress:
           payerMode === 'new' ? newPayerAddress.trim() : undefined,
         amountRaw: usdcToRaw(amount),
@@ -606,7 +606,7 @@ function CreateCollectionDialog(props: {
                     >
                       <option value="">Select a known payer source</option>
                       {activeSources.map((s) => (
-                        <option key={s.collectionSourceId} value={s.collectionSourceId}>
+                        <option key={s.counterpartyWalletId} value={s.counterpartyWalletId}>
                           {s.label} · {displayCollectionSourceTrust(s.trustState)} ·{' '}
                           {shortenAddress(s.walletAddress, 4, 4)}
                         </option>
@@ -617,7 +617,7 @@ function CreateCollectionDialog(props: {
                       className="rd-link-button"
                       onClick={() => {
                         setKnownSourceIdsBeforeAdd(
-                          collectionSources.map((s) => s.collectionSourceId),
+                          collectionSources.map((s) => s.counterpartyWalletId),
                         );
                         setAddSourceOpen(true);
                       }}
@@ -654,7 +654,7 @@ function CreateCollectionDialog(props: {
                       className="button button-secondary"
                       onClick={() => {
                         setKnownSourceIdsBeforeAdd(
-                          collectionSources.map((s) => s.collectionSourceId),
+                          collectionSources.map((s) => s.counterpartyWalletId),
                         );
                         setAddSourceOpen(true);
                       }}

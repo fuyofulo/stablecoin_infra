@@ -41,20 +41,20 @@ export async function buildCollectionProofPacket(organizationId: string, collect
       createdAt: detail.createdAt,
     },
     parties: {
-      payer: detail.collectionSource ? {
-        collectionSourceId: detail.collectionSource.collectionSourceId,
-        label: detail.collectionSource.label,
-        walletAddress: detail.collectionSource.walletAddress,
-        tokenAccountAddress: detail.collectionSource.tokenAccountAddress,
-        trustState: detail.collectionSource.trustState,
-        sourceType: detail.collectionSource.sourceType,
+      payer: detail.counterpartyWallet ? {
+        counterpartyWalletId: detail.counterpartyWallet.counterpartyWalletId,
+        label: detail.counterpartyWallet.label,
+        walletAddress: detail.counterpartyWallet.walletAddress,
+        tokenAccountAddress: detail.counterpartyWallet.tokenAccountAddress,
+        trustState: detail.counterpartyWallet.trustState,
+        walletType: detail.counterpartyWallet.walletType,
       } : detail.payerWalletAddress ? {
-        collectionSourceId: null,
+        counterpartyWalletId: null,
         label: null,
         walletAddress: detail.payerWalletAddress,
         tokenAccountAddress: detail.payerTokenAccountAddress,
         trustState: 'unreviewed',
-        sourceType: 'ad_hoc_payer_wallet',
+        walletType: 'ad_hoc_payer_wallet',
       } : null,
       receiver: {
         treasuryWalletId: detail.receivingTreasuryWallet.treasuryWalletId,
@@ -67,7 +67,7 @@ export async function buildCollectionProofPacket(organizationId: string, collect
         displayName: detail.counterparty.displayName,
       } : null,
     },
-    collectionSourceReview: sourceReview,
+    payerReview: sourceReview,
     settlement: {
       state: reconciliation?.requestDisplayState ?? null,
       matchStatus: match?.matchStatus ?? null,
@@ -140,13 +140,13 @@ export async function buildCollectionRunProofPacket(
       collectionRequestId: collection.collectionRequestId,
       transferRequestId: collection.transferRequestId,
       receivingTreasuryWalletId: collection.receivingTreasuryWalletId,
-      payer: collection.collectionSource ? {
-        collectionSourceId: collection.collectionSource.collectionSourceId,
-        label: collection.collectionSource.label,
-        walletAddress: collection.collectionSource.walletAddress,
-        trustState: collection.collectionSource.trustState,
+      payer: collection.counterpartyWallet ? {
+        counterpartyWalletId: collection.counterpartyWallet.counterpartyWalletId,
+        label: collection.counterpartyWallet.label,
+        walletAddress: collection.counterpartyWallet.walletAddress,
+        trustState: collection.counterpartyWallet.trustState,
       } : collection.payerWalletAddress ? {
-        collectionSourceId: null,
+        counterpartyWalletId: null,
         label: null,
         walletAddress: collection.payerWalletAddress,
         trustState: 'unreviewed',
@@ -164,7 +164,7 @@ export async function buildCollectionRunProofPacket(
       matchStatus: collection.reconciliationDetail?.match?.matchStatus ?? null,
       matchedAmountRaw: collection.reconciliationDetail?.match?.matchedAmountRaw ?? null,
       exceptionCount: collection.reconciliationDetail?.exceptions.length ?? 0,
-      sourceReviewStatus: proof?.collectionSourceReview.status ?? null,
+      sourceReviewStatus: proof?.payerReview.status ?? null,
       proofStatus: proof?.status ?? 'in_progress',
       proofId: proof?.proofId ?? null,
       proofDigest: proof?.canonicalDigest ?? null,
@@ -208,10 +208,10 @@ export async function buildCollectionRunProofPacket(
 
 function deriveSourceReview(detail: CollectionRequestDetail) {
   const expectedSourceWallet =
-    detail.collectionSource?.walletAddress
+    detail.counterpartyWallet?.walletAddress
     ?? detail.payerWalletAddress
     ?? null;
-  const expectedTrustState = detail.collectionSource?.trustState ?? (expectedSourceWallet ? 'unreviewed' : null);
+  const expectedTrustState = detail.counterpartyWallet?.trustState ?? (expectedSourceWallet ? 'unreviewed' : null);
   const observedSourceWallet = null;
 
   if (!expectedSourceWallet) {
@@ -383,7 +383,7 @@ function buildCollectionProofRef(proof: Awaited<ReturnType<typeof buildCollectio
     },
     intent: proof.intent,
     parties: proof.parties,
-    collectionSourceReview: proof.collectionSourceReview,
+    payerReview: proof.payerReview,
     settlement: proof.settlement,
     exceptions: proof.exceptions.map((exception) => ({
       exceptionId: exception.exceptionId,

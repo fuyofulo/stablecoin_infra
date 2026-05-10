@@ -141,18 +141,12 @@ export const API_ENDPOINTS = [
   endpoint('list_counterparties', 'GET', '/organizations/{organizationId}/counterparties', ['address book'], 'List counterparties', 'session', { scope: 'organization:read' }),
   endpoint('create_counterparty', 'POST', '/organizations/{organizationId}/counterparties', ['address book'], 'Create counterparty', 'session', { scope: 'organization:write' }),
   endpoint('update_counterparty', 'PATCH', '/organizations/{organizationId}/counterparties/{counterpartyId}', ['address book'], 'Update counterparty', 'session', { scope: 'organization:write' }),
-  endpoint('list_destinations', 'GET', '/organizations/{organizationId}/destinations', ['address book'], 'List payment destinations', 'session', { scope: 'organization:read' }),
-  endpoint('create_destination', 'POST', '/organizations/{organizationId}/destinations', ['address book'], 'Create counterparty payment destination', 'session', {
+  endpoint('list_counterparty_wallets', 'GET', '/organizations/{organizationId}/counterparty-wallets', ['address book'], 'List counterparty wallets', 'session', { scope: 'organization:read' }),
+  endpoint('create_counterparty_wallet', 'POST', '/organizations/{organizationId}/counterparty-wallets', ['address book'], 'Create counterparty wallet', 'session', {
     scope: 'organization:write',
-    requestBody: { walletAddress: 'string', tokenAccountAddress: 'string optional', label: 'string', trustState: 'trusted | unreviewed | restricted' },
+    requestBody: { walletAddress: 'string', tokenAccountAddress: 'string optional', label: 'string', trustState: 'trusted | unreviewed | restricted | blocked' },
   }),
-  endpoint('update_destination', 'PATCH', '/organizations/{organizationId}/destinations/{destinationId}', ['address book'], 'Update payment destination', 'session', { scope: 'organization:write' }),
-  endpoint('list_collection_sources', 'GET', '/organizations/{organizationId}/collection-sources', ['address book'], 'List inbound collection sources', 'session', { scope: 'organization:read' }),
-  endpoint('create_collection_source', 'POST', '/organizations/{organizationId}/collection-sources', ['address book'], 'Create inbound collection source', 'session', {
-    scope: 'organization:write',
-    requestBody: { walletAddress: 'string', label: 'string', trustState: 'unreviewed | trusted | restricted | blocked' },
-  }),
-  endpoint('update_collection_source', 'PATCH', '/organizations/{organizationId}/collection-sources/{collectionSourceId}', ['address book'], 'Update inbound collection source', 'session', { scope: 'organization:write' }),
+  endpoint('update_counterparty_wallet', 'PATCH', '/organizations/{organizationId}/counterparty-wallets/{counterpartyWalletId}', ['address book'], 'Update counterparty wallet', 'session', { scope: 'organization:write' }),
 
   endpoint('list_payment_requests', 'GET', '/organizations/{organizationId}/payment-requests', ['inputs'], 'List payment requests', 'session', { scope: 'organization:read' }),
   endpoint('create_payment_request', 'POST', '/organizations/{organizationId}/payment-requests', ['inputs'], 'Create payment request', 'session', { scope: 'payments:write' }),

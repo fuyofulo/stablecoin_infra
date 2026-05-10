@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api';
 import type {
   AuthenticatedSession,
-  Destination,
+  CounterpartyWallet,
   PaymentOrder,
   PaymentRun,
   TreasuryWallet,
@@ -103,7 +103,7 @@ export function PaymentsPage({ session }: { session: AuthenticatedSession }) {
   });
   const destinationsQuery = useQuery({
     queryKey: ['destinations', organizationId] as const,
-    queryFn: () => api.listDestinations(organizationId!),
+    queryFn: () => api.listCounterpartyWallets(organizationId!),
     enabled: Boolean(organizationId),
   });
 
@@ -130,11 +130,11 @@ export function PaymentsPage({ session }: { session: AuthenticatedSession }) {
       ...standaloneOrders.map<UnifiedRow>((o) => ({
         kind: 'single',
         id: o.paymentOrderId,
-        name: o.destination.label,
+        name: o.counterpartyWallet.label,
         counterpartyName: o.counterparty?.displayName ?? null,
-        destination: o.destination.walletAddress,
-        destinationLabel: hasRealDestinationName(o.destination.label, o.destination.walletAddress)
-          ? o.destination.label
+        destination: o.counterpartyWallet.walletAddress,
+        destinationLabel: hasRealDestinationName(o.counterpartyWallet.label, o.counterpartyWallet.walletAddress)
+          ? o.counterpartyWallet.label
           : null,
         source: sourceLabel(o.sourceTreasuryWallet),
         amountLabel: `${formatRawUsdcCompact(o.amountRaw)} ${assetSymbol(o.asset)}`,
@@ -419,7 +419,7 @@ export function PaymentsPage({ session }: { session: AuthenticatedSession }) {
 
 function CreatePaymentDialog(props: {
   organizationId: string;
-  destinations: Destination[];
+  destinations: CounterpartyWallet[];
   addresses: TreasuryWallet[];
   onClose: () => void;
   onSuccess: () => void;
@@ -436,14 +436,14 @@ function CreatePaymentDialog(props: {
 
   const mutation = useMutation({
     mutationFn: async (form: FormData) => {
-      const destinationId = String(form.get('destinationId') ?? '');
+      const counterpartyWalletId = String(form.get('counterpartyWalletId') ?? '');
       const amount = String(form.get('amount') ?? '').trim();
       const reason = String(form.get('reason') ?? '').trim();
-      if (!destinationId || !amount || !reason) {
+      if (!counterpartyWalletId || !amount || !reason) {
         throw new Error('Destination, amount, and reason are required.');
       }
       return api.createPaymentRequest(organizationId, {
-        destinationId,
+        counterpartyWalletId,
         amountRaw: usdcToRaw(amount),
         reason,
         externalReference: String(form.get('externalReference') ?? '') || undefined,
@@ -479,14 +479,14 @@ function CreatePaymentDialog(props: {
           <div className="rd-form-grid">
             <label className="rd-field" style={{ gridColumn: '1 / -1' }}>
               <span className="rd-field-label">Destination</span>
-              <select name="destinationId" required className="rd-select" defaultValue="">
+              <select name="counterpartyWalletId" required className="rd-select" defaultValue="">
                 <option value="" disabled>
                   Select destination
                 </option>
                 {destinations
                   .filter((d) => d.isActive)
                   .map((d) => (
-                    <option key={d.destinationId} value={d.destinationId}>
+                    <option key={d.counterpartyWalletId} value={d.counterpartyWalletId}>
                       {d.label} · {d.trustState}
                     </option>
                   ))}

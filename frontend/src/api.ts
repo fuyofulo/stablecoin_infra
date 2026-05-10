@@ -9,10 +9,9 @@ import type {
   CollectionRunCsvPreview,
   CollectionRunImportResult,
   CollectionRunSummary,
-  CollectionSource,
-  CollectionSourceTrustState,
   Counterparty,
-  Destination,
+  CounterpartyWallet,
+  CounterpartyWalletTrustState,
   CreateOrganizationInviteResponse,
   LoginResponse,
   OrganizationInvite,
@@ -505,45 +504,55 @@ export const api = {
       body: JSON.stringify(input),
     });
   },
-  listDestinations(organizationId: string) {
-    return request<{ items: Destination[] }>(`/organizations/${organizationId}/destinations`);
+  // The org's address book — flat list of labeled Solana wallets. Trust
+  // state gates whether transfers can execute; same wallet can serve
+  // both outbound payments and inbound collections.
+  listCounterpartyWallets(organizationId: string) {
+    return request<{ items: CounterpartyWallet[] }>(
+      `/organizations/${organizationId}/counterparty-wallets`,
+    );
   },
-  createDestination(
+  createCounterpartyWallet(
     organizationId: string,
     input: {
       counterpartyId?: string;
       walletAddress: string;
       tokenAccountAddress?: string;
-      destinationType?: string;
-      trustState?: Destination['trustState'];
+      walletType?: string;
+      trustState?: CounterpartyWalletTrustState;
       label: string;
       notes?: string;
       isInternal?: boolean;
       isActive?: boolean;
     },
   ) {
-    return request<Destination>(`/organizations/${organizationId}/destinations`, {
+    return request<CounterpartyWallet>(`/organizations/${organizationId}/counterparty-wallets`, {
       method: 'POST',
       body: JSON.stringify(input),
     });
   },
-  updateDestination(
+  updateCounterpartyWallet(
     organizationId: string,
-    destinationId: string,
+    counterpartyWalletId: string,
     input: {
       counterpartyId?: string | null;
       walletAddress?: string;
-      trustState?: Destination['trustState'];
+      tokenAccountAddress?: string | null;
+      walletType?: string;
+      trustState?: CounterpartyWalletTrustState;
       label?: string;
-      notes?: string;
+      notes?: string | null;
       isInternal?: boolean;
       isActive?: boolean;
     },
   ) {
-    return request<Destination>(`/organizations/${organizationId}/destinations/${destinationId}`, {
-      method: 'PATCH',
-      body: JSON.stringify(input),
-    });
+    return request<CounterpartyWallet>(
+      `/organizations/${organizationId}/counterparty-wallets/${counterpartyWalletId}`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify(input),
+      },
+    );
   },
   createTreasuryWallet(
     organizationId: string,
@@ -850,7 +859,7 @@ export const api = {
   createPaymentRequest(
     organizationId: string,
     input: {
-      destinationId: string;
+      counterpartyWalletId: string;
       amountRaw: string;
       asset?: string;
       reason: string;
@@ -941,7 +950,7 @@ export const api = {
     input: {
       collectionRunId?: string;
       receivingTreasuryWalletId: string;
-      collectionSourceId?: string;
+      counterpartyWalletId?: string;
       counterpartyId?: string;
       payerWalletAddress?: string;
       payerTokenAccountAddress?: string;
@@ -957,53 +966,6 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(input),
     });
-  },
-  listCollectionSources(organizationId: string, params?: { limit?: number }) {
-    const qs = new URLSearchParams();
-    qs.set('limit', String(params?.limit ?? 100));
-    return request<{ items: CollectionSource[]; limit: number }>(
-      `/organizations/${organizationId}/collection-sources?${qs.toString()}`,
-    );
-  },
-  createCollectionSource(
-    organizationId: string,
-    input: {
-      counterpartyId?: string;
-      walletAddress: string;
-      tokenAccountAddress?: string;
-      sourceType?: string;
-      trustState?: CollectionSourceTrustState;
-      label: string;
-      notes?: string;
-      isActive?: boolean;
-    },
-  ) {
-    return request<CollectionSource>(`/organizations/${organizationId}/collection-sources`, {
-      method: 'POST',
-      body: JSON.stringify(input),
-    });
-  },
-  updateCollectionSource(
-    organizationId: string,
-    collectionSourceId: string,
-    input: {
-      counterpartyId?: string | null;
-      walletAddress?: string;
-      tokenAccountAddress?: string | null;
-      sourceType?: string;
-      trustState?: CollectionSourceTrustState;
-      label?: string;
-      notes?: string | null;
-      isActive?: boolean;
-    },
-  ) {
-    return request<CollectionSource>(
-      `/organizations/${organizationId}/collection-sources/${collectionSourceId}`,
-      {
-        method: 'PATCH',
-        body: JSON.stringify(input),
-      },
-    );
   },
   previewCollectionCsv(
     organizationId: string,

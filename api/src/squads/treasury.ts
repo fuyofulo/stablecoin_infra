@@ -366,8 +366,8 @@ export async function createSquadsPaymentProposalIntent(
   }
 
   const sourceTokenAccount = wallet.usdcAtaAddress ?? deriveUsdcAtaForWallet(vaultPda.toBase58());
-  const destinationTokenAccount = paymentOrder.destination.tokenAccountAddress
-    ?? deriveUsdcAtaForWallet(paymentOrder.destination.walletAddress);
+  const destinationTokenAccount = paymentOrder.counterpartyWallet.tokenAccountAddress
+    ?? deriveUsdcAtaForWallet(paymentOrder.counterpartyWallet.walletAddress);
   // Skip the destination ATA-create here. It can't run inside the vault
   // inner transaction because the vault PDA pays no rent (no native SOL).
   // The wrapping vaultTransactionExecute will prepend a paid-by-executor
@@ -375,7 +375,7 @@ export async function createSquadsPaymentProposalIntent(
   const transferInstructions = buildUsdcTransferTransactionInstructions({
     sourceWallet: vaultPda.toBase58(),
     sourceTokenAccount,
-    destinationWallet: paymentOrder.destination.walletAddress,
+    destinationWallet: paymentOrder.counterpartyWallet.walletAddress,
     destinationTokenAccount,
     amountRaw: paymentOrder.amountRaw,
     includeDestinationAtaCreate: false,
@@ -414,8 +414,8 @@ export async function createSquadsPaymentProposalIntent(
   const semanticPayload = {
     paymentOrderId: paymentOrder.paymentOrderId,
     transferRequestId: transferRequest.transferRequestId,
-    destinationId: paymentOrder.destinationId,
-    destinationWalletAddress: paymentOrder.destination.walletAddress,
+    counterpartyWalletId: paymentOrder.counterpartyWalletId,
+    destinationWalletAddress: paymentOrder.counterpartyWallet.walletAddress,
     destinationTokenAccountAddress: destinationTokenAccount,
     sourceTreasuryWalletId: treasuryWalletId,
     sourceWalletAddress: vaultPda.toBase58(),
@@ -448,7 +448,7 @@ export async function createSquadsPaymentProposalIntent(
       type: 'send_payment',
       asset: paymentOrder.asset,
       amountRaw: paymentOrder.amountRaw.toString(),
-      destinationWalletAddress: paymentOrder.destination.walletAddress,
+      destinationWalletAddress: paymentOrder.counterpartyWallet.walletAddress,
       destinationTokenAccountAddress: destinationTokenAccount,
       paymentOrderId: paymentOrder.paymentOrderId,
     }],
@@ -530,8 +530,8 @@ export async function createSquadsPaymentRunProposalIntent(
       if (order.sourceTreasuryWalletId && order.sourceTreasuryWalletId !== treasuryWalletId) {
         throw badRequest(`Payment order ${order.paymentOrderId} already uses a different source treasury.`);
       }
-      if (order.destination.walletAddress === wallet.address) {
-        throw badRequest(`Source treasury cannot be the same as destination "${order.destination.label}".`);
+      if (order.counterpartyWallet.walletAddress === wallet.address) {
+        throw badRequest(`Source treasury cannot be the same as counterparty wallet "${order.counterpartyWallet.label}".`);
       }
       await tx.paymentOrder.update({
         where: { paymentOrderId: order.paymentOrderId },
@@ -582,12 +582,12 @@ export async function createSquadsPaymentRunProposalIntent(
   const sourceTokenAccount = wallet.usdcAtaAddress ?? deriveUsdcAtaForWallet(vaultPda.toBase58());
   const orderPayloads = paymentRun.paymentOrders.map((order, index) => {
     const transferRequest = order.transferRequests[0]!;
-    const destinationTokenAccount = order.destination.tokenAccountAddress
-      ?? deriveUsdcAtaForWallet(order.destination.walletAddress);
+    const destinationTokenAccount = order.counterpartyWallet.tokenAccountAddress
+      ?? deriveUsdcAtaForWallet(order.counterpartyWallet.walletAddress);
     const transferInstructions = buildUsdcTransferTransactionInstructions({
       sourceWallet: vaultPda.toBase58(),
       sourceTokenAccount,
-      destinationWallet: order.destination.walletAddress,
+      destinationWallet: order.counterpartyWallet.walletAddress,
       destinationTokenAccount,
       amountRaw: order.amountRaw,
       includeDestinationAtaCreate: false,
@@ -651,8 +651,8 @@ export async function createSquadsPaymentRunProposalIntent(
       index: item.index,
       paymentOrderId: item.paymentOrder.paymentOrderId,
       transferRequestId: item.transferRequest.transferRequestId,
-      destinationId: item.paymentOrder.destinationId,
-      destinationWalletAddress: item.paymentOrder.destination.walletAddress,
+      counterpartyWalletId: item.paymentOrder.counterpartyWalletId,
+      destinationWalletAddress: item.paymentOrder.counterpartyWallet.walletAddress,
       destinationTokenAccountAddress: item.destinationTokenAccount,
       amountRaw: item.paymentOrder.amountRaw.toString(),
       asset: item.paymentOrder.asset,
@@ -679,7 +679,7 @@ export async function createSquadsPaymentRunProposalIntent(
       type: 'send_payment',
       asset: item.paymentOrder.asset,
       amountRaw: item.paymentOrder.amountRaw.toString(),
-      destinationWalletAddress: item.paymentOrder.destination.walletAddress,
+      destinationWalletAddress: item.paymentOrder.counterpartyWallet.walletAddress,
       destinationTokenAccountAddress: item.destinationTokenAccount,
       paymentOrderId: item.paymentOrder.paymentOrderId,
       paymentRunId: paymentRun.paymentRunId,
@@ -1845,9 +1845,9 @@ const decimalProposalInclude = {
       asset: true,
       externalReference: true,
       invoiceNumber: true,
-      destination: {
+      counterpartyWallet: {
         select: {
-          destinationId: true,
+          counterpartyWalletId: true,
           label: true,
           walletAddress: true,
           tokenAccountAddress: true,
@@ -2284,7 +2284,7 @@ async function loadPaymentOrderForSquadsProposal(organizationId: string, payment
   const paymentOrder = await prisma.paymentOrder.findFirst({
     where: { organizationId, paymentOrderId },
     include: {
-      destination: true,
+      counterpartyWallet: true,
       transferRequests: {
         orderBy: { requestedAt: 'desc' },
         take: 1,
@@ -2307,7 +2307,7 @@ async function loadPaymentRunForSquadsProposal(organizationId: string, paymentRu
       paymentOrders: {
         where: { state: { not: 'cancelled' } },
         include: {
-          destination: true,
+          counterpartyWallet: true,
           transferRequests: {
             orderBy: { requestedAt: 'desc' },
             take: 1,

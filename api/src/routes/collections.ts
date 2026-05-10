@@ -44,7 +44,7 @@ const listCollectionRequestsQuerySchema = z.object({
 const createCollectionRequestSchema = z.object({
   collectionRunId: z.string().uuid().optional(),
   receivingTreasuryWalletId: z.string().uuid(),
-  collectionSourceId: z.string().uuid().optional(),
+  counterpartyWalletId: z.string().uuid().optional(),
   counterpartyId: z.string().uuid().optional(),
   payerWalletAddress: z.string().trim().max(100).optional(),
   payerTokenAccountAddress: z.string().trim().max(100).optional(),
@@ -94,7 +94,7 @@ collectionsRouter.post('/organizations/:organizationId/collections', asyncRoute(
     actorUserId: req.auth!.userId,
     collectionRunId: input.collectionRunId,
     receivingTreasuryWalletId: input.receivingTreasuryWalletId,
-    collectionSourceId: input.collectionSourceId,
+    counterpartyWalletId: input.counterpartyWalletId,
     counterpartyId: input.counterpartyId,
     payerWalletAddress: input.payerWalletAddress,
     payerTokenAccountAddress: input.payerTokenAccountAddress,

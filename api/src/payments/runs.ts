@@ -1,5 +1,5 @@
 import type {
-  Destination,
+  CounterpartyWallet,
   PaymentRun,
   Prisma,
   TransferRequest,
@@ -43,7 +43,7 @@ type RunOrderForExecution = {
   externalReference: string | null;
   invoiceNumber: string | null;
   state: string;
-  destination: Destination;
+  counterpartyWallet: CounterpartyWallet;
   sourceTreasuryWallet: TreasuryWallet | null;
   transferRequests: Array<TransferRequest & {
     sourceTreasuryWallet: TreasuryWallet | null;
@@ -247,8 +247,11 @@ export async function importPaymentRunFromDocument(args: {
     throw new Error('No payments could be extracted from this document.');
   }
 
-  const destinations = await prisma.destination.findMany({
-    where: { organizationId: args.organizationId, isActive: true },
+  const counterpartyWallets = await prisma.counterpartyWallet.findMany({
+    where: {
+      organizationId: args.organizationId,
+      isActive: true,
+    },
     include: { counterparty: true },
   });
 
@@ -266,17 +269,17 @@ export async function importPaymentRunFromDocument(args: {
       });
       continue;
     }
-    // Prefer the registry-matched destination — that wallet has been
-    // verified out-of-band. Fall back to the wallet printed on the
+    // Prefer the registry-matched counterparty wallet — that wallet has
+    // been verified out-of-band. Fall back to the wallet printed on the
     // invoice if the vendor is new; the existing CSV import flow will
-    // auto-create that destination as `unreviewed`, and the per-row
-    // Approve button on the run page is the trust gate.
-    const destination = matchDestination(destinations, row.counterparty);
-    if (destination) {
+    // auto-create that wallet as `unreviewed`, and the per-row Approve
+    // button on the run page is the trust gate.
+    const counterpartyWallet = matchCounterpartyWallet(counterpartyWallets, row.counterparty);
+    if (counterpartyWallet) {
       matched.push({
         row,
-        destinationLabel: destination.label,
-        walletAddress: destination.walletAddress,
+        destinationLabel: counterpartyWallet.label,
+        walletAddress: counterpartyWallet.walletAddress,
       });
       continue;
     }
@@ -300,7 +303,7 @@ export async function importPaymentRunFromDocument(args: {
   if (matched.length === 0) {
     throw new Error(
       `Extracted ${extraction.rows.length} row(s) but none could be routed. ` +
-        `Either add destinations for these vendors, or include a Solana wallet on the invoice: ` +
+        `Either add counterparty wallets for these vendors, or include a Solana wallet on the invoice: ` +
         skipped.map((s) => s.counterparty).join(', '),
     );
   }
@@ -329,26 +332,26 @@ function isUsdLikeCurrency(currency: string): boolean {
   return normalized === 'USDC' || normalized === 'USD' || normalized === '$';
 }
 
-function matchDestination(
-  destinations: Array<{ destinationId: string; label: string; walletAddress: string; counterparty: { displayName: string } | null }>,
+function matchCounterpartyWallet(
+  wallets: Array<{ counterpartyWalletId: string; label: string; walletAddress: string; counterparty: { displayName: string } | null }>,
   counterpartyName: string,
 ) {
   const needle = counterpartyName.trim().toLowerCase();
   if (!needle) return null;
   // Prefer exact label match, fall back to counterparty.displayName
   // exact match, then a containment check in either direction.
-  const exact = destinations.find(
-    (d) =>
-      d.label.toLowerCase() === needle
-      || d.counterparty?.displayName.toLowerCase() === needle,
+  const exact = wallets.find(
+    (w) =>
+      w.label.toLowerCase() === needle
+      || w.counterparty?.displayName.toLowerCase() === needle,
   );
   if (exact) return exact;
-  return destinations.find(
-    (d) =>
-      d.label.toLowerCase().includes(needle)
-      || needle.includes(d.label.toLowerCase())
-      || (d.counterparty && d.counterparty.displayName.toLowerCase().includes(needle))
-      || (d.counterparty && needle.includes(d.counterparty.displayName.toLowerCase())),
+  return wallets.find(
+    (w) =>
+      w.label.toLowerCase().includes(needle)
+      || needle.includes(w.label.toLowerCase())
+      || (w.counterparty && w.counterparty.displayName.toLowerCase().includes(needle))
+      || (w.counterparty && needle.includes(w.counterparty.displayName.toLowerCase())),
   ) ?? null;
 }
 
@@ -573,8 +576,8 @@ export async function preparePaymentRunExecution(args: {
       if (order.sourceTreasuryWalletId && order.sourceTreasuryWalletId !== source.treasuryWalletId) {
         throw new Error(`Payment order ${order.paymentOrderId} already uses a different source wallet`);
       }
-      if (order.destination.walletAddress === source.address) {
-        throw new Error(`Source wallet cannot be the same as destination "${order.destination.label}"`);
+      if (order.counterpartyWallet.walletAddress === source.address) {
+        throw new Error(`Source wallet cannot be the same as counterparty wallet "${order.counterpartyWallet.label}"`);
       }
       await tx.paymentOrder.update({
         where: { paymentOrderId: order.paymentOrderId },
@@ -704,7 +707,7 @@ export async function preparePaymentRunExecution(args: {
             payloadJson: {
               paymentRunId: args.paymentRunId,
               sourceWallet: source.address,
-              destinationWallet: draft.destination.walletAddress,
+              counterpartyWallet: draft.counterpartyWallet.walletAddress,
               amountRaw: draft.amountRaw,
             },
           },
@@ -1002,7 +1005,7 @@ async function loadRunOrdersForExecution(organizationId: string, paymentRunId: s
       state: { not: 'cancelled' },
     },
     include: {
-      destination: true,
+      counterpartyWallet: true,
       sourceTreasuryWallet: true,
       transferRequests: {
         include: {
@@ -1026,18 +1029,18 @@ function buildBatchTransferDraft(order: RunOrderForExecution, source: TreasuryWa
     throw new Error(`Payment order ${order.paymentOrderId} has no submitted transfer request`);
   }
   const sourceTokenAccount = source.usdcAtaAddress ?? deriveUsdcAtaForWallet(source.address);
-  const destinationTokenAccount = order.destination.tokenAccountAddress
-    ?? deriveUsdcAtaForWallet(order.destination.walletAddress);
+  const destinationTokenAccount = order.counterpartyWallet.tokenAccountAddress
+    ?? deriveUsdcAtaForWallet(order.counterpartyWallet.walletAddress);
 
   return {
     paymentOrderId: order.paymentOrderId,
     paymentOrderState: order.state,
     transferRequestId: request.transferRequestId,
     transferRequestStatus: request.status,
-    destination: {
-      destinationId: order.destination.destinationId,
-      label: order.destination.label,
-      walletAddress: order.destination.walletAddress,
+    counterpartyWallet: {
+      counterpartyWalletId: order.counterpartyWallet.counterpartyWalletId,
+      label: order.counterpartyWallet.label,
+      walletAddress: order.counterpartyWallet.walletAddress,
       tokenAccountAddress: destinationTokenAccount,
     },
     amountRaw: order.amountRaw.toString(),
@@ -1046,7 +1049,7 @@ function buildBatchTransferDraft(order: RunOrderForExecution, source: TreasuryWa
     instructions: buildUsdcTransferInstructions({
       sourceWallet: source.address,
       sourceTokenAccount,
-      destinationWallet: order.destination.walletAddress,
+      destinationWallet: order.counterpartyWallet.walletAddress,
       destinationTokenAccount,
       amountRaw: order.amountRaw,
     }),
@@ -1080,7 +1083,7 @@ function buildPaymentRunExecutionPacket(args: {
       paymentOrderId: draft.paymentOrderId,
       transferRequestId: draft.transferRequestId,
       executionRecordId: args.executionRecordIds[index],
-      destination: draft.destination,
+      counterpartyWallet: draft.counterpartyWallet,
       amountRaw: draft.amountRaw,
       memo: draft.memo,
       reference: draft.reference,

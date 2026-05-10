@@ -75,7 +75,7 @@ export function CommandCenterPage({ session }: { session: AuthenticatedSession }
   });
   const destinationsQuery = useQuery({
     queryKey: ['destinations', organizationId] as const,
-    queryFn: () => api.listDestinations(organizationId!),
+    queryFn: () => api.listCounterpartyWallets(organizationId!),
     enabled: Boolean(organizationId),
     refetchInterval: 30_000,
   });
@@ -175,8 +175,8 @@ export function CommandCenterPage({ session }: { session: AuthenticatedSession }
       ...standaloneOrders.map<RecentRow>((o) => ({
         kind: 'single',
         id: o.paymentOrderId,
-        name: o.counterparty?.displayName ?? o.destination.label,
-        destination: o.destination.walletAddress,
+        name: o.counterparty?.displayName ?? o.counterpartyWallet.label,
+        destination: o.counterpartyWallet.walletAddress,
         source: sourceLabel(o.sourceTreasuryWallet),
         amountLabel: `${formatRawUsdcCompact(o.amountRaw)} ${assetSymbol(o.asset)}`,
         state: displayPaymentStatus(o.derivedState),
