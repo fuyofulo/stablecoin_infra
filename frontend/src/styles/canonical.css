@@ -51,6 +51,7 @@ textarea {
   font-weight: 500;
   letter-spacing: 0.005em;
   cursor: pointer;
+  white-space: nowrap;
   transition: background var(--ax-dur-micro) var(--ax-ease-out),
     border-color var(--ax-dur-micro) var(--ax-ease-out),
     color var(--ax-dur-micro) var(--ax-ease-out),
