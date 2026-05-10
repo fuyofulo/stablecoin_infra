@@ -147,6 +147,10 @@ export async function extractPaymentRowsFromDocument(args: {
     },
     body: JSON.stringify({
       model: MODEL,
+      // Multi-page extraction needs more headroom than the provider
+      // default (often 512). 4096 covers ~10 invoice rows comfortably
+      // without bloating cost.
+      max_tokens: 4096,
       messages: [
         { role: 'system', content: SYSTEM_PROMPT },
         { role: 'user', content: userContent },
@@ -160,11 +164,24 @@ export async function extractPaymentRowsFromDocument(args: {
     throw new Error(`OpenRouter ${response.status}: ${detail.slice(0, 500)}`);
   }
   const body = (await response.json()) as {
-    choices?: Array<{ message?: { content?: string } }>;
+    choices?: Array<{
+      message?: { content?: string | null; reasoning?: string | null };
+      finish_reason?: string;
+    }>;
+    usage?: { prompt_tokens?: number; completion_tokens?: number };
+    model?: string;
+    error?: unknown;
   };
-  const content = body.choices?.[0]?.message?.content;
+  const choice = body.choices?.[0];
+  // Some reasoning models return chain-of-thought in `reasoning` and
+  // an empty `content`. Fall through to reasoning if content is empty.
+  const content = choice?.message?.content || choice?.message?.reasoning || '';
   if (!content) {
-    throw new Error('OpenRouter returned an empty completion');
+    console.error('[doc-extract] empty completion. raw response:', JSON.stringify(body, null, 2));
+    throw new Error(
+      `OpenRouter returned an empty completion (finish_reason=${choice?.finish_reason ?? 'unknown'}, ` +
+        `model=${body.model ?? MODEL}). See API logs for full response.`,
+    );
   }
 
   const jsonText = extractJsonObject(content);

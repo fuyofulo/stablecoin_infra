@@ -825,7 +825,7 @@ function UploadDocumentDialog(props: {
           Upload invoice
         </h2>
         <p className="rd-dialog-body">
-          Drop a PDF, PNG, or JPG. We'll extract every payment in it. Vendors already in your registry use their stored
+          Drop a PDF. We'll extract every payment in it. Vendors already in your registry use their stored
           wallet (most secure). New vendors with a Solana wallet printed on the invoice get a <strong>draft destination
           marked unreviewed</strong> — review and approve them on the run page before submitting.
         </p>
@@ -844,7 +844,7 @@ function UploadDocumentDialog(props: {
           <span className="rd-field-label">Document</span>
           <input
             type="file"
-            accept=".pdf,.png,.jpg,.jpeg,.webp,.gif"
+            accept=".pdf,application/pdf"
             onChange={(e) => setFile(e.target.files?.[0] ?? null)}
             className="rd-input"
             style={{ padding: 8 }}
