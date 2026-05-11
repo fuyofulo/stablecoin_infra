@@ -19,7 +19,7 @@ import {
 } from '../domain';
 import { resolveSolanaRpcUrl, waitForSignatureVisible } from '../lib/solana-wallet';
 import { useToast } from '../ui/Toast';
-import { ChainLink, CopyButton } from '../ui-primitives';
+import { ChainLink, CopyButton, EmptyIcon, RdEmptyState } from '../ui-primitives';
 
 function decodeBase64ToBytes(base64: string): Uint8Array {
   const binary = atob(base64);
@@ -230,24 +230,13 @@ export function WalletsPage({ session: _session }: { session: AuthenticatedSessi
               <div className="rd-skeleton rd-skeleton-block" style={{ height: 56 }} />
             </div>
           ) : rows.length === 0 ? (
-            <div className="rd-empty-cell" style={{ padding: '64px 24px' }}>
-              <strong>Add an organization treasury account</strong>
-              <p style={{ margin: '0 0 16px' }}>
-                This is the wallet Decimal monitors and reconciles. Personal signing wallets live on your profile.
-              </p>
-              <div style={{ display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
-                <button
-                  type="button"
-                  className="button button-primary"
-                  onClick={() => setCreateSquadsOpen(true)}
-                >
-                  + Create Squads treasury
-                </button>
-                <button type="button" className="button button-secondary" onClick={() => setAddOpen(true)}>
-                  + Add existing address
-                </button>
-              </div>
-            </div>
+            <RdEmptyState
+              icon={<EmptyIcon kind="wallet" />}
+              title="Add an organization treasury account"
+              description="This is the wallet Decimal monitors and reconciles. Personal signing wallets live on your profile."
+              primary={{ label: 'Create Squads treasury', onClick: () => setCreateSquadsOpen(true) }}
+              secondary={{ label: 'Add existing address', onClick: () => setAddOpen(true) }}
+            />
           ) : (
             <table className="rd-table">
               <thead>

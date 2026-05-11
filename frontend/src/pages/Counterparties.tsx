@@ -8,7 +8,7 @@ import type {
   CounterpartyWalletTrustState,
 } from '../types';
 import { useToast } from '../ui/Toast';
-import { ChainLink, RdFilterBar } from '../ui-primitives';
+import { ChainLink, EmptyIcon, RdEmptyState, RdFilterBar } from '../ui-primitives';
 
 type TrustFilter = 'all' | CounterpartyWalletTrustState;
 
@@ -189,23 +189,19 @@ export function CounterpartiesPage({ session: _session }: { session: Authenticat
               <div className="rd-skeleton rd-skeleton-block" style={{ height: 56 }} />
             </div>
           ) : filteredWallets.length === 0 ? (
-            <div className="rd-empty-cell" style={{ padding: '64px 24px' }}>
-              <strong>{wallets.length === 0 ? 'No wallets yet' : 'Nothing matches'}</strong>
-              <p style={{ margin: '0 0 16px' }}>
-                {wallets.length === 0
-                  ? 'Add a wallet to start your address book.'
-                  : 'Clear the search or change the filter to see more.'}
-              </p>
-              {wallets.length === 0 ? (
-                <button
-                  type="button"
-                  className="button button-primary"
-                  onClick={() => setAddOpen(true)}
-                >
-                  + Add wallet
-                </button>
-              ) : null}
-            </div>
+            wallets.length === 0 ? (
+              <RdEmptyState
+                icon={<EmptyIcon kind="address-book" />}
+                title="No wallets yet"
+                description="Save the wallets you pay or get paid by. Once trusted, they're available for one-click selection on every payment and collection."
+                primary={{ label: 'Add wallet', onClick: () => setAddOpen(true) }}
+              />
+            ) : (
+              <RdEmptyState
+                title="Nothing matches"
+                description="Clear the search or change the filter to see more."
+              />
+            )
           ) : (
             <table className="rd-table">
               <thead>
