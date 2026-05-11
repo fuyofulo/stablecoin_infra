@@ -7,9 +7,8 @@ import type {
   CounterpartyWallet,
   CounterpartyWalletTrustState,
 } from '../types';
-import { shortenAddress, orbAccountUrl } from '../domain';
 import { useToast } from '../ui/Toast';
-import { RdFilterBar } from '../ui-primitives';
+import { ChainLink, RdFilterBar } from '../ui-primitives';
 
 type TrustFilter = 'all' | CounterpartyWalletTrustState;
 
@@ -229,15 +228,7 @@ export function CounterpartiesPage({ session: _session }: { session: Authenticat
                       </div>
                     </td>
                     <td>
-                      <a
-                        className="rd-addr-link"
-                        href={orbAccountUrl(w.walletAddress)}
-                        target="_blank"
-                        rel="noreferrer"
-                        title={w.walletAddress}
-                      >
-                        <span className="rd-addr">{shortenAddress(w.walletAddress, 6, 6)}</span>
-                      </a>
+                      <ChainLink address={w.walletAddress} />
                     </td>
                     <td>
                       <span className="rd-pill" data-tone={trustTone(w.trustState)}>

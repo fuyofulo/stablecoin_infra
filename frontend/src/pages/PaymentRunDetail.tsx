@@ -21,14 +21,12 @@ import {
   formatRawUsdcCompact,
   formatRelativeTime,
   formatTimestamp,
-  orbTransactionUrl,
   shortenAddress,
-  orbAccountUrl,
   walletLabel,
 } from '../domain';
 import { displayPaymentStatus, displayRunStatus, statusToneForPayment } from '../status-labels';
 import { buildSquadsPaymentLifecycle } from '../lib/lifecycle';
-import { DetailPageSkeleton, DetailPageState, RdPageHeader, RdPrimaryCard } from '../ui-primitives';
+import { ChainLink, DetailPageSkeleton, DetailPageState, RdPageHeader, RdPrimaryCard } from '../ui-primitives';
 import { LifecycleRail, type LifecycleStage } from '../ui/LifecycleRail';
 import { useToast } from '../ui/Toast';
 
@@ -834,16 +832,7 @@ function PrimaryActionCard(props: {
         {submittedSignatures.length ? (
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
             {submittedSignatures.map((sig) => (
-              <a
-                key={sig}
-                href={orbTransactionUrl(sig)}
-                target="_blank"
-                rel="noreferrer"
-                className="rd-tx-link"
-              >
-                <span>{shortenAddress(sig, 8, 8)}</span>
-                <ExternalIcon />
-              </a>
+              <ChainLink key={sig} signature={sig} prefix={8} suffix={8} />
             ))}
           </div>
         ) : null}
@@ -975,16 +964,7 @@ function RecipientsTable({
                   </div>
                 </td>
                 <td>
-                  <a
-                    className="rd-addr-link"
-                    href={orbAccountUrl(order.counterpartyWallet.walletAddress)}
-                    target="_blank"
-                    rel="noreferrer"
-                    title={order.counterpartyWallet.walletAddress}
-                  >
-                    <span className="rd-addr">{shortenAddress(order.counterpartyWallet.walletAddress, 4, 4)}</span>
-                    <ExternalIcon />
-                  </a>
+                  <ChainLink address={order.counterpartyWallet.walletAddress} prefix={4} suffix={4} />
                 </td>
                 <td className="rd-num">
                   <span>
@@ -1006,16 +986,7 @@ function RecipientsTable({
                 </td>
                 <td>
                   {signature ? (
-                    <a
-                      className="rd-tx-link"
-                      href={orbTransactionUrl(signature)}
-                      target="_blank"
-                      rel="noreferrer"
-                      title={signature}
-                    >
-                      <span>{shortenAddress(signature, 6, 6)}</span>
-                      <ExternalIcon />
-                    </a>
+                    <ChainLink signature={signature} />
                   ) : (
                     <span className="rd-empty-mark" data-mono="true">
                       —
@@ -1126,21 +1097,3 @@ function ConfirmDialog(props: {
   );
 }
 
-function ExternalIcon() {
-  return (
-    <svg
-      className="rd-icon-ext"
-      viewBox="0 0 16 16"
-      fill="none"
-      aria-hidden
-    >
-      <path
-        d="M6 3h7v7M13 3 6 10M3 5v8h8"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}

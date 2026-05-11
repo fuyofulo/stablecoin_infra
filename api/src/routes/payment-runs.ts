@@ -98,6 +98,54 @@ paymentRunsRouter.post('/organizations/:organizationId/payment-runs/from-documen
     }));
 }));
 
+// Server-Sent Events variant of /from-document. Same behavior, but the
+// response is `text/event-stream` and the backend writes one SSE event
+// per real milestone (rendering, extracting, matching, creating, done).
+// The final event is named `result` and carries the same JSON the
+// non-streaming route returns. Errors come back as `error` events.
+paymentRunsRouter.post('/organizations/:organizationId/payment-runs/from-document/stream', asyncRoute(async (req, res) => {
+    const { organizationId } = organizationParamsSchema.parse(req.params);
+    await assertOrganizationAdmin(organizationId, req.auth!);
+    const input = importPaymentRunFromDocumentSchema.parse(req.body);
+    const fileBytes = Buffer.from(input.dataBase64, 'base64');
+    if (fileBytes.length > MAX_DOCUMENT_BYTES) {
+      throw new Error(`Document exceeds ${MAX_DOCUMENT_BYTES / (1024 * 1024)}MB limit`);
+    }
+
+    res.status(200);
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no'); // disable nginx-style buffering
+    res.flushHeaders?.();
+
+    function emit(event: string, data: unknown) {
+      res.write(`event: ${event}\n`);
+      res.write(`data: ${JSON.stringify(data)}\n\n`);
+      // Express 5 doesn't expose .flush() on res; relying on no buffering
+      // in the chain (cloudflared + express) is what keeps streaming live.
+    }
+
+    try {
+      const result = await importPaymentRunFromDocument({
+        organizationId,
+        actorUserId: req.auth!.userId,
+        fileBytes,
+        filename: input.filename,
+        mimeType: input.mimeType,
+        runName: input.runName,
+        sourceTreasuryWalletId: input.sourceTreasuryWalletId,
+        onProgress: (event) => emit('stage', event),
+      });
+      emit('result', result);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Document import failed.';
+      emit('error', { message });
+    } finally {
+      res.end();
+    }
+}));
+
 paymentRunsRouter.post('/organizations/:organizationId/payment-runs/import-csv/preview', asyncRoute(async (req, res) => {
     const { organizationId } = organizationParamsSchema.parse(req.params);
     await assertOrganizationAccess(organizationId, req.auth!);

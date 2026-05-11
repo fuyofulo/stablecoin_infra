@@ -8,8 +8,6 @@ import {
   formatRawUsdcCompact,
   formatRelativeTime,
   formatTimestamp,
-  orbAccountUrl,
-  orbTransactionUrl,
   shortenAddress,
 } from '../domain';
 import {
@@ -21,7 +19,7 @@ import {
   toneToPill,
 } from '../status-labels';
 import { useToast } from '../ui/Toast';
-import { DetailEntry, RdPageHeader, RdPrimaryCard } from '../ui-primitives';
+import { ChainLink, DetailEntry, RdPageHeader, RdPrimaryCard } from '../ui-primitives';
 import { LifecycleRail, type LifecycleStage, type StageState } from '../ui/LifecycleRail';
 
 function buildLifecycle(collection: CollectionRequest): LifecycleStage[] {
@@ -301,26 +299,11 @@ export function CollectionDetailPage() {
                         <span className="rd-pill-dot" aria-hidden />
                         {displayWalletTrust(collection.counterpartyWallet.trustState)}
                       </span>
-                      <a
-                        href={orbAccountUrl(collection.counterpartyWallet.walletAddress)}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="rd-mono"
-                        style={{ fontSize: 11, color: 'var(--ax-text-muted)' }}
-                      >
-                        {shortenAddress(collection.counterpartyWallet.walletAddress, 4, 4)}
-                      </a>
+                      <ChainLink address={collection.counterpartyWallet.walletAddress} prefix={4} suffix={4} />
                     </div>
                   </div>
                 ) : collection.payerWalletAddress ? (
-                  <a
-                    href={orbAccountUrl(collection.payerWalletAddress)}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="rd-addr-link"
-                  >
-                    <span>{shortenAddress(collection.payerWalletAddress, 4, 4)}</span>
-                  </a>
+                  <ChainLink address={collection.payerWalletAddress} prefix={4} suffix={4} />
                 ) : (
                   <span style={{ color: 'var(--ax-text-muted)' }}>Any payer</span>
                 )}
@@ -338,18 +321,15 @@ export function CollectionDetailPage() {
                 )}
               </DetailEntry>
               <DetailEntry label="Receiver">
-                <a
-                  href={orbAccountUrl(receiverWallet.address)}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="rd-addr-link"
-                >
-                  <span>
-                    {receiverWallet.displayName
-                      ? `${receiverWallet.displayName} · ${shortenAddress(receiverWallet.address, 4, 4)}`
-                      : shortenAddress(receiverWallet.address, 4, 4)}
-                  </span>
-                </a>
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                  {receiverWallet.displayName ? (
+                    <>
+                      <span>{receiverWallet.displayName}</span>
+                      <span className="rd-meta-sep">·</span>
+                    </>
+                  ) : null}
+                  <ChainLink address={receiverWallet.address} prefix={4} suffix={4} />
+                </span>
               </DetailEntry>
               <DetailEntry label="Amount">
                 <span className="rd-mono">{amountLabel}</span>
@@ -380,14 +360,7 @@ export function CollectionDetailPage() {
               ) : null}
               {settledSignature ? (
                 <DetailEntry label="Settlement signature">
-                  <a
-                    href={orbTransactionUrl(settledSignature)}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="rd-tx-link"
-                  >
-                    <span>{shortenAddress(settledSignature, 6, 6)}</span>
-                  </a>
+                  <ChainLink signature={settledSignature} />
                 </DetailEntry>
               ) : null}
             </dl>
@@ -472,14 +445,7 @@ export function CollectionDetailPage() {
                   title="Settlement observed"
                   meta={matchedAt ? formatTimestamp(matchedAt) : formatRelativeTime(collection.updatedAt)}
                   body={
-                    <a
-                      href={orbTransactionUrl(settledSignature)}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="rd-tx-link"
-                    >
-                      <span>{shortenAddress(settledSignature, 8, 8)}</span>
-                    </a>
+                    <ChainLink signature={settledSignature} prefix={8} suffix={8} />
                   }
                   state={['collected', 'closed'].includes(collection.derivedState) ? 'complete' : 'pending'}
                 />

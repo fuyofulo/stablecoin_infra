@@ -12,9 +12,9 @@ import type {
   TreasuryWallet,
   UserWallet,
 } from '../types';
-import { orbAccountUrl, shortenAddress } from '../domain';
+import { shortenAddress } from '../domain';
 import { signAndSubmitIntent } from '../lib/squads-pipeline';
-import { InfoRow } from '../ui-primitives';
+import { ChainLink, InfoRow } from '../ui-primitives';
 import { useToast } from '../ui/Toast';
 import { ProposalsTable, type ProposalsTableBusy } from '../ui/ProposalsTable';
 import type { DecimalProposal } from '../types';
@@ -289,14 +289,7 @@ export function TreasuryWalletDetailPage({ session }: { session: AuthenticatedSe
             {!wallet.isActive ? <span className="rd-pill rd-pill-info">Inactive</span> : null}
           </h1>
           <p>
-            <a
-              href={orbAccountUrl(wallet.address)}
-              target="_blank"
-              rel="noreferrer"
-              className="rd-addr-link"
-            >
-              {shortenAddress(wallet.address, 6, 6)}
-            </a>
+            <ChainLink address={wallet.address} />
             {wallet.notes ? <> · {wallet.notes}</> : null}
           </p>
         </div>
@@ -601,15 +594,7 @@ function MemberRow({ member }: { member: SquadsDetailMember }) {
         )}
       </td>
       <td>
-        <a
-          href={orbAccountUrl(member.walletAddress)}
-          target="_blank"
-          rel="noreferrer"
-          className="rd-addr-link"
-          title={member.walletAddress}
-        >
-          {shortenAddress(member.walletAddress, 4, 4)}
-        </a>
+        <ChainLink address={member.walletAddress} prefix={4} suffix={4} />
       </td>
       <td>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
@@ -662,18 +647,7 @@ function CapabilityPill({ ok, label }: { ok: boolean; label: string }) {
 }
 
 function ExplorerAddress({ value }: { value: string }) {
-  return (
-    <a
-      href={orbAccountUrl(value)}
-      target="_blank"
-      rel="noreferrer"
-      className="rd-addr-link"
-      title={value}
-      style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}
-    >
-      {shortenAddress(value, 6, 6)}
-    </a>
-  );
+  return <ChainLink address={value} />;
 }
 
 // ---------------------------------------------------------------------------

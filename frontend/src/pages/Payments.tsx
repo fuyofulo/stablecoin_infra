@@ -5,6 +5,7 @@ import { api } from '../api';
 import type {
   AuthenticatedSession,
   CounterpartyWallet,
+  DocumentImportProgressEvent,
   PaymentOrder,
   PaymentRun,
   TreasuryWallet,
@@ -756,6 +757,35 @@ function ImportCsvDialog(props: {
   );
 }
 
+// The five user-visible steps. The backend emits six stages (the 6th is
+// `done`, which just finalizes the last step). We collapse `received`
+// and `rendering` into a single "Reading file" step because they
+// usually fire back-to-back and the distinction isn't meaningful.
+const UPLOAD_STEPS: { key: UploadStepKey; label: string }[] = [
+  { key: 'reading', label: 'Reading file' },
+  { key: 'extracting', label: 'Extracting invoices with AI' },
+  { key: 'matching', label: 'Matching to your address book' },
+  { key: 'creating', label: 'Creating draft batch' },
+];
+type UploadStepKey = 'reading' | 'extracting' | 'matching' | 'creating';
+type StepStatus = 'pending' | 'active' | 'done';
+
+function stageToStepIndex(stage: DocumentImportProgressEvent['stage']): number {
+  switch (stage) {
+    case 'received':
+    case 'rendering':
+      return 0;
+    case 'extracting':
+      return 1;
+    case 'matching':
+      return 2;
+    case 'creating':
+      return 3;
+    case 'done':
+      return UPLOAD_STEPS.length;
+  }
+}
+
 function UploadDocumentDialog(props: {
   organizationId: string;
   onClose: () => void;
@@ -769,36 +799,76 @@ function UploadDocumentDialog(props: {
   const { organizationId, onClose, onSuccess, onError } = props;
   const [file, setFile] = useState<File | null>(null);
   const [runName, setRunName] = useState('');
+  const [isDragging, setIsDragging] = useState(false);
+  const [progressEvents, setProgressEvents] = useState<DocumentImportProgressEvent[]>([]);
+  const [streamError, setStreamError] = useState<string | null>(null);
+  const [running, setRunning] = useState(false);
+
+  // Latest event per stage — used to render sub-text on each step row.
+  const latestByStage = useMemo(() => {
+    const map = new Map<DocumentImportProgressEvent['stage'], DocumentImportProgressEvent>();
+    for (const e of progressEvents) map.set(e.stage, e);
+    return map;
+  }, [progressEvents]);
+
+  const currentStepIndex = useMemo(() => {
+    if (progressEvents.length === 0) return -1;
+    const last = progressEvents[progressEvents.length - 1]!;
+    return stageToStepIndex(last.stage);
+  }, [progressEvents]);
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape' && !running) onClose();
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  }, [onClose, running]);
 
-  const uploadMutation = useMutation({
-    mutationFn: async () => {
-      if (!file) throw new Error('Pick a file first.');
+  const start = async () => {
+    if (!file) return;
+    setRunning(true);
+    setStreamError(null);
+    setProgressEvents([]);
+    try {
       const dataBase64 = await fileToBase64(file);
-      const result = await api.importPaymentRunFromDocument(organizationId, {
-        filename: file.name,
-        mimeType: file.type || guessMimeFromFilename(file.name),
-        dataBase64,
-        runName: runName.trim() || undefined,
-      });
-      return result;
-    },
-    onSuccess: (result) => {
+      const result = await api.importPaymentRunFromDocumentStream(
+        organizationId,
+        {
+          filename: file.name,
+          mimeType: file.type || guessMimeFromFilename(file.name),
+          dataBase64,
+          runName: runName.trim() || undefined,
+        },
+        {
+          onStage: (event) => setProgressEvents((prev) => [...prev, event]),
+        },
+      );
       onSuccess(
         result.paymentRun.runName,
         result.importResult.imported,
         result.skippedRows.map((s) => ({ counterparty: s.counterparty, reason: s.reason })),
       );
-    },
-    onError: (err) => onError(err instanceof Error ? err.message : 'Document import failed.'),
-  });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Document import failed.';
+      setStreamError(message);
+      onError(message);
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  const reset = () => {
+    setStreamError(null);
+    setProgressEvents([]);
+  };
+
+  const onDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+    const dropped = e.dataTransfer?.files?.[0];
+    if (dropped) setFile(dropped);
+  };
 
   return (
     <div className="rd-dialog-backdrop" role="dialog" aria-modal="true" aria-labelledby="rd-upload-doc-title">
@@ -807,61 +877,245 @@ function UploadDocumentDialog(props: {
           Upload invoice
         </h2>
         <p className="rd-dialog-body">
-          Drop a PDF. We'll extract every payment in it. Vendors already in your registry use their stored
-          wallet (most secure). New vendors with a Solana wallet printed on the invoice get a <strong>draft destination
-          marked unreviewed</strong> — review and approve them on the run page before submitting.
+          Drop a PDF or image. We'll extract every payment in it. Vendors already in your address book use
+          their stored wallet. New vendors with a Solana wallet printed on the invoice land in your address
+          book as <strong>unreviewed</strong> — approve them on the batch page before submitting.
         </p>
 
-        <label className="rd-field" style={{ marginBottom: 16 }}>
-          <span className="rd-field-label">Batch name</span>
-          <input
-            value={runName}
-            onChange={(e) => setRunName(e.target.value)}
-            placeholder="April vendor invoices"
-            className="rd-input"
-          />
-        </label>
+        {!running && progressEvents.length === 0 && !streamError ? (
+          <>
+            <label className="rd-field" style={{ marginBottom: 16 }}>
+              <span className="rd-field-label">Batch name</span>
+              <input
+                value={runName}
+                onChange={(e) => setRunName(e.target.value)}
+                placeholder="April vendor invoices"
+                className="rd-input"
+              />
+            </label>
 
-        <label className="rd-field">
-          <span className="rd-field-label">Document</span>
-          <input
-            type="file"
-            accept=".pdf,application/pdf"
-            onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-            className="rd-input"
-            style={{ padding: 8 }}
-          />
-        </label>
+            <div
+              onDragOver={(e) => {
+                e.preventDefault();
+                setIsDragging(true);
+              }}
+              onDragLeave={() => setIsDragging(false)}
+              onDrop={onDrop}
+              style={{
+                border: `1px dashed ${isDragging ? 'var(--ax-accent)' : 'var(--ax-border-strong)'}`,
+                background: isDragging ? 'var(--ax-surface-2)' : 'var(--ax-surface-2)',
+                borderRadius: 8,
+                padding: 24,
+                textAlign: 'center',
+                cursor: 'pointer',
+                transition: 'border-color 120ms ease',
+              }}
+              onClick={() => document.getElementById('rd-upload-doc-input')?.click()}
+              role="button"
+              tabIndex={0}
+            >
+              <input
+                id="rd-upload-doc-input"
+                type="file"
+                accept=".pdf,application/pdf,image/*"
+                onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+                style={{ display: 'none' }}
+              />
+              {file ? (
+                <div>
+                  <div style={{ fontSize: 14, color: 'var(--ax-text)' }}>
+                    <span className="rd-mono">{file.name}</span>
+                  </div>
+                  <div style={{ fontSize: 12, color: 'var(--ax-text-muted)', marginTop: 4 }}>
+                    {(file.size / 1024).toFixed(0)} KB · click to choose a different file
+                  </div>
+                </div>
+              ) : (
+                <div>
+                  <div style={{ fontSize: 14, color: 'var(--ax-text)' }}>
+                    Drop a file here or click to browse
+                  </div>
+                  <div style={{ fontSize: 12, color: 'var(--ax-text-muted)', marginTop: 4 }}>
+                    PDF, PNG, JPG, WebP — up to 10 pages
+                  </div>
+                </div>
+              )}
+            </div>
 
-        {file ? (
-          <p className="rd-hint" style={{ margin: '8px 0 0' }}>
-            <span className="rd-mono">{file.name}</span> · {(file.size / 1024).toFixed(0)} KB
-          </p>
+            <div className="rd-dialog-actions" style={{ marginTop: 24 }}>
+              <button type="button" className="rd-btn rd-btn-secondary" onClick={onClose}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="rd-btn rd-btn-primary"
+                disabled={!file}
+                onClick={start}
+              >
+                Extract & create batch
+              </button>
+            </div>
+          </>
         ) : null}
 
-        <div className="rd-dialog-actions" style={{ marginTop: 24 }}>
-          <button type="button" className="rd-btn rd-btn-secondary" onClick={onClose} disabled={uploadMutation.isPending}>
-            Cancel
-          </button>
-          <button
-            type="button"
-            className="rd-btn rd-btn-primary"
-            disabled={!file || uploadMutation.isPending}
-            onClick={() => uploadMutation.mutate()}
-            aria-busy={uploadMutation.isPending}
-          >
-            {uploadMutation.isPending ? 'Extracting…' : 'Extract & create batch'}
-          </button>
-        </div>
+        {running || progressEvents.length > 0 || streamError ? (
+          <div style={{ marginTop: 8 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              {UPLOAD_STEPS.map((step, idx) => {
+                const status: StepStatus =
+                  streamError && currentStepIndex === idx
+                    ? 'active'
+                    : currentStepIndex > idx
+                      ? 'done'
+                      : currentStepIndex === idx
+                        ? 'active'
+                        : 'pending';
+                return (
+                  <UploadStepRow
+                    key={step.key}
+                    label={step.label}
+                    status={status}
+                    detail={describeStep(step.key, latestByStage)}
+                    error={streamError && currentStepIndex === idx ? streamError : null}
+                  />
+                );
+              })}
+            </div>
 
-        {uploadMutation.isPending ? (
-          <p className="rd-hint" style={{ margin: '12px 0 0' }}>
-            Vision model is reading the document — usually 5-15 seconds.
-          </p>
+            {streamError ? (
+              <div className="rd-dialog-actions" style={{ marginTop: 24 }}>
+                <button type="button" className="rd-btn rd-btn-secondary" onClick={onClose}>
+                  Close
+                </button>
+                <button type="button" className="rd-btn rd-btn-primary" onClick={() => { reset(); start(); }}>
+                  Retry
+                </button>
+              </div>
+            ) : !running && currentStepIndex >= UPLOAD_STEPS.length ? (
+              <p className="rd-hint" style={{ margin: '16px 0 0' }}>
+                Done — opening batch…
+              </p>
+            ) : null}
+          </div>
         ) : null}
       </div>
     </div>
   );
+}
+
+function UploadStepRow(props: {
+  label: string;
+  status: StepStatus;
+  detail: string | null;
+  error: string | null;
+}) {
+  const { label, status, detail, error } = props;
+  return (
+    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+      <StepIndicator status={status} hasError={Boolean(error)} />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div
+          style={{
+            fontSize: 13,
+            color: status === 'pending' ? 'var(--ax-text-muted)' : 'var(--ax-text)',
+            fontWeight: status === 'active' ? 500 : 400,
+          }}
+        >
+          {label}
+        </div>
+        {error ? (
+          <div style={{ fontSize: 12, color: 'var(--ax-danger)', marginTop: 2 }}>{error}</div>
+        ) : detail ? (
+          <div style={{ fontSize: 12, color: 'var(--ax-text-muted)', marginTop: 2 }}>{detail}</div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function StepIndicator(props: { status: StepStatus; hasError: boolean }) {
+  const { status, hasError } = props;
+  const size = 18;
+  const baseStyle: React.CSSProperties = {
+    width: size,
+    height: size,
+    borderRadius: '50%',
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontSize: 11,
+    flexShrink: 0,
+    marginTop: 1,
+  };
+  if (hasError) {
+    return (
+      <span style={{ ...baseStyle, background: 'var(--ax-danger)', color: '#fff' }} aria-label="failed">
+        !
+      </span>
+    );
+  }
+  if (status === 'done') {
+    return (
+      <span style={{ ...baseStyle, background: 'var(--ax-accent)', color: '#fff' }} aria-label="done">
+        ✓
+      </span>
+    );
+  }
+  if (status === 'active') {
+    return (
+      <span
+        style={{
+          ...baseStyle,
+          border: '2px solid var(--ax-accent)',
+          borderTopColor: 'transparent',
+          animation: 'rd-spin 0.8s linear infinite',
+        }}
+        aria-label="in progress"
+      />
+    );
+  }
+  return (
+    <span
+      style={{ ...baseStyle, border: '1px solid var(--ax-border-strong)', background: 'transparent' }}
+      aria-label="pending"
+    />
+  );
+}
+
+function describeStep(
+  key: UploadStepKey,
+  latest: Map<DocumentImportProgressEvent['stage'], DocumentImportProgressEvent>,
+): string | null {
+  if (key === 'reading') {
+    const received = latest.get('received');
+    if (received && received.stage === 'received') {
+      return `${(received.bytes / 1024).toFixed(0)} KB`;
+    }
+    return null;
+  }
+  if (key === 'extracting') {
+    const ev = latest.get('extracting');
+    if (ev && ev.stage === 'extracting') {
+      return `${ev.pageCount} page${ev.pageCount === 1 ? '' : 's'} — usually 10–30s`;
+    }
+    return null;
+  }
+  if (key === 'matching') {
+    const ev = latest.get('matching');
+    if (ev && ev.stage === 'matching') {
+      return `${ev.extractedCount} row${ev.extractedCount === 1 ? '' : 's'} extracted in ${(ev.modelLatencyMs / 1000).toFixed(1)}s`;
+    }
+    return null;
+  }
+  if (key === 'creating') {
+    const ev = latest.get('creating');
+    if (ev && ev.stage === 'creating') {
+      const skip = ev.skippedCount > 0 ? `, ${ev.skippedCount} skipped` : '';
+      return `${ev.matchedCount} matched${skip}`;
+    }
+    return null;
+  }
+  return null;
 }
 
 function fileToBase64(file: File): Promise<string> {

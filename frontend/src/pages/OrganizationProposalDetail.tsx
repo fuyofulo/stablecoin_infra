@@ -1,4 +1,4 @@
-import { useMemo, type ReactNode } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { Link, useParams } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
 import { api, ApiError } from '../api';
@@ -10,7 +10,7 @@ import type {
 } from '../types';
 import { useAutoRetryProposalVerification } from '../lib/settlement';
 import { useSquadsProposalActions, type SquadsProposalActionTarget } from '../lib/squads-actions';
-import { orbAccountUrl, shortenAddress } from '../domain';
+import { shortenAddress } from '../domain';
 import { ChainLink, InfoRow } from '../ui-primitives';
 import { SettlementBanner } from '../ui/SettlementBanner';
 import { useToast } from '../ui/Toast';
@@ -332,37 +332,37 @@ function ProposalDetailBody({
           }}
         >
           {proposal.squads.proposalPda ? (
-            <InfoRow label="Proposal account">
+            <InfoRow label={<LabelWithInfo label="Proposal account" info="The Squads proposal PDA — the on-chain account that records this proposal and tracks each member's approve/reject vote." />}>
               <ChainLink address={proposal.squads.proposalPda} />
             </InfoRow>
           ) : null}
           {proposal.squads.transactionPda ? (
-            <InfoRow label="Squads transaction">
+            <InfoRow label={<LabelWithInfo label="Squads transaction" info="The Squads transaction PDA — holds the actual instructions (e.g. USDC transfer) that will run if this proposal is approved and executed." />}>
               <ChainLink address={proposal.squads.transactionPda} />
             </InfoRow>
           ) : null}
           {proposal.squads.multisigPda ? (
-            <InfoRow label="Multisig">
+            <InfoRow label={<LabelWithInfo label="Multisig" info="The Squads multisig PDA — the governance account that defines the members and the approval threshold. Owns the source vault." />}>
               <ChainLink address={proposal.squads.multisigPda} />
             </InfoRow>
           ) : null}
           {proposal.squads.transactionIndex ? (
-            <InfoRow label="Tx index">{proposal.squads.transactionIndex}</InfoRow>
+            <InfoRow label={<LabelWithInfo label="Tx index" info="Sequence number of this transaction within the multisig. Squads transactions execute in order — gaps block later transactions." />}>{proposal.squads.transactionIndex}</InfoRow>
           ) : null}
-          <InfoRow label="Proposal type">{proposal.proposalType}</InfoRow>
-          <InfoRow label="Local status">{proposal.localStatus}</InfoRow>
+          <InfoRow label={<LabelWithInfo label="Proposal type" info="vault_transaction = move funds out of the vault. config_transaction = change the multisig (members or threshold)." />}>{proposal.proposalType}</InfoRow>
+          <InfoRow label={<LabelWithInfo label="Local status" info="Decimal's view of the proposal lifecycle. May briefly differ from on-chain state during sync." />}>{proposal.localStatus}</InfoRow>
           {proposal.submittedSignature ? (
-            <InfoRow label="Submitted sig">
-              <ChainLink address={proposal.submittedSignature} />
+            <InfoRow label={<LabelWithInfo label="Submitted sig" info="Solana transaction signature for the create-proposal transaction — proof the proposal was published on-chain." />}>
+              <ChainLink signature={proposal.submittedSignature} />
             </InfoRow>
           ) : null}
           {proposal.executedSignature ? (
-            <InfoRow label="Executed sig">
-              <ChainLink address={proposal.executedSignature} />
+            <InfoRow label={<LabelWithInfo label="Executed sig" info="Solana transaction signature for the execute-proposal transaction — proof the funds actually moved on-chain." />}>
+              <ChainLink signature={proposal.executedSignature} />
             </InfoRow>
           ) : null}
           {proposal.createdAt ? (
-            <InfoRow label="Created">{new Date(proposal.createdAt).toLocaleString()}</InfoRow>
+            <InfoRow label={<LabelWithInfo label="Created" info="When the proposal was first recorded in Decimal." />}>{new Date(proposal.createdAt).toLocaleString()}</InfoRow>
           ) : null}
         </div>
       </section>
@@ -413,7 +413,7 @@ function PaymentSummary({ proposal }: { proposal: DecimalProposal }) {
           </InfoRow>
         ) : null}
         {payload?.sourceWalletAddress ? (
-          <InfoRow label="Source vault">
+          <InfoRow label={<LabelWithInfo label="Source vault" info="The Squads vault PDA the funds are sent FROM. Owned by the multisig — every transfer out needs the threshold of approvals." />}>
             <ChainLink address={payload.sourceWalletAddress} />
           </InfoRow>
         ) : null}
@@ -495,7 +495,7 @@ function PaymentRunSummary({ proposal }: { proposal: DecimalProposal }) {
           ) : null}
           <InfoRow label="Rows">{payload?.orderCount ?? orders.length}</InfoRow>
           {payload?.sourceWalletAddress ? (
-            <InfoRow label="Source vault">
+            <InfoRow label={<LabelWithInfo label="Source vault" info="The Squads vault PDA the funds are sent FROM. Owned by the multisig — every transfer out needs the threshold of approvals." />}>
               <ChainLink address={payload.sourceWalletAddress} />
             </InfoRow>
           ) : null}
@@ -526,17 +526,8 @@ function PaymentRunSummary({ proposal }: { proposal: DecimalProposal }) {
                     style={{ cursor: 'pointer' }}
                   >
                     <td style={{ color: 'var(--ax-text-muted)', fontSize: 12 }}>{row.index + 1}</td>
-                    <td>
-                      <a
-                        href={orbAccountUrl(row.destinationWalletAddress)}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="rd-addr-link"
-                        title={row.destinationWalletAddress}
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        {shortenAddress(row.destinationWalletAddress, 4, 4)}
-                      </a>
+                    <td onClick={(e) => e.stopPropagation()}>
+                      <ChainLink address={row.destinationWalletAddress} prefix={4} suffix={4} />
                     </td>
                     <td className="rd-num">
                       {formatRawAmount(row.amountRaw, totalDecimals)} {row.asset.toUpperCase()}
@@ -632,15 +623,7 @@ function DecisionRow({
         </div>
       </td>
       <td>
-        <a
-          href={orbAccountUrl(decision.walletAddress)}
-          target="_blank"
-          rel="noreferrer"
-          className="rd-addr-link"
-          title={decision.walletAddress}
-        >
-          {shortenAddress(decision.walletAddress, 4, 4)}
-        </a>
+        <ChainLink address={decision.walletAddress} prefix={4} suffix={4} />
       </td>
       <td>
         <DecisionPill kind={kind} decision={decision} />
@@ -665,20 +648,82 @@ function PendingRow({ voter }: { voter: SquadsProposalPendingVoter }) {
         </div>
       </td>
       <td>
-        <a
-          href={orbAccountUrl(voter.walletAddress)}
-          target="_blank"
-          rel="noreferrer"
-          className="rd-addr-link"
-          title={voter.walletAddress}
-        >
-          {shortenAddress(voter.walletAddress, 4, 4)}
-        </a>
+        <ChainLink address={voter.walletAddress} prefix={4} suffix={4} />
       </td>
       <td>
         <PendingVoterPill voter={voter} />
       </td>
     </tr>
+  );
+}
+
+// Inline label + hover-tooltip used to demystify the on-chain Squads /
+// PDA jargon on this page. Scoped here on purpose — the rest of the app
+// doesn't need this density of explanation, but a proposal page exposes
+// enough Solana primitives that operators benefit from per-field hints.
+function LabelWithInfo({ label, info }: { label: string; info: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, position: 'relative' }}>
+      <span>{label}</span>
+      <button
+        type="button"
+        aria-label={`What is ${label}?`}
+        onMouseEnter={() => setOpen(true)}
+        onMouseLeave={() => setOpen(false)}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setOpen(false)}
+        onClick={(e) => {
+          e.preventDefault();
+          setOpen((v) => !v);
+        }}
+        style={{
+          background: 'transparent',
+          border: 'none',
+          padding: 0,
+          margin: 0,
+          cursor: 'help',
+          color: 'currentColor',
+          opacity: 0.7,
+          display: 'inline-flex',
+          alignItems: 'center',
+          lineHeight: 0,
+        }}
+      >
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="10" />
+          <line x1="12" y1="16" x2="12" y2="12" />
+          <line x1="12" y1="8" x2="12.01" y2="8" />
+        </svg>
+      </button>
+      {open ? (
+        <span
+          role="tooltip"
+          style={{
+            position: 'absolute',
+            top: 'calc(100% + 6px)',
+            left: 0,
+            zIndex: 50,
+            width: 280,
+            padding: '8px 10px',
+            background: 'var(--ax-surface-3)',
+            border: '1px solid var(--ax-border-strong)',
+            borderRadius: 6,
+            fontSize: 12,
+            lineHeight: 1.45,
+            color: 'var(--ax-text)',
+            textTransform: 'none',
+            letterSpacing: 'normal',
+            fontWeight: 400,
+            opacity: 1,
+            boxShadow: '0 12px 32px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(0, 0, 0, 0.4)',
+            pointerEvents: 'none',
+          }}
+        >
+          {info}
+        </span>
+      ) : null}
+    </span>
   );
 }
 

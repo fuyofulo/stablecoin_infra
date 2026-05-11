@@ -1061,6 +1061,16 @@ export type PaymentRunDocumentImportResult = PaymentRunImportResult & {
   modelLatencyMs: number;
 };
 
+// Server-sent progress events from POST /payment-runs/from-document/stream.
+// Mirrors the backend's DocumentImportProgressEvent union one-for-one.
+export type DocumentImportProgressEvent =
+  | { stage: 'received'; message: string; bytes: number }
+  | { stage: 'rendering'; message: string }
+  | { stage: 'extracting'; message: string; pageCount: number }
+  | { stage: 'matching'; message: string; extractedCount: number; modelLatencyMs: number }
+  | { stage: 'creating'; message: string; matchedCount: number; skippedCount: number }
+  | { stage: 'done'; message: string };
+
 export type PaymentOrder = {
   paymentOrderId: string;
   organizationId: string;

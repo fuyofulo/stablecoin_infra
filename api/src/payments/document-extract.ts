@@ -96,10 +96,15 @@ export function isDocumentExtractionConfigured() {
   return Boolean(config.openRouterApiKey);
 }
 
+export type DocumentExtractProgressEvent =
+  | { stage: 'rendered'; pageCount: number }
+  | { stage: 'extracting'; pageCount: number };
+
 export async function extractPaymentRowsFromDocument(args: {
   fileBytes: Buffer;
   filename: string;
   mimeType: string;
+  onProgress?: (event: DocumentExtractProgressEvent) => void;
 }): Promise<{ rows: ExtractedRow[]; modelLatencyMs: number; pageCount: number }> {
   if (!isDocumentExtractionConfigured()) {
     throw new Error('OPEN_ROUTER_API_KEY is not configured on the server.');
@@ -113,6 +118,8 @@ export async function extractPaymentRowsFromDocument(args: {
         `Split the PDF and upload in chunks.`,
     );
   }
+  args.onProgress?.({ stage: 'rendered', pageCount: pages.length });
+  args.onProgress?.({ stage: 'extracting', pageCount: pages.length });
 
   // Interleave a text marker before every image. Without these markers
   // the model tends to merge multiple images into a single document

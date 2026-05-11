@@ -16,10 +16,8 @@ import {
   formatRawUsdcCompact,
   formatRelativeTime,
   formatTimestamp,
-  orbTransactionUrl,
   shortenAddress,
   signAndSubmitPreparedPayment,
-  orbAccountUrl,
   subscribeSolanaWallets,
   walletLabel,
   type BrowserWalletOption,
@@ -33,7 +31,7 @@ import {
 } from '../lib/settlement';
 import { useSquadsProposalActions } from '../lib/squads-actions';
 import { buildSquadsPaymentLifecycle } from '../lib/lifecycle';
-import { DetailEntry, DetailPageSkeleton, DetailPageState, RdPageHeader, RdPrimaryCard } from '../ui-primitives';
+import { ChainLink, DetailEntry, DetailPageSkeleton, DetailPageState, RdPageHeader, RdPrimaryCard } from '../ui-primitives';
 import { LifecycleRail, type LifecycleStage, type StageState } from '../ui/LifecycleRail';
 import { SettlementBanner } from '../ui/SettlementBanner';
 import { useToast } from '../ui/Toast';
@@ -385,14 +383,7 @@ export function PaymentDetailPage() {
             <>
               <span className="rd-mono">{amountLabel}</span>
               <span className="rd-meta-sep">·</span>
-              <a
-                href={orbAccountUrl(order.counterpartyWallet.walletAddress)}
-                target="_blank"
-                rel="noreferrer"
-                className="rd-addr-link"
-              >
-                <span>{shortenAddress(order.counterpartyWallet.walletAddress, 4, 4)}</span>
-              </a>
+              <ChainLink address={order.counterpartyWallet.walletAddress} prefix={4} suffix={4} />
               {order.externalReference || order.invoiceNumber ? (
                 <>
                   <span className="rd-meta-sep">·</span>
@@ -468,33 +459,25 @@ export function PaymentDetailPage() {
             >
               <DetailEntry label="From">
                 {order.sourceTreasuryWallet?.address ? (
-                  <a
-                    href={orbAccountUrl(order.sourceTreasuryWallet.address)}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="rd-addr-link"
-                  >
-                    <span>
-                      {order.sourceTreasuryWallet.displayName
-                        ? `${order.sourceTreasuryWallet.displayName} · ${shortenAddress(order.sourceTreasuryWallet.address, 4, 4)}`
-                        : shortenAddress(order.sourceTreasuryWallet.address, 4, 4)}
-                    </span>
-                  </a>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                    {order.sourceTreasuryWallet.displayName ? (
+                      <>
+                        <span>{order.sourceTreasuryWallet.displayName}</span>
+                        <span className="rd-meta-sep">·</span>
+                      </>
+                    ) : null}
+                    <ChainLink address={order.sourceTreasuryWallet.address} prefix={4} suffix={4} />
+                  </span>
                 ) : (
                   <span style={{ color: 'var(--ax-text-muted)' }}>Not set</span>
                 )}
               </DetailEntry>
               <DetailEntry label="To">
-                <a
-                  href={orbAccountUrl(order.counterpartyWallet.walletAddress)}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="rd-addr-link"
-                >
-                  <span>
-                    {order.counterpartyWallet.label} · {shortenAddress(order.counterpartyWallet.walletAddress, 4, 4)}
-                  </span>
-                </a>
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                  <span>{order.counterpartyWallet.label}</span>
+                  <span className="rd-meta-sep">·</span>
+                  <ChainLink address={order.counterpartyWallet.walletAddress} prefix={4} suffix={4} />
+                </span>
               </DetailEntry>
               <DetailEntry label="Trust">
                 <span
@@ -513,14 +496,7 @@ export function PaymentDetailPage() {
               </DetailEntry>
               <DetailEntry label="Signature">
                 {latestExec?.submittedSignature ? (
-                  <a
-                    href={orbTransactionUrl(latestExec.submittedSignature)}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="rd-tx-link"
-                  >
-                    <span>{shortenAddress(latestExec.submittedSignature, 6, 6)}</span>
-                  </a>
+                  <ChainLink signature={latestExec.submittedSignature} />
                 ) : (
                   <span style={{ color: 'var(--ax-text-muted)' }}>Not signed</span>
                 )}
@@ -558,16 +534,7 @@ export function PaymentDetailPage() {
                 <TimelineRow
                   title="Executed on-chain"
                   meta={formatTimestamp(latestExec.submittedAt ?? latestExec.createdAt)}
-                  body={
-                    <a
-                      href={orbTransactionUrl(latestExec.submittedSignature)}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="rd-tx-link"
-                    >
-                      <span>{shortenAddress(latestExec.submittedSignature, 8, 8)}</span>
-                    </a>
-                  }
+                  body={<ChainLink signature={latestExec.submittedSignature} prefix={8} suffix={8} />}
                   state="complete"
                 />
               ) : null}
@@ -723,8 +690,9 @@ function PrimaryAction(props: {
           title="Transaction submitted — confirmation pending"
           body="Your signature went through and the proposal transaction was submitted. Solana RPC hasn't reported it confirmed yet. Retry confirmation in a few seconds; do not recreate the proposal — it may already be on chain."
         >
-          <p style={{ fontSize: 12, color: 'var(--ax-text-muted)', margin: '0 0 12px', fontFamily: 'monospace' }}>
-            sig {shortenAddress(pendingProposalConfirmation.signature, 6, 6)}
+          <p style={{ fontSize: 12, color: 'var(--ax-text-muted)', margin: '0 0 12px', display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ fontFamily: 'monospace' }}>sig</span>
+            <ChainLink signature={pendingProposalConfirmation.signature} />
           </p>
           <div className="rd-actions">
             <button
@@ -872,10 +840,17 @@ function PrimaryAction(props: {
         ) : null}
 
         {order.squadsLifecycle?.transactionIndex || order.squadsLifecycle?.executedSignature ? (
-          <p style={{ fontSize: 12, color: 'var(--ax-text-muted)', margin: '4px 0 12px', fontFamily: 'monospace' }}>
-            {order.squadsLifecycle.transactionIndex ? `Tx index #${order.squadsLifecycle.transactionIndex}` : null}
-            {order.squadsLifecycle.transactionIndex && order.squadsLifecycle.executedSignature ? ' · ' : null}
-            {order.squadsLifecycle.executedSignature ? `exec ${shortenAddress(order.squadsLifecycle.executedSignature, 6, 6)}` : null}
+          <p style={{ fontSize: 12, color: 'var(--ax-text-muted)', margin: '4px 0 12px', display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+            {order.squadsLifecycle.transactionIndex ? (
+              <span style={{ fontFamily: 'monospace' }}>Tx index #{order.squadsLifecycle.transactionIndex}</span>
+            ) : null}
+            {order.squadsLifecycle.transactionIndex && order.squadsLifecycle.executedSignature ? <span>·</span> : null}
+            {order.squadsLifecycle.executedSignature ? (
+              <>
+                <span style={{ fontFamily: 'monospace' }}>exec</span>
+                <ChainLink signature={order.squadsLifecycle.executedSignature} />
+              </>
+            ) : null}
           </p>
         ) : null}
 
@@ -988,14 +963,7 @@ function PrimaryAction(props: {
         body="The worker is reconstructing USDC transfers and matching this signature to the expected settlement."
       >
         {submittedSignature ? (
-          <a
-            href={orbTransactionUrl(submittedSignature)}
-            target="_blank"
-            rel="noreferrer"
-            className="rd-tx-link"
-          >
-            <span>{shortenAddress(submittedSignature, 8, 8)}</span>
-          </a>
+          <ChainLink signature={submittedSignature} prefix={8} suffix={8} />
         ) : null}
       </RdPrimaryCard>
     );

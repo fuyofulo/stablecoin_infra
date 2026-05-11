@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { Link } from 'react-router';
-import { orbAccountUrl, shortenAddress } from '../domain';
+import { shortenAddress } from '../domain';
+import { ChainLink } from '../ui-primitives';
 import type {
   DecimalProposal,
   ProposalSemanticType,
@@ -227,15 +228,10 @@ export function DecimalProposalCard({
               <>Tx index #{proposal.squads.transactionIndex} · </>
             ) : null}
             {proposal.squads.proposalPda ? (
-              <a
-                href={orbAccountUrl(proposal.squads.proposalPda)}
-                target="_blank"
-                rel="noreferrer"
-                className="rd-addr-link"
-                title={proposal.squads.proposalPda}
-              >
-                proposal {shortenAddress(proposal.squads.proposalPda, 4, 4)}
-              </a>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                <span>proposal</span>
+                <ChainLink address={proposal.squads.proposalPda} prefix={4} suffix={4} />
+              </span>
             ) : (
               <span>{localStatus}</span>
             )}

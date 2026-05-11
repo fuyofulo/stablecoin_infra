@@ -16,10 +16,10 @@ import {
   formatRawUsdcCompact,
   formatUsd,
   shortenAddress,
-  orbAccountUrl,
 } from '../domain';
 import { resolveSolanaRpcUrl, waitForSignatureVisible } from '../lib/solana-wallet';
 import { useToast } from '../ui/Toast';
+import { ChainLink, CopyButton } from '../ui-primitives';
 
 function decodeBase64ToBytes(base64: string): Uint8Array {
   const binary = atob(base64);
@@ -304,27 +304,22 @@ export function WalletsPage({ session: _session }: { session: AuthenticatedSessi
                       </div>
                     </td>
                     <td>
-                      <a
-                        href={orbAccountUrl(row.address)}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="rd-addr-link"
-                        title={row.address}
-                      >
-                        <span>{shortenAddress(row.address, 4, 4)}</span>
-                        <ExternalIcon />
-                      </a>
+                      <ChainLink address={row.address} prefix={4} suffix={4} />
                       {multisigPda ? (
                         <div
                           style={{
                             fontSize: 11,
                             color: 'var(--ax-text-muted)',
                             marginTop: 2,
-                            fontFamily: 'monospace',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: 6,
                           }}
-                          title={`Multisig PDA: ${multisigPda}`}
                         >
-                          multisig {shortenAddress(multisigPda, 4, 4)}
+                          <span style={{ fontFamily: 'monospace' }} title={`Multisig PDA: ${multisigPda}`}>
+                            multisig {shortenAddress(multisigPda, 4, 4)}
+                          </span>
+                          <CopyButton value={multisigPda} ariaLabel="Copy multisig PDA" />
                         </div>
                       ) : null}
                     </td>
@@ -1277,14 +1272,6 @@ function RefreshIcon({ spinning }: { spinning?: boolean }) {
       <path d="M17 3v4.5h-4.5" />
       <path d="M17 10a7 7 0 0 1-12 5L2.5 12.5" />
       <path d="M3 17v-4.5h4.5" />
-    </svg>
-  );
-}
-
-function ExternalIcon() {
-  return (
-    <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-      <path d="M6 3h7v7M13 3 6 10M3 5v8h8" />
     </svg>
   );
 }

@@ -12,6 +12,7 @@ import {
   shortenAddress,
 } from '../domain';
 import { displayPaymentStatus, displayRunStatus, statusToneForPayment, toneToPill } from '../status-labels';
+import { ChainLink } from '../ui-primitives';
 
 function sourceLabel(wallet: TreasuryWallet | null): string {
   if (!wallet) return '—';
@@ -362,9 +363,9 @@ export function CommandCenterPage({ session }: { session: AuthenticatedSession }
                           <span className="rd-recipient-ref">{formatRelativeTime(row.createdAt)}</span>
                         </div>
                       </td>
-                      <td>
+                      <td onClick={(e) => e.stopPropagation()}>
                         {row.kind === 'single' ? (
-                          <span className="rd-addr">{shortenAddress(row.destination, 4, 4)}</span>
+                          <ChainLink address={row.destination} prefix={4} suffix={4} />
                         ) : (
                           <span style={{ color: 'var(--ax-text-muted)', fontSize: 12 }}>{row.destination}</span>
                         )}

@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { useEffect, useId, useState } from 'react';
-import { orbAccountUrl, shortenAddress } from './domain';
+import { orbAccountUrl, orbTransactionUrl, shortenAddress } from './domain';
 
 export function Modal({
   title,
@@ -267,10 +267,13 @@ export function RdPageHeader({
 // Vertical "label · value" pair used in detail-page metric grids. The label
 // is small uppercase muted; the value is normal-size body. Used by treasury,
 // proposal, and payment detail pages.
-export function InfoRow({ label, children }: { label: string; children: ReactNode }) {
+export function InfoRow({ label, children }: { label: ReactNode; children: ReactNode }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-      <span style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.05em', opacity: 0.6 }}>
+      {/* Use color (with alpha) instead of `opacity` so children with their
+          own background — like the LabelWithInfo tooltip on the proposal
+          page — don't inherit the dim. */}
+      <span style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--ax-text-muted)' }}>
         {label}
       </span>
       <span style={{ fontSize: 14 }}>{children}</span>
@@ -452,27 +455,115 @@ export function RdFilterBar({
   );
 }
 
-// Mono-style address link that opens Solscan in a new tab. Used wherever
-// detail pages render an on-chain account/PDA reference.
+// Mono-style on-chain reference. Renders the truncated value as a Solscan
+// link (account or transaction depending on which prop is supplied) plus a
+// small copy-to-clipboard button. Use this for every account, PDA, ATA,
+// or signature shown to the operator — the copy affordance is the
+// difference between "I can read this" and "I can act on it".
 export function ChainLink({
   address,
+  signature,
   prefix = 6,
   suffix = 6,
+  showCopy = true,
 }: {
-  address: string;
+  address?: string;
+  signature?: string;
   prefix?: number;
   suffix?: number;
+  showCopy?: boolean;
 }) {
+  const value = address ?? signature ?? '';
+  const href = signature ? orbTransactionUrl(value) : orbAccountUrl(value);
   return (
-    <a
-      href={orbAccountUrl(address)}
-      target="_blank"
-      rel="noreferrer"
+    <span
       className="rd-addr-link"
-      title={address}
       style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}
     >
-      {shortenAddress(address, prefix, suffix)}
-    </a>
+      <a href={href} target="_blank" rel="noreferrer" title={value} style={{ color: 'inherit' }}>
+        {shortenAddress(value, prefix, suffix)}
+      </a>
+      {showCopy ? <CopyButton value={value} ariaLabel={signature ? 'Copy signature' : 'Copy address'} /> : null}
+    </span>
+  );
+}
+
+// Tiny inline clipboard button. Briefly swaps to a check icon for ~1.4s
+// after a successful copy so the operator gets visual confirmation
+// without us needing to surface a toast for every copy.
+export function CopyButton({
+  value,
+  ariaLabel = 'Copy',
+  size = 12,
+}: {
+  value: string;
+  ariaLabel?: string;
+  size?: number;
+}) {
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return;
+    const timer = window.setTimeout(() => setCopied(false), 1400);
+    return () => window.clearTimeout(timer);
+  }, [copied]);
+
+  const handleClick = async (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(true);
+    } catch {
+      // Permissions denied or unsupported — fail silently rather than
+      // showing an error; the user can still triple-click + Cmd+C.
+    }
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={handleClick}
+      aria-label={copied ? 'Copied' : ariaLabel}
+      title={copied ? 'Copied' : ariaLabel}
+      className="rd-copy-btn"
+      style={{
+        background: 'transparent',
+        border: 'none',
+        padding: 2,
+        margin: 0,
+        display: 'inline-flex',
+        alignItems: 'center',
+        cursor: 'pointer',
+        color: copied ? 'var(--ax-success, #4ade80)' : 'inherit',
+        opacity: copied ? 1 : 0.65,
+        transition: 'opacity 120ms ease, color 120ms ease',
+        lineHeight: 0,
+      }}
+      onMouseEnter={(e) => {
+        if (!copied) e.currentTarget.style.opacity = '1';
+      }}
+      onMouseLeave={(e) => {
+        if (!copied) e.currentTarget.style.opacity = '0.65';
+      }}
+    >
+      {copied ? <CheckIcon size={size} /> : <CopyIcon size={size} />}
+    </button>
+  );
+}
+
+function CopyIcon({ size }: { size: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+    </svg>
+  );
+}
+
+function CheckIcon({ size }: { size: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <polyline points="20 6 9 17 4 12" />
+    </svg>
   );
 }

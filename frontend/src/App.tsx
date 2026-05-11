@@ -36,8 +36,6 @@ import {
   formatRawUsdcCompact,
   formatRelativeTime,
   formatTimestamp,
-  orbAccountUrl,
-  orbTransactionUrl,
   shortenAddress,
   signAndSubmitPreparedPayment,
   subscribeSolanaWallets,
@@ -61,6 +59,7 @@ import {
   toneForGenericState,
 } from './status-labels';
 import {
+  ChainLink,
   Collapsible,
   DataTableShell,
   EmptyPanel,
@@ -894,15 +893,7 @@ function ProfilePage({ session }: { session: AuthenticatedSession }) {
                         </div>
                       </td>
                       <td>
-                        <a
-                          href={orbAccountUrl(wallet.walletAddress)}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="rd-addr-link"
-                          title={wallet.walletAddress}
-                        >
-                          {shortenAddress(wallet.walletAddress)}
-                        </a>
+                        <ChainLink address={wallet.walletAddress} />
                       </td>
                       <td className="rd-num">
                         {bal ? (
@@ -2077,18 +2068,6 @@ function HeroCell({ label, children }: { label: string; children: ReactNode }) {
       <span>{label}</span>
       <strong>{children}</strong>
     </div>
-  );
-}
-
-function AddressLink({ value, kind = 'account' }: { value: string; kind?: 'account' | 'transaction' }) {
-  const href = kind === 'transaction' ? orbTransactionUrl(value) : orbAccountUrl(value);
-  return (
-    <span className="address-link">
-      <a href={href} rel="noreferrer" target="_blank" title={value}>
-        {shortenAddress(value, 6, 6)}
-      </a>
-      <a href={href} rel="noreferrer" target="_blank" aria-label="Open in explorer">↗</a>
-    </span>
   );
 }
 

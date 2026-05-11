@@ -36,6 +36,7 @@ import type {
   CreateSquadsChangeThresholdProposalRequest,
   CreateSquadsPaymentProposalRequest,
   CreateSquadsPaymentRunProposalRequest,
+  DocumentImportProgressEvent,
   DecimalProposal,
   DecimalProposalApproveRequest,
   DecimalProposalExecuteRequest,
@@ -142,6 +143,100 @@ async function download(path: string, fallbackFileName = 'export.csv') {
   anchor.click();
   anchor.remove();
   window.URL.revokeObjectURL(url);
+}
+
+// SSE consumer over fetch (we can't use EventSource because we need to
+// POST a JSON body and forward the bearer token). Parses one event per
+// blank-line-terminated frame; named events come back as either
+// `stage` (forwarded to onStage), `result` (resolves the promise), or
+// `error` (rejects with the message). Connection-level failures and
+// HTTP errors reject as well.
+async function streamSse<TResult, TStage>(args: {
+  path: string;
+  body: unknown;
+  onStage: (event: TStage) => void;
+  signal?: AbortSignal;
+}): Promise<TResult> {
+  const response = await fetch(`${API_BASE_URL}${args.path}`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      accept: 'text/event-stream',
+      ...(sessionToken ? { authorization: `Bearer ${sessionToken}` } : {}),
+    },
+    body: JSON.stringify(args.body),
+    signal: args.signal,
+  });
+
+  if (!response.ok) {
+    let message = `${response.status} ${response.statusText}`;
+    try {
+      const body = await response.json();
+      if (body?.message) message = body.message;
+    } catch {
+      // keep default
+    }
+    if (response.status === 401) clearSessionToken();
+    throw new ApiError(message, response.status, null);
+  }
+  if (!response.body) {
+    throw new Error('Streaming response has no body.');
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder('utf-8');
+  let buffer = '';
+  let result: TResult | undefined;
+  let resultReceived = false;
+  let errorMessage: string | null = null;
+
+  // SSE frames are separated by a blank line. Each frame may have
+  // multiple `event:` / `data:` lines but our backend only emits one of
+  // each per frame.
+  while (true) {
+    const { value, done } = await reader.read();
+    if (value) buffer += decoder.decode(value, { stream: true });
+    if (done) break;
+
+    let blankIdx = buffer.indexOf('\n\n');
+    while (blankIdx !== -1) {
+      const frame = buffer.slice(0, blankIdx);
+      buffer = buffer.slice(blankIdx + 2);
+      blankIdx = buffer.indexOf('\n\n');
+
+      let eventName = 'message';
+      let dataLine = '';
+      for (const rawLine of frame.split('\n')) {
+        const line = rawLine.replace(/\r$/, '');
+        if (line.startsWith('event:')) eventName = line.slice(6).trim();
+        else if (line.startsWith('data:')) dataLine = line.slice(5).trim();
+      }
+      if (!dataLine) continue;
+
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(dataLine);
+      } catch {
+        continue;
+      }
+
+      if (eventName === 'stage') {
+        args.onStage(parsed as TStage);
+      } else if (eventName === 'result') {
+        result = parsed as TResult;
+        resultReceived = true;
+      } else if (eventName === 'error') {
+        const msg = (parsed as { message?: string })?.message;
+        errorMessage = msg || 'Streaming import failed.';
+      }
+    }
+  }
+
+  if (errorMessage) throw new Error(errorMessage);
+  if (!resultReceived || result === undefined) {
+    throw new Error('Streaming import ended without a result event.');
+  }
+  return result;
 }
 
 export const api = {
@@ -855,6 +950,34 @@ export const api = {
       `/organizations/${organizationId}/payment-runs/from-document`,
       { method: 'POST', body: JSON.stringify(input) },
     );
+  },
+  // Streaming variant — same payload, but the backend writes one SSE
+  // event per real milestone (received → rendering → extracting →
+  // matching → creating → done) and the final event carries the same
+  // result the non-streaming route returns. We use fetch + body reader
+  // (not EventSource) so we can POST a JSON body and forward auth.
+  // Returns a promise that resolves to the import result, and fires
+  // onStage for each progress event.
+  importPaymentRunFromDocumentStream(
+    organizationId: string,
+    input: {
+      filename: string;
+      mimeType: string;
+      dataBase64: string;
+      runName?: string;
+      sourceTreasuryWalletId?: string;
+    },
+    callbacks: {
+      onStage: (event: DocumentImportProgressEvent) => void;
+      signal?: AbortSignal;
+    },
+  ): Promise<PaymentRunDocumentImportResult> {
+    return streamSse<PaymentRunDocumentImportResult, DocumentImportProgressEvent>({
+      path: `/organizations/${organizationId}/payment-runs/from-document/stream`,
+      body: input,
+      onStage: callbacks.onStage,
+      signal: callbacks.signal,
+    });
   },
   createPaymentRequest(
     organizationId: string,

@@ -228,6 +228,22 @@ export type DocumentImportSkippedRow = {
  * currency isn't USDC/USD) are skipped and reported back so the
  * caller can prompt the operator to add a destination first.
  */
+export type DocumentImportProgressStage =
+  | 'received'
+  | 'rendering'
+  | 'extracting'
+  | 'matching'
+  | 'creating'
+  | 'done';
+
+export type DocumentImportProgressEvent =
+  | { stage: 'received'; message: string; bytes: number }
+  | { stage: 'rendering'; message: string }
+  | { stage: 'extracting'; message: string; pageCount: number }
+  | { stage: 'matching'; message: string; extractedCount: number; modelLatencyMs: number }
+  | { stage: 'creating'; message: string; matchedCount: number; skippedCount: number }
+  | { stage: 'done'; message: string };
+
 export async function importPaymentRunFromDocument(args: {
   organizationId: string;
   actorUserId: string;
@@ -236,16 +252,37 @@ export async function importPaymentRunFromDocument(args: {
   mimeType: string;
   runName?: string | null;
   sourceTreasuryWalletId?: string | null;
+  /** Optional progress callback, fires once per stage with real milestones. */
+  onProgress?: (event: DocumentImportProgressEvent) => void;
 }) {
+  const emit = args.onProgress ?? (() => {});
+
+  emit({ stage: 'received', message: 'Document received', bytes: args.fileBytes.length });
+  emit({ stage: 'rendering', message: 'Rendering document pages' });
+
   const extraction = await extractPaymentRowsFromDocument({
     fileBytes: args.fileBytes,
     filename: args.filename,
     mimeType: args.mimeType,
+    onProgress: (e) => {
+      // Surface the "extracting" stage right when the model call starts —
+      // pageCount is known after the render step inside extract.
+      if (e.stage === 'extracting') {
+        emit({ stage: 'extracting', message: 'Reading invoices with AI', pageCount: e.pageCount });
+      }
+    },
   });
 
   if (extraction.rows.length === 0) {
     throw new Error('No payments could be extracted from this document.');
   }
+
+  emit({
+    stage: 'matching',
+    message: `Matching ${extraction.rows.length} extracted row${extraction.rows.length === 1 ? '' : 's'} to your address book`,
+    extractedCount: extraction.rows.length,
+    modelLatencyMs: extraction.modelLatencyMs,
+  });
 
   const counterpartyWallets = await prisma.counterpartyWallet.findMany({
     where: {
@@ -308,14 +345,25 @@ export async function importPaymentRunFromDocument(args: {
     );
   }
 
+  emit({
+    stage: 'creating',
+    message: `Creating draft batch with ${matched.length} payment${matched.length === 1 ? '' : 's'}`,
+    matchedCount: matched.length,
+    skippedCount: skipped.length,
+  });
+
   const csv = buildCsvFromMatchedRows(matched);
+  const derivedRunName =
+    normalizeOptionalText(args.runName) ?? deriveRunNameFromDocument(matched, args.filename);
   const result = await importPaymentRunFromCsv({
     organizationId: args.organizationId,
     actorUserId: args.actorUserId,
     csv,
-    runName: args.runName,
+    runName: derivedRunName,
     sourceTreasuryWalletId: args.sourceTreasuryWalletId,
   });
+
+  emit({ stage: 'done', message: 'Batch ready for review' });
 
   return {
     ...result,
@@ -353,6 +401,38 @@ function matchCounterpartyWallet(
       || (w.counterparty && w.counterparty.displayName.toLowerCase().includes(needle))
       || (w.counterparty && needle.includes(w.counterparty.displayName.toLowerCase())),
   ) ?? null;
+}
+
+// When the operator doesn't supply a batch name, derive one from the
+// extracted invoice content so the run is recognizable in the list
+// (instead of falling through to the generic "CSV payment run YYYY-MM-DD"
+// fallback baked into the CSV importer).
+function deriveRunNameFromDocument(
+  matched: Array<{ row: ExtractedRow }>,
+  filename: string,
+): string {
+  const vendors = matched
+    .map((m) => m.row.counterparty.trim())
+    .filter((v) => v.length > 0);
+  const uniqueVendors = Array.from(new Set(vendors));
+
+  if (uniqueVendors.length === 1) {
+    return truncateVendorName(uniqueVendors[0]!);
+  }
+  if (uniqueVendors.length > 1) {
+    const first = truncateVendorName(uniqueVendors[0]!);
+    return `${first} + ${uniqueVendors.length - 1} more`;
+  }
+  // No vendor names at all — extremely unlikely since `matched` is
+  // non-empty here, but keep a safe fallback.
+  const stem = filename.replace(/\.[^.]+$/, '').trim();
+  return stem || `Document import ${new Date().toISOString().slice(0, 10)}`;
+}
+
+function truncateVendorName(name: string): string {
+  const trimmed = name.trim();
+  if (trimmed.length <= 60) return trimmed;
+  return `${trimmed.slice(0, 57)}…`;
 }
 
 function buildCsvFromMatchedRows(
