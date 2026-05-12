@@ -170,7 +170,6 @@ function Marquee() {
     { num: '~412 ms', lab: 'Settlement on Solana' },
     { num: '$0.0008', lab: 'Avg fee per payout' },
     { num: 'm-of-n', lab: 'Threshold · you choose' },
-    { num: '100%', lab: 'Self-custodial' },
     { num: 'USDC', lab: 'One dollar, always' },
     { num: 'Squads', lab: 'Multisig program' },
     { num: 'Privy', lab: 'Embedded wallets' },
@@ -804,7 +803,7 @@ function FootCTA({ googleHref }: { googleHref: string }) {
             </h2>
             <p className="lede" style={{ marginBottom: 32, maxWidth: '52ch' } as CSSProperties}>
               Decimal is the finance operator for the next generation of companies. Sign up in
-              10 seconds. Spin up a self-custodial treasury in one screen.
+              10 seconds. Spin up a multisig treasury in one screen.
             </p>
             <div className="footcta-actions">
               <a className="gbtn" href={googleHref} style={{ fontFamily: '"Bricolage Grotesque"' }}>
