@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { config } from '../config.js';
+import { getGridRuntimeConfig } from '../grid/client.js';
 import { USDC_MINT } from '../solana.js';
 
 export const capabilitiesRouter = Router();
@@ -16,6 +17,13 @@ capabilitiesRouter.get('/capabilities', (_req, res) => {
     },
     auth: {
       user: 'Authorization: Bearer <sessionToken>',
+    },
+    providers: {
+      squads: {
+        mode: 'direct',
+        programId: config.squadsProgramId,
+      },
+      grid: getGridRuntimeConfig(),
     },
     apiSurface: {
       style: 'resource-oriented-json',
@@ -107,6 +115,9 @@ capabilitiesRouter.get('/capabilities', (_req, res) => {
           'DELETE /personal-wallets/:userWalletId',
           'POST /personal-wallets/:userWalletId/sign-versioned-transaction',
           'GET /organizations/:organizationId/treasury-wallets',
+          'POST /organizations/:organizationId/treasury-wallets/grid/create-account',
+          'GET /organizations/:organizationId/treasury-wallets/:treasuryWalletId/grid/status',
+          'GET /organizations/:organizationId/treasury-wallets/:treasuryWalletId/grid/balances',
           'POST /organizations/:organizationId/treasury-wallets/squads/create-intent',
           'POST /organizations/:organizationId/treasury-wallets/squads/confirm',
           'GET /organizations/:organizationId/treasury-wallets/:treasuryWalletId/squads/detail',
