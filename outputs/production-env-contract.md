@@ -1,175 +1,178 @@
-# Axoria Runtime Contract
+# Decimal Runtime Contract
 
-This is the simplified runtime model for Axoria.
+The simplified runtime model for Decimal. Used to decide what goes in env vars vs committed config vs frontend public config.
 
 Do not think in terms of "a lot of secrets." Think in terms of:
 
-- **real secrets**
-- **plain config**
-- **public frontend values**
+- **real secrets** — auth credentials, DB strings, provider tokens
+- **plain config** — deployment settings (host, port, CORS, rate limits)
+- **public frontend values** — anything that ships to the browser
 
 ## File layout
 
-### Config files
+### Config files (committed, non-secret)
 
-These are committed and non-secret:
+- [config/api.config.json](/Users/fuyofulo/code/stablecoin_intelligence/config/api.config.json) — API runtime settings
+- [config/frontend.public.json](/Users/fuyofulo/code/stablecoin_intelligence/config/frontend.public.json) — Frontend runtime settings
 
-- [config/api.config.json](/Users/fuyofulo/code/stablecoin_intelligence/config/api.config.json)
-- [config/worker.config.json](/Users/fuyofulo/code/stablecoin_intelligence/config/worker.config.json)
-- [config/frontend.public.json](/Users/fuyofulo/code/stablecoin_intelligence/config/frontend.public.json)
+### Secret env files (local or deploy-time only)
 
-### Secret env files
+- [api/.env.example](/Users/fuyofulo/code/stablecoin_intelligence/api/.env.example) — template for `api/.env`
+- repo root [`.env`](/Users/fuyofulo/code/stablecoin_intelligence/.env) — local tooling only
 
-These should remain local or deploy-time only:
-
-- [api/.env.example](/Users/fuyofulo/code/stablecoin_intelligence/api/.env.example)
-- [yellowstone/.env.example](/Users/fuyofulo/code/stablecoin_intelligence/yellowstone/.env.example)
-- repo root [`.env`](/Users/fuyofulo/code/stablecoin_intelligence/.env) for local tooling only
-
-Frontend should not need a secret env file anymore.
+The frontend does not need a secret env file. The Yellowstone worker has been retired and is no longer part of the runtime.
 
 ## 1. Real secrets
 
 These must never go in git, docs, screenshots, or frontend `VITE_*` env vars.
 
-### Required now
+### Required (API will not start without these)
 
-| Variable | Used by | Purpose |
+| Variable | Purpose |
+| --- | --- |
+| `DATABASE_URL` | Postgres connection string |
+| `OAUTH_STATE_SECRET` | Long random secret for signing OAuth state tokens |
+
+### Auth providers
+
+| Variable | Required when | Purpose |
 | --- | --- | --- |
-| `DATABASE_URL` | API | Connects the backend to Postgres |
-| `CONTROL_PLANE_SERVICE_TOKEN` | API + Yellowstone worker | Lets the worker call internal backend routes |
+| `GOOGLE_OAUTH_CLIENT_ID` | Google sign-in is enabled | Google OAuth client ID |
+| `GOOGLE_OAUTH_CLIENT_SECRET` | Google sign-in is enabled | Google OAuth client secret |
+| `GOOGLE_OAUTH_REDIRECT_URI` | Custom redirect needed | Defaults to `{publicApiUrl}/auth/google/callback` |
 
-### Optional / provider-dependent
+### Wallet provider (Privy)
 
-| Variable | Used by | Purpose |
+| Variable | Required when | Purpose |
 | --- | --- | --- |
-| `YELLOWSTONE_TOKEN` | Yellowstone worker | Auth for Yellowstone provider, if required |
-| `SOLANA_RPC_URL` | API | Private RPC if you put a paid key on the backend |
-| `CLICKHOUSE_PASSWORD` | Yellowstone worker / ClickHouse | Only if ClickHouse is protected with auth |
+| `PRIVY_APP_ID` | Creating Privy embedded wallets from API | Privy app identifier |
+| `PRIVY_APP_SECRET` | Creating Privy embedded wallets from API | Privy app secret |
+| `PRIVY_API_BASE_URL` | Always (defaults to `https://api.privy.io`) | Privy API base |
+
+### Email provider (Resend)
+
+| Variable | Required when | Purpose |
+| --- | --- | --- |
+| `RESEND_API_KEY` | Production email sends | Resend API key. If unset, `/auth/register` falls back to returning the verification code in the response (dev only) |
+| `RESEND_FROM_EMAIL` | Production email sends | Verified sender address |
+| `RESEND_FROM_NAME` | Production email sends | Display name (defaults to `Decimal`) |
+
+### AI provider (OpenRouter)
+
+| Variable | Required when | Purpose |
+| --- | --- | --- |
+| `OPEN_ROUTER_API_KEY` | Doc-to-proposal pipeline (invoice extraction) | OpenRouter API key. Free tier requires "free endpoints that may train on inputs" enabled under privacy. |
+
+### Treasury provider (Squads Grid — optional)
+
+Only used by `/treasury-wallets/grid/*` routes. Skip entirely if not running the Grid integration.
+
+| Variable | Required when | Purpose |
+| --- | --- | --- |
+| `GRID_API_KEY` | Any Grid route is hit | Grid API key from Squads |
+| `GRID_ENVIRONMENT` | Any Grid route is hit | `sandbox` or `production` (defaults to `sandbox`) |
+| `GRID_BASE_URL` | Custom base URL needed | Optional override |
+| `GRID_APP_ID` | Custom app ID needed | Optional override |
+| `GRID_TIMEOUT_MS` | Tuning needed | Default `15000` |
+| `GRID_RETRY_ATTEMPTS` | Tuning needed | Default `2` |
+
+### Solana RPC
+
+| Variable | Required when | Purpose |
+| --- | --- | --- |
+| `SOLANA_NETWORK` | Always | `devnet` or `mainnet`. Drives USDC mint, Squads program, and the network advertised to the frontend via `/capabilities` |
+| `SOLANA_RPC_URL` | Always | Backend RPC endpoint. Treat as a secret if it carries a paid provider key |
+| `SOLANA_DEVNET_RPC_URL` | Optional | Devnet-specific override |
 
 ## 2. Plain config
 
-These are not secrets. They are deployment settings.
+Lives in [config/api.config.json](/Users/fuyofulo/code/stablecoin_intelligence/config/api.config.json). Not secrets. Deployment settings only.
 
-### API config file
-
-| Variable | Purpose |
+| Field | Purpose |
 | --- | --- |
-| `HOST` | Bind host |
-| `PORT` | API port |
-| `CLICKHOUSE_URL` | ClickHouse base URL |
-| `CLICKHOUSE_DATABASE` | ClickHouse database name |
-| `CORS_ORIGIN` | Comma-separated list of allowed frontend origins |
-| `TRUST_PROXY` | Set `true` behind Cloudflare / reverse proxy |
-| `PUBLIC_API_URL` | Canonical public API URL used in OpenAPI |
-| `RATE_LIMIT_ENABLED` | Enable request rate limiting |
-| `PUBLIC_RATE_LIMIT_WINDOW_MS` | Rate limit window |
-| `PUBLIC_RATE_LIMIT_MAX` | Rate limit max requests |
+| `host` | Bind host |
+| `port` | API port |
+| `publicApiUrl` | Canonical public API URL used in OpenAPI and OAuth redirects |
+| `publicFrontendUrl` | Canonical public frontend URL |
+| `corsOrigins` | Array of allowed frontend origins |
+| `trustProxy` | Set `true` behind Cloudflare or any reverse proxy |
+| `rateLimitEnabled` | Toggle request rate limiting |
+| `publicRateLimitWindowMs` | Rate limit window |
+| `publicRateLimitMax` | Rate limit max requests per window |
 
-`NODE_ENV` still stays in the runtime env because it is standard process mode, not business config.
-
-### Worker config file
-
-| Variable | Purpose |
-| --- | --- |
-| `YELLOWSTONE_ENDPOINT` | Yellowstone gRPC endpoint |
-| `CLICKHOUSE_URL` | ClickHouse base URL |
-| `CLICKHOUSE_DATABASE` | ClickHouse database name |
-| `CLICKHOUSE_USER` | ClickHouse username |
-| `CONTROL_PLANE_API_URL` | Public or private API URL the worker calls |
-| `WORKSPACE_REFRESH_INTERVAL_SECONDS` | Reserved for matching context refresh cadence |
+`NODE_ENV` stays in the runtime env because it is standard process mode, not business config.
 
 ## 3. Public frontend values
 
-These are **not secrets**. They now live in the committed frontend public config file.
+Lives in [config/frontend.public.json](/Users/fuyofulo/code/stablecoin_intelligence/config/frontend.public.json). Not secrets — these ship to the browser.
 
-| Variable | Purpose |
+| Field | Purpose |
 | --- | --- |
-| `apiBaseUrl` | Frontend -> API base URL |
+| `apiBaseUrl` | Frontend → API base URL (production) |
+| `localApiBaseUrl` | Frontend → API base URL (local dev) |
 | `solanaRpcUrl` | Browser-side Solana RPC URL |
 
 ## Important frontend warning
 
-The frontend now reads its public RPC from [frontend.public.json](/Users/fuyofulo/code/stablecoin_intelligence/config/frontend.public.json):
+Anything in `frontend.public.json` is **public** once the frontend is built and deployed.
 
-```env
-solanaRpcUrl=https://solana-mainnet.g.alchemy.com/v2/...
+```json
+"solanaRpcUrl": "https://solana-mainnet.g.alchemy.com/v2/..."
 ```
 
-is **not private** once the frontend is built and deployed.
+is not private. If you keep using a private-provider URL in the frontend:
 
-If you keep using a private-provider URL in the frontend:
-
-- treat it as a **public client key**
+- treat it as a public client key
 - enforce provider-side restrictions if available
 - do not rely on secrecy
 
-If you want a truly private RPC key:
-
-- keep it only on the backend as `SOLANA_RPC_URL`
-- do not expose it through frontend public config
+If you want a truly private RPC key, keep it only on the backend as `SOLANA_RPC_URL` and do not expose it through frontend public config.
 
 ## Minimum production secret set
 
-For the deploy you are planning, the minimum real secret set is:
+The smallest set of real secrets that runs Decimal in production with email auth + Privy wallets + Squads multisig:
 
 ```env
 DATABASE_URL=postgresql://...
-CONTROL_PLANE_SERVICE_TOKEN=<long-random-secret>
+OAUTH_STATE_SECRET=<long-random-secret>
+PRIVY_APP_ID=...
+PRIVY_APP_SECRET=...
+RESEND_API_KEY=...
+RESEND_FROM_EMAIL=...
+SOLANA_NETWORK=mainnet
+SOLANA_RPC_URL=https://...
 ```
 
-And maybe these, depending on providers:
-
-```env
-YELLOWSTONE_TOKEN=...
-SOLANA_RPC_URL=https://solana-mainnet.g.alchemy.com/v2/...
-```
-
-That is the actual secret surface. Everything else is config.
+Add Google OAuth, OpenRouter, or Grid credentials only when those features are turned on.
 
 ## Recommended storage
 
 ### Local developer machine
 
-- Repo root [`.env`](/Users/fuyofulo/code/stablecoin_intelligence/.env):
-  - local tooling only
-  - example: `COLOSSEUM_COPILOT_PAT`
+- Repo root [`.env`](/Users/fuyofulo/code/stablecoin_intelligence/.env) — local tooling only (e.g. `COLOSSEUM_COPILOT_PAT`)
+- `api/.env` — copy of `api/.env.example` filled in for local dev (defaults to devnet, local Postgres)
 
 ### API deployment env
 
-- `DATABASE_URL`
-- `CONTROL_PLANE_SERVICE_TOKEN`
-- `SOLANA_RPC_URL` if private
-- `NODE_ENV`
-- API plain config comes from `config/api.config.json`
-
-### Yellowstone worker env
-
-- `CONTROL_PLANE_SERVICE_TOKEN`
-- `YELLOWSTONE_TOKEN` if needed
-- `NODE_ENV`
-- worker plain config comes from `config/worker.config.json`
+All secrets from section 1 above, scoped to environment (devnet vs mainnet). Plain config comes from `config/api.config.json` — committed, not env-managed.
 
 ### Frontend deploy env
 
-- no secret envs required
-- public runtime settings come from `config/frontend.public.json`
+No secret envs required. Public runtime settings come from `config/frontend.public.json`.
 
-## Immediate operational rule
+## Operational rules
 
-Use this rule:
+**Decision rule**
 
 - if it reaches the browser, it is public
 - if it authenticates infra, it is a secret
 - if it only changes runtime behavior, it is config
 
-## Immediate cleanup rule
+**Cleanup rule**
 
-Never put these in git again:
+Never commit:
 
-- provider tokens
+- provider tokens (Privy, Resend, OpenRouter, Grid, Google OAuth)
 - Postgres connection strings
 - service-to-service auth tokens
 - real RPC secrets
-
-The old Colosseum Copilot token was previously committed in git history and had to be rotated. Treat that as the baseline lesson for future changes.
